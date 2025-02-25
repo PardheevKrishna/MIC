@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <title>Project Log</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- Example minimal styling; adapt as needed -->
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -85,28 +84,48 @@
       <input type="date" id="status_date" name="status_date" required>
     </div>
 
-    <!-- 2. Main Project -->
+    <!-- 2. Main Project (with suggestions) -->
     <div class="form-group">
       <label for="main_project">Main Project</label>
-      <input type="text" id="main_project" name="main_project" required>
+      <input type="text" id="main_project" name="main_project" list="main_project_list" required>
+      <datalist id="main_project_list">
+        {% for item in suggestions.main_project %}
+          <option value="{{ item }}">
+        {% endfor %}
+      </datalist>
     </div>
 
-    <!-- 3. Name of the Project -->
+    <!-- 3. Project Name (with suggestions) -->
     <div class="form-group">
-      <label for="project_name">Name of the Project</label>
-      <input type="text" id="project_name" name="project_name" required>
+      <label for="project_name">Project Name</label>
+      <input type="text" id="project_name" name="project_name" list="project_name_list" required>
+      <datalist id="project_name_list">
+        {% for item in suggestions.project_name %}
+          <option value="{{ item }}">
+        {% endfor %}
+      </datalist>
     </div>
 
-    <!-- 4. Project Key Milestones -->
+    <!-- 4. Project Key Milestones (with suggestions) -->
     <div class="form-group">
       <label for="project_key_milestones">Project Key Milestones</label>
-      <textarea id="project_key_milestones" name="project_key_milestones" rows="2" required></textarea>
+      <input type="text" id="project_key_milestones" name="project_key_milestones" list="project_key_milestones_list" required>
+      <datalist id="project_key_milestones_list">
+        {% for item in suggestions.project_key_milestones %}
+          <option value="{{ item }}">
+        {% endfor %}
+      </datalist>
     </div>
 
-    <!-- 5. TM (Assuming a text field) -->
+    <!-- 5. TM (Team Member) (with suggestions) -->
     <div class="form-group">
-      <label for="tm">TM</label>
-      <input type="text" id="tm" name="tm" required>
+      <label for="tm">Team Member (TM)</label>
+      <input type="text" id="tm" name="tm" list="tm_list" required>
+      <datalist id="tm_list">
+        {% for item in suggestions.tm %}
+          <option value="{{ item }}">
+        {% endfor %}
+      </datalist>
     </div>
 
     <!-- 6. Start Date -->
@@ -127,10 +146,15 @@
       <input type="number" id="percent_completion" name="percent_completion" min="0" max="100" required>
     </div>
 
-    <!-- 9. Status -->
+    <!-- 9. Status (with suggestions) -->
     <div class="form-group">
       <label for="status">Status</label>
-      <input type="text" id="status" name="status" required>
+      <input type="text" id="status" name="status" list="status_list" required>
+      <datalist id="status_list">
+        {% for item in suggestions.status %}
+          <option value="{{ item }}">
+        {% endfor %}
+      </datalist>
     </div>
 
     <!-- 10. Weekly Time Spent(Hrs) -->
@@ -139,7 +163,7 @@
       <input type="number" id="weekly_time_spent" name="weekly_time_spent" min="0" step="0.5" required>
     </div>
 
-    <!-- 11. Projected hours -->
+    <!-- 11. Projected Hours -->
     <div class="form-group">
       <label for="projected_hours">Projected Hours (E2E Implementation)</label>
       <input type="number" id="projected_hours" name="projected_hours" min="0" step="0.5" required>
@@ -183,7 +207,7 @@
       </select>
     </div>
 
-    <!-- 15. Novelty (BAU repetitive, One time repetitive, New one time) -->
+    <!-- 15. Novelty -->
     <div class="form-group">
       <label for="novelty">Novelty</label>
       <select id="novelty" name="novelty" required>
@@ -209,7 +233,7 @@
       </select>
     </div>
 
-    <!-- 17. Impact type -->
+    <!-- 17. Impact Type -->
     <div class="form-group">
       <label for="impact_type">Impact Type</label>
       <select id="impact_type" name="impact_type" required>
@@ -222,10 +246,10 @@
       </select>
     </div>
 
-    <!-- Submit Button -->
     <div class="form-actions">
       <button type="submit">Submit</button>
     </div>
+
     {% if error %}
       <div class="error">{{ error }}</div>
     {% endif %}
