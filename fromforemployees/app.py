@@ -1,164 +1,161 @@
 from flask import Flask, render_template, request
-from datetime import datetime
+from datetime import datetime, timedelta
 import openpyxl
 import os
 import logging
-
 from openpyxl.styles import PatternFill
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 LOGS_FILE = 'logs.xlsx'
+LEAVES_FILE = 'leaves.xlsx'
 
-# For highlighting anomalies
-FILL_ORANGE = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
+# Orange fill to highlight anomaly rows
+ORANGE_FILL = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
 
-# Enumerations for validation
-VALID_FUNCTIONAL_AREAS = [
-    "CRIT",
-    "CRIT - Data Management",
-    "CRIT - Data Governance",
-    "CRIT - Regulatory Reporting",
-    "CRIT - Portfolio Reporting",
-    "CRIT - Transformation"
-]
-
-VALID_PROJECT_CATEGORIES = [
-    "Data Infrastructure",
-    "Monitoring & Insights",
-    "Analytics / Strategy Development",
-    "GDA Related",
-    "Trainings and Team Meeting"
-]
-
-VALID_COMPLEXITY = ["H", "M", "L"]
-
-VALID_NOVELTY = [
-    "BAU repetitive",
-    "One time repetitive",
-    "New one time"
-]
-
-VALID_OUTPUT_TYPES = [
-    "Core production work",
-    "Ad-hoc long-term projects",
-    "Ad-hoc short-term projects",
-    "Business Management",
-    "Administration",
-    "Trainings/L&D activities",
-    "Others"
-]
-
-VALID_IMPACT_TYPES = [
-    "Customer Experience",
-    "Financial impact",
-    "Insights",
-    "Risk reduction",
-    "Others"
-]
-
-def check_data_integrity(data):
+def validate_fields(data):
     """
-    Validate fields and return a list of anomaly messages.
-    We do not block submission; anomalies go into logs.
+    Validate that each form field entry is valid.
+    Return a list of error messages. (These errors block submission.)
     """
-    anomalies = []
+    errors = []
 
-    # 1) Status Date must be a Friday
+    # Validate Status Date (must be a valid date and a Friday)
     try:
-        status_dt = datetime.strptime(data['status_date'], "%Y-%m-%d").date()
-        if status_dt.weekday() != 4:  # Monday=0 ... Sunday=6
-            anomalies.append("Status Date is not a Friday.")
+        status_date = datetime.strptime(data['status_date'], "%Y-%m-%d").date()
+        if status_date.weekday() != 4:
+            errors.append("Status Date must be a Friday.")
     except ValueError:
-        anomalies.append("Invalid Status Date format.")
+        errors.append("Invalid Status Date format.")
 
-    # 2) Main project -> required, check length
+    # Required text fields (Main Project, Project Name, Project Key Milestones, TM)
     if not data['main_project'].strip():
-        anomalies.append("Main Project is empty.")
-
-    # 3) Name of the Project -> required
+        errors.append("Main Project is required.")
     if not data['project_name'].strip():
-        anomalies.append("Name of the Project is empty.")
-
-    # 4) Project Key Milestones -> required, check length
+        errors.append("Name of the Project is required.")
     if not data['project_key_milestones'].strip():
-        anomalies.append("Project Key Milestones is empty.")
-
-    # 5) TM -> required
+        errors.append("Project Key Milestones is required.")
     if not data['tm'].strip():
-        anomalies.append("TM field is empty.")
+        errors.append("Team Member (TM) is required.")
 
-    # 6 & 7) Start Date <= Completion Date
+    # Validate Start Date and Completion Date and that start is not after completion
     try:
-        start_dt = datetime.strptime(data['start_date'], "%Y-%m-%d").date()
-        completion_dt = datetime.strptime(data['completion_date'], "%Y-%m-%d").date()
-        if start_dt > completion_dt:
-            anomalies.append("Start Date is after Completion Date.")
+        start_date = datetime.strptime(data['start_date'], "%Y-%m-%d").date()
     except ValueError:
-        anomalies.append("Invalid Start or Completion Date format.")
-
-    # 8) % of Completion -> 0 <= x <= 100
+        errors.append("Invalid Start Date format.")
     try:
-        pc = float(data['percent_completion'])
-        if pc < 0 or pc > 100:
-            anomalies.append("% of Completion must be between 0 and 100.")
+        completion_date = datetime.strptime(data['completion_date'], "%Y-%m-%d").date()
     except ValueError:
-        anomalies.append("Invalid % of Completion.")
+        errors.append("Invalid Completion Date format.")
+    else:
+        try:
+            start_date = datetime.strptime(data['start_date'], "%Y-%m-%d").date()
+            if start_date > completion_date:
+                errors.append("Start Date cannot be after Completion Date.")
+        except:
+            pass
 
-    # 9) Status -> required
+    # Validate % of Completion (numeric, between 0 and 100)
+    try:
+        pct = float(data['percent_completion'])
+        if pct < 0 or pct > 100:
+            errors.append("% of Completion must be between 0 and 100.")
+    except ValueError:
+        errors.append("Invalid % of Completion.")
+
+    # Validate Status (non-empty)
     if not data['status'].strip():
-        anomalies.append("Status is empty.")
+        errors.append("Status is required.")
 
-    # 10) Weekly Time Spent(Hrs) -> numeric, non-negative
+    # Validate Weekly Time Spent (numeric, non-negative)
     try:
         wts = float(data['weekly_time_spent'])
         if wts < 0:
-            anomalies.append("Weekly Time Spent cannot be negative.")
+            errors.append("Weekly Time Spent cannot be negative.")
     except ValueError:
-        anomalies.append("Invalid Weekly Time Spent.")
+        errors.append("Invalid Weekly Time Spent value.")
 
-    # 11) Projected hours -> numeric, non-negative
+    # Validate Projected Hours (numeric, non-negative)
     try:
         ph = float(data['projected_hours'])
         if ph < 0:
-            anomalies.append("Projected Hours cannot be negative.")
-        # Optional: If weekly time spent > projected hours => anomaly
-        if 'wts' in locals() and wts > ph:
-            anomalies.append("Weekly Time Spent exceeds Projected Hours.")
+            errors.append("Projected Hours cannot be negative.")
     except ValueError:
-        anomalies.append("Invalid Projected Hours.")
+        errors.append("Invalid Projected Hours value.")
 
-    # 12) Functional Area -> must be in valid list
-    if data['functional_area'] not in VALID_FUNCTIONAL_AREAS:
-        anomalies.append("Invalid Functional Area selected.")
+    # Validate Functional Area, Project Category, Output Type, Impact Type (non-empty)
+    if not data['functional_area'].strip():
+        errors.append("Functional Area is required.")
+    if not data['project_category'].strip():
+        errors.append("Project Category is required.")
+    if not data['output_type'].strip():
+        errors.append("Output Type is required.")
+    if not data['impact_type'].strip():
+        errors.append("Impact Type is required.")
 
-    # 13) Project Category -> must be in valid list
-    if data['project_category'] not in VALID_PROJECT_CATEGORIES:
-        anomalies.append("Invalid Project Category selected.")
+    # Validate Complexity (must be H, M, or L)
+    if data['complexity'] not in ["H", "M", "L"]:
+        errors.append("Complexity must be one of H, M, or L.")
 
-    # 14) Complexity -> must be H, M, or L
-    if data['complexity'] not in VALID_COMPLEXITY:
-        anomalies.append("Invalid Complexity value.")
+    # Validate Novelty (must be one of the allowed options)
+    if data['novelty'] not in ["BAU repetitive", "One time repetitive", "New one time"]:
+        errors.append("Novelty must be one of: BAU repetitive, One time repetitive, or New one time.")
 
-    # 15) Novelty -> must be in valid list
-    if data['novelty'] not in VALID_NOVELTY:
-        anomalies.append("Invalid Novelty value.")
+    return errors
 
-    # 16) Output Type -> must be in valid list
-    if data['output_type'] not in VALID_OUTPUT_TYPES:
-        anomalies.append("Invalid Output Type selected.")
+def count_leave_days(tm, week_date):
+    """
+    Count how many leave days the given Team Member (TM) has in the week (Monday to Friday) of week_date.
+    """
+    leave_count = 0
+    if os.path.exists(LEAVES_FILE):
+        try:
+            wb = openpyxl.load_workbook(LEAVES_FILE)
+            sheet = wb.active
+            monday = week_date - timedelta(days=week_date.weekday())
+            friday = monday + timedelta(days=4)
+            for row in sheet.iter_rows(min_row=2, values_only=True):
+                # Expecting leaves.xlsx columns: [TM, Date, Leave Type]
+                if str(row[0]).strip() == tm:
+                    try:
+                        leave_date = datetime.strptime(str(row[1]).strip(), "%Y-%m-%d").date()
+                        if monday <= leave_date <= friday:
+                            leave_count += 1
+                    except:
+                        continue
+        except Exception as e:
+            logging.error("Error reading leaves.xlsx: %s", e)
+    return leave_count
 
-    # 17) Impact Type -> must be in valid list
-    if data['impact_type'] not in VALID_IMPACT_TYPES:
-        anomalies.append("Invalid Impact Type selected.")
+def check_anomalies(data):
+    """
+    Check for fake data only related to working hours.
+    Specifically, if the Weekly Time Spent (Hrs) exceeds the maximum allowed
+    based on the number of working days available (i.e. 9 hours per day for Monday–Friday,
+    minus any leave days for that week).
+    For example, if a TM is on leave for 2 days, the maximum allowed is 9 * (5-2) = 27 hrs.
+    """
+    anomalies = []
+    try:
+        status_date = datetime.strptime(data['status_date'], "%Y-%m-%d").date()
+        weekly_time_spent = float(data['weekly_time_spent'])
+    except:
+        return anomalies  # If parsing fails, skip anomaly check
 
+    tm = data['tm'].strip()
+    leave_days = count_leave_days(tm, status_date)
+    allowed_days = 5 - leave_days
+    max_allowed_hours = allowed_days * 9
+
+    if weekly_time_spent > max_allowed_hours:
+        anomalies.append(f"Weekly Time Spent exceeds allowed limit. With {leave_days} leave day(s), maximum allowed is {max_allowed_hours} hrs.")
     return anomalies
 
 def append_log(data, anomaly_message):
     """
-    Append a new row into logs.xlsx, including an anomaly reason if any.
-    If an anomaly exists, we can highlight the row in orange.
+    Append a new row into logs.xlsx with the 17 fields and the Anomaly Reason.
+    If an anomaly exists, highlight the entire row in orange.
     """
     try:
         if os.path.exists(LOGS_FILE):
@@ -167,12 +164,12 @@ def append_log(data, anomaly_message):
         else:
             wb = openpyxl.Workbook()
             sheet = wb.active
-            sheet.append([
+            headers = [
                 "Status Date (Fri)",
                 "Main Project",
                 "Project Name",
                 "Project Key Milestones",
-                "TM",
+                "Team Member (TM)",
                 "Start Date",
                 "Completion Date",
                 "% of Completion",
@@ -186,35 +183,32 @@ def append_log(data, anomaly_message):
                 "Output Type",
                 "Impact Type",
                 "Anomaly Reason"
-            ])
+            ]
+            sheet.append(headers)
 
         new_row = sheet.max_row + 1
-        # Insert each field
-        sheet.cell(row=new_row, column=1,  value=data['status_date'])
-        sheet.cell(row=new_row, column=2,  value=data['main_project'])
-        sheet.cell(row=new_row, column=3,  value=data['project_name'])
-        sheet.cell(row=new_row, column=4,  value=data['project_key_milestones'])
-        sheet.cell(row=new_row, column=5,  value=data['tm'])
-        sheet.cell(row=new_row, column=6,  value=data['start_date'])
-        sheet.cell(row=new_row, column=7,  value=data['completion_date'])
-
-        # % completion as numeric
-        c_percent = sheet.cell(row=new_row, column=8)
-        c_percent.value = float(data['percent_completion'])
-        c_percent.number_format = '0.00'
-
-        sheet.cell(row=new_row, column=9,  value=data['status'])
-
-        # Weekly Time Spent as numeric
-        c_wts = sheet.cell(row=new_row, column=10)
-        c_wts.value = float(data['weekly_time_spent'])
-        c_wts.number_format = '0.00'
-
-        # Projected Hours as numeric
-        c_ph = sheet.cell(row=new_row, column=11)
-        c_ph.value = float(data['projected_hours'])
-        c_ph.number_format = '0.00'
-
+        sheet.cell(row=new_row, column=1, value=data['status_date'])
+        sheet.cell(row=new_row, column=2, value=data['main_project'])
+        sheet.cell(row=new_row, column=3, value=data['project_name'])
+        sheet.cell(row=new_row, column=4, value=data['project_key_milestones'])
+        sheet.cell(row=new_row, column=5, value=data['tm'])
+        sheet.cell(row=new_row, column=6, value=data['start_date'])
+        sheet.cell(row=new_row, column=7, value=data['completion_date'])
+        
+        cell_pct = sheet.cell(row=new_row, column=8)
+        cell_pct.value = float(data['percent_completion'])
+        cell_pct.number_format = '0.00'
+        
+        sheet.cell(row=new_row, column=9, value=data['status'])
+        
+        cell_wts = sheet.cell(row=new_row, column=10)
+        cell_wts.value = float(data['weekly_time_spent'])
+        cell_wts.number_format = '0.00'
+        
+        cell_ph = sheet.cell(row=new_row, column=11)
+        cell_ph.value = float(data['projected_hours'])
+        cell_ph.number_format = '0.00'
+        
         sheet.cell(row=new_row, column=12, value=data['functional_area'])
         sheet.cell(row=new_row, column=13, value=data['project_category'])
         sheet.cell(row=new_row, column=14, value=data['complexity'])
@@ -222,14 +216,14 @@ def append_log(data, anomaly_message):
         sheet.cell(row=new_row, column=16, value=data['output_type'])
         sheet.cell(row=new_row, column=17, value=data['impact_type'])
         sheet.cell(row=new_row, column=18, value=anomaly_message)
-
-        # Highlight row if anomalies exist
+        
+        # If any anomaly exists, highlight the row in orange.
         if anomaly_message:
-            for col_idx in range(1, 19):
-                sheet.cell(row=new_row, column=col_idx).fill = FILL_ORANGE
+            for col in range(1, 19):
+                sheet.cell(row=new_row, column=col).fill = ORANGE_FILL
 
         wb.save(LOGS_FILE)
-        logging.info("Data appended successfully.")
+        logging.info("Log appended successfully.")
         return True, None
     except Exception as e:
         logging.error("Error appending log: %s", e)
@@ -241,39 +235,40 @@ def index():
 
 @app.route("/submit", methods=["POST"])
 def submit():
-    try:
-        data = {
-            "status_date": request.form.get("status_date", ""),
-            "main_project": request.form.get("main_project", ""),
-            "project_name": request.form.get("project_name", ""),
-            "project_key_milestones": request.form.get("project_key_milestones", ""),
-            "tm": request.form.get("tm", ""),
-            "start_date": request.form.get("start_date", ""),
-            "completion_date": request.form.get("completion_date", ""),
-            "percent_completion": request.form.get("percent_completion", ""),
-            "status": request.form.get("status", ""),
-            "weekly_time_spent": request.form.get("weekly_time_spent", ""),
-            "projected_hours": request.form.get("projected_hours", ""),
-            "functional_area": request.form.get("functional_area", ""),
-            "project_category": request.form.get("project_category", ""),
-            "complexity": request.form.get("complexity", ""),
-            "novelty": request.form.get("novelty", ""),
-            "output_type": request.form.get("output_type", ""),
-            "impact_type": request.form.get("impact_type", "")
-        }
+    data = {
+        "status_date": request.form.get("status_date", ""),
+        "main_project": request.form.get("main_project", ""),
+        "project_name": request.form.get("project_name", ""),
+        "project_key_milestones": request.form.get("project_key_milestones", ""),
+        "tm": request.form.get("tm", ""),
+        "start_date": request.form.get("start_date", ""),
+        "completion_date": request.form.get("completion_date", ""),
+        "percent_completion": request.form.get("percent_completion", ""),
+        "status": request.form.get("status", ""),
+        "weekly_time_spent": request.form.get("weekly_time_spent", ""),
+        "projected_hours": request.form.get("projected_hours", ""),
+        "functional_area": request.form.get("functional_area", ""),
+        "project_category": request.form.get("project_category", ""),
+        "complexity": request.form.get("complexity", ""),
+        "novelty": request.form.get("novelty", ""),
+        "output_type": request.form.get("output_type", ""),
+        "impact_type": request.form.get("impact_type", "")
+    }
 
-        anomalies = check_data_integrity(data)
-        anomaly_message = "; ".join(anomalies) if anomalies else ""
+    # First, validate that the field entries are valid.
+    errors = validate_fields(data)
+    if errors:
+        return render_template("form.html", error="; ".join(errors))
 
-        success, err_msg = append_log(data, anomaly_message)
-        if success:
-            # Show only a generic success message, no matter if anomalies exist
-            return render_template("form.html", message="Log submitted successfully!")
-        else:
-            return render_template("form.html", error=f"Error saving log: {err_msg}")
-    except Exception as e:
-        logging.error("Error in submit route: %s", e)
-        return render_template("form.html", error="An unexpected error occurred.")
+    # Then, check for anomalies only related to fake data (e.g. working hours limits)
+    anomalies = check_anomalies(data)
+    anomaly_message = "; ".join(anomalies) if anomalies else ""
+
+    success, err_msg = append_log(data, anomaly_message)
+    if success:
+        return render_template("form.html", message="Log submitted successfully!")
+    else:
+        return render_template("form.html", error=f"Error saving log: {err_msg}")
 
 if __name__ == "__main__":
     app.run(debug=True)
