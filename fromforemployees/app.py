@@ -17,11 +17,11 @@ ORANGE_FILL = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="s
 def load_suggestions():
     """
     Load unique values from logs.xlsx for free-text fields:
-    - Main Project (column 2)
-    - Project Name (column 3)
-    - Project Key Milestones (column 4)
-    - Team Member (TM) (column 5)
-    - Status (column 9)
+      - Main Project (column 2)
+      - Project Name (column 3)
+      - Project Key Milestones (column 4)
+      - Team Member (TM) (column 5)
+      - Status (column 9)
     """
     suggestions = {
         "main_project": set(),
@@ -47,7 +47,6 @@ def load_suggestions():
                     suggestions["status"].add(str(row[8]).strip())
         except Exception as e:
             logging.error("Error loading suggestions: %s", e)
-    # Convert sets to sorted lists
     for key in suggestions:
         suggestions[key] = sorted(list(suggestions[key]))
     return suggestions
@@ -60,7 +59,7 @@ def validate_fields(data):
     errors = []
     try:
         status_date = datetime.strptime(data['status_date'], "%Y-%m-%d").date()
-        if status_date.weekday() != 4:
+        if status_date.weekday() != 4:  # Friday check
             errors.append("Status Date must be a Friday.")
     except ValueError:
         errors.append("Invalid Status Date format.")
@@ -129,17 +128,19 @@ def validate_fields(data):
     
     return errors
 
-def count_leave_days(tm, week_date):
+def count_leave_days(tm, friday_date):
     """
-    Count the number of leave days for a given Team Member (TM)
-    in the Monday–Friday week of week_date.
+    Count the number of leave days for the given Team Member (TM)
+    in the week corresponding to the given Friday (i.e. Monday–Friday of that week).
+    Leaves outside that specific Friday week are not counted.
     """
     leave_count = 0
     if os.path.exists(LEAVES_FILE):
         try:
             wb = openpyxl.load_workbook(LEAVES_FILE)
             sheet = wb.active
-            monday = week_date - timedelta(days=week_date.weekday())
+            # Determine Monday and Friday of the week containing the given Friday
+            monday = friday_date - timedelta(days=friday_date.weekday())
             friday = monday + timedelta(days=4)
             for row in sheet.iter_rows(min_row=2, values_only=True):
                 if str(row[0]).strip() == tm:
@@ -156,17 +157,18 @@ def count_leave_days(tm, week_date):
 def check_anomalies(data):
     """
     Check for fake working hours data.
-    Compute the allowed weekly hours as 9 hours per available working day
-    (Monday–Friday minus leave days). If Weekly Time Spent exceeds that, record an anomaly.
+    Compute the allowed weekly hours based on the Monday–Friday period of the Status Date.
+    Allowed hours = 9 hrs * (number of working days available in that week).
+    If Weekly Time Spent exceeds that limit, record an anomaly.
     """
     anomalies = []
     try:
-        status_date = datetime.strptime(data['status_date'], "%Y-%m-%d").date()
+        friday_date = datetime.strptime(data['status_date'], "%Y-%m-%d").date()
         weekly_time_spent = float(data['weekly_time_spent'])
     except:
         return anomalies
     tm = data['tm'].strip()
-    leave_days = count_leave_days(tm, status_date)
+    leave_days = count_leave_days(tm, friday_date)
     allowed_days = 5 - leave_days
     max_allowed_hours = allowed_days * 9
     if weekly_time_spent > max_allowed_hours:
