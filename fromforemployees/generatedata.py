@@ -12,7 +12,6 @@ VALID_FUNCTIONAL_AREAS = [
     "CRIT - Portfolio Reporting",
     "CRIT - Transformation"
 ]
-
 VALID_PROJECT_CATEGORIES = [
     "Data Infrastructure",
     "Monitoring & Insights",
@@ -20,7 +19,6 @@ VALID_PROJECT_CATEGORIES = [
     "GDA Related",
     "Trainings and Team Meeting"
 ]
-
 VALID_COMPLEXITY = ["H", "M", "L"]
 VALID_NOVELTY = ["BAU repetitive", "One time repetitive", "New one time"]
 VALID_OUTPUT_TYPES = [
@@ -46,7 +44,7 @@ def random_date_in_feb_2025():
     return (start + timedelta(days=random_days)).date()
 
 def generate_logs(filename="logs.xlsx", num_records=15):
-    """Generate a logs.xlsx file with 17 fields plus an 'Anomaly Reason' column."""
+    """Generate logs.xlsx with 17 fields plus an 'Anomaly Reason' column."""
     wb = Workbook()
     sheet = wb.active
     sheet.title = "Logs"
@@ -72,7 +70,7 @@ def generate_logs(filename="logs.xlsx", num_records=15):
     ]
     sheet.append(headers)
     for _ in range(num_records):
-        # Pick a random date in Feb 2025 and adjust to Friday
+        # Randomly choose a date in Feb 2025 and adjust to Friday
         rand_date = random_date_in_feb_2025()
         while rand_date.weekday() != 4:
             rand_date += timedelta(days=1)
@@ -116,14 +114,14 @@ def generate_logs(filename="logs.xlsx", num_records=15):
             nov,
             out_type,
             imp_type,
-            ""  # Anomaly Reason left empty for now
+            ""  # Anomaly Reason left empty
         ]
         sheet.append(row)
     wb.save(filename)
     print(f"Generated {num_records} records in {filename}.")
 
 def generate_leaves(filename="leaves.xlsx", num_records=8):
-    """Generate a leaves.xlsx file with columns: Team Member (TM), Date, Leave Type."""
+    """Generate leaves.xlsx with columns: Team Member (TM), Date, Leave Type."""
     wb = Workbook()
     sheet = wb.active
     sheet.title = "Leaves"
