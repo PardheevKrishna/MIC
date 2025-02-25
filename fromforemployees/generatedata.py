@@ -3,7 +3,7 @@ import os
 from openpyxl import Workbook
 from datetime import datetime, timedelta
 
-# Same enumerations as in app.py for logs
+# Enumerated lists for random data generation
 VALID_FUNCTIONAL_AREAS = [
     "CRIT",
     "CRIT - Data Management",
@@ -22,13 +22,7 @@ VALID_PROJECT_CATEGORIES = [
 ]
 
 VALID_COMPLEXITY = ["H", "M", "L"]
-
-VALID_NOVELTY = [
-    "BAU repetitive",
-    "One time repetitive",
-    "New one time"
-]
-
+VALID_NOVELTY = ["BAU repetitive", "One time repetitive", "New one time"]
 VALID_OUTPUT_TYPES = [
     "Core production work",
     "Ad-hoc long-term projects",
@@ -38,19 +32,9 @@ VALID_OUTPUT_TYPES = [
     "Trainings/L&D activities",
     "Others"
 ]
+VALID_IMPACT_TYPES = ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 
-VALID_IMPACT_TYPES = [
-    "Customer Experience",
-    "Financial impact",
-    "Insights",
-    "Risk reduction",
-    "Others"
-]
-
-# Possible TMs (Team Members) for logs/leaves
 TEAM_MEMBERS = ["TM1", "TM2", "TM3", "TM4", "TM5"]
-
-# Sample leave types
 LEAVE_TYPES = ["Sick Leave", "Vacation", "Personal", "Training", "Other"]
 
 def random_date_in_feb_2025():
@@ -61,11 +45,8 @@ def random_date_in_feb_2025():
     random_days = random.randrange(delta.days + 1)
     return (start + timedelta(days=random_days)).date()
 
-def generate_logs(filename="logs.xlsx", num_records=10):
-    """
-    Generate a logs.xlsx with the 17 columns + 'Anomaly Reason',
-    mirroring the fields from the new 17-field form.
-    """
+def generate_logs(filename="logs.xlsx", num_records=15):
+    """Generate a logs.xlsx file with 17 fields plus an 'Anomaly Reason' column."""
     wb = Workbook()
     sheet = wb.active
     sheet.title = "Logs"
@@ -74,7 +55,7 @@ def generate_logs(filename="logs.xlsx", num_records=10):
         "Main Project",
         "Project Name",
         "Project Key Milestones",
-        "TM",
+        "Team Member (TM)",
         "Start Date",
         "Completion Date",
         "% of Completion",
@@ -90,88 +71,72 @@ def generate_logs(filename="logs.xlsx", num_records=10):
         "Anomaly Reason"
     ]
     sheet.append(headers)
-
     for _ in range(num_records):
-        # Randomly pick a date in Feb 2025, then adjust to Friday
+        # Pick a random date in Feb 2025 and adjust to Friday
         rand_date = random_date_in_feb_2025()
-        while rand_date.weekday() != 4:  # 4 = Friday
+        while rand_date.weekday() != 4:
             rand_date += timedelta(days=1)
-            if rand_date.month != 2:  # if we exit February, break
+            if rand_date.month != 2:
                 rand_date = datetime(2025, 2, 28).date()
                 break
         status_date_str = rand_date.isoformat()
-
         main_project = random.choice(["MainProjA", "MainProjB", "MainProjC"])
         project_name = f"Project_{random.randint(100,999)}"
         milestones = "Milestone 1, Milestone 2"
-        tm_value = random.choice(TEAM_MEMBERS)  # "TM1", "TM2", etc.
-
-        # Start & Completion dates
+        tm = random.choice(TEAM_MEMBERS)
         start_d = datetime(2025, 2, random.randint(1, 10)).date()
         completion_d = datetime(2025, 2, random.randint(11, 28)).date()
         if start_d > completion_d:
-            start_d, completion_d = completion_d, start_d  # swap
-
-        percent_completion = round(random.uniform(0, 100), 2)
+            start_d, completion_d = completion_d, start_d
+        pct = round(random.uniform(0, 100), 2)
         status = random.choice(["On Track", "At Risk", "Delayed", "Completed"])
-        weekly_time_spent = round(random.uniform(0, 20), 2)
-        projected_hours = round(random.uniform(5, 20), 2)
-
+        weekly_time_spent = round(random.uniform(0, 45), 2)
+        projected_hours = round(random.uniform(5, 45), 2)
         f_area = random.choice(VALID_FUNCTIONAL_AREAS)
         p_cat = random.choice(VALID_PROJECT_CATEGORIES)
         comp = random.choice(VALID_COMPLEXITY)
         nov = random.choice(VALID_NOVELTY)
         out_type = random.choice(VALID_OUTPUT_TYPES)
         imp_type = random.choice(VALID_IMPACT_TYPES)
-
         row = [
-            status_date_str,          # Status Date
-            main_project,             # Main Project
-            project_name,             # Project Name
-            milestones,               # Key Milestones
-            tm_value,                 # TM
-            start_d.isoformat(),      # Start Date
-            completion_d.isoformat(), # Completion Date
-            percent_completion,       # % of Completion
-            status,                   # Status
-            weekly_time_spent,        # Weekly Time Spent
-            projected_hours,          # Projected Hours
-            f_area,                   # Functional Area
-            p_cat,                    # Project Category
-            comp,                     # Complexity
-            nov,                      # Novelty
-            out_type,                 # Output Type
-            imp_type,                 # Impact Type
-            ""                        # Anomaly Reason
+            status_date_str,
+            main_project,
+            project_name,
+            milestones,
+            tm,
+            start_d.isoformat(),
+            completion_d.isoformat(),
+            pct,
+            status,
+            weekly_time_spent,
+            projected_hours,
+            f_area,
+            p_cat,
+            comp,
+            nov,
+            out_type,
+            imp_type,
+            ""  # Anomaly Reason left empty for now
         ]
         sheet.append(row)
-
     wb.save(filename)
     print(f"Generated {num_records} records in {filename}.")
 
-def generate_leaves(filename="leaves.xlsx", num_leaves=10):
-    """
-    Generate a leaves.xlsx with columns:
-    [TM, Date, Leave Type]
-    We'll assume TM is the same field used in logs.xlsx.
-    """
+def generate_leaves(filename="leaves.xlsx", num_records=8):
+    """Generate a leaves.xlsx file with columns: Team Member (TM), Date, Leave Type."""
     wb = Workbook()
     sheet = wb.active
     sheet.title = "Leaves"
-    headers = ["TM", "Date", "Leave Type"]
+    headers = ["Team Member (TM)", "Date", "Leave Type"]
     sheet.append(headers)
-
-    for _ in range(num_leaves):
-        tm_value = random.choice(TEAM_MEMBERS)
-        date_value = random_date_in_feb_2025().isoformat()
+    for _ in range(num_records):
+        tm = random.choice(TEAM_MEMBERS)
+        date_str = random_date_in_feb_2025().isoformat()
         leave_type = random.choice(LEAVE_TYPES)
-        row = [tm_value, date_value, leave_type]
-        sheet.append(row)
-
+        sheet.append([tm, date_str, leave_type])
     wb.save(filename)
-    print(f"Generated {num_leaves} records in {filename}.")
+    print(f"Generated {num_records} records in {filename}.")
 
 if __name__ == "__main__":
-    # Generate both logs and leaves
     generate_logs(num_records=15)
-    generate_leaves(num_leaves=8)
+    generate_leaves(num_records=8)
