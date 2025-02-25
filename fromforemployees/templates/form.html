@@ -2,122 +2,237 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Employee Day Log</title>
+  <title>Project Log</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- Import Google Font -->
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <!-- Example minimal styling; adapt as needed -->
   <style>
-    /* Additional styles for the custom suggestion dropdown */
-    .suggestions {
-      position: relative;
-    }
-    .suggestions-list {
-      position: absolute;
-      top: 100%;
-      left: 0;
-      right: 0;
-      z-index: 1000;
-      border: 1px solid #ccc;
-      background: #fff;
-      list-style: none;
-      padding: 0;
+    body {
+      font-family: Arial, sans-serif;
+      background: #f1f3f4;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
       margin: 0;
-      max-height: 150px;
-      overflow-y: auto;
     }
-    .suggestions-list li {
-      padding: 8px 12px;
+    .container {
+      background: #fff;
+      border-radius: 6px;
+      padding: 20px;
+      width: 90%;
+      max-width: 600px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .form-group {
+      margin-bottom: 15px;
+    }
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    input[type="text"],
+    input[type="date"],
+    input[type="number"],
+    select,
+    textarea {
+      width: 100%;
+      padding: 8px;
+      box-sizing: border-box;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+    .form-actions {
+      text-align: center;
+      margin-top: 20px;
+    }
+    button {
+      padding: 10px 20px;
+      background-color: #4285f4;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
       cursor: pointer;
     }
-    .suggestions-list li:hover {
-      background: #f0f0f0;
+    button:hover {
+      background-color: #3367d6;
+    }
+    .message {
+      margin-top: 10px;
+      text-align: center;
+      font-weight: bold;
+      color: green;
+    }
+    .error {
+      margin-top: 10px;
+      text-align: center;
+      font-weight: bold;
+      color: red;
     }
   </style>
 </head>
 <body>
-  <div class="google-form">
-    <div class="google-form-header">
-      <h1>Employee Day Log</h1>
+<div class="container">
+  <h1>Project Log</h1>
+  <form method="POST" action="/submit">
+    <!-- 1. Status Date (Every Friday) -->
+    <div class="form-group">
+      <label for="status_date">Status Date (Every Friday)</label>
+      <input type="date" id="status_date" name="status_date" required>
     </div>
-    <form method="POST" action="/submit" class="google-form-body">
-      <div class="form-field">
-        <label for="employee_id">Employee ID</label>
-        <input type="text" id="employee_id" name="employee_id" required>
-      </div>
-      <div class="form-field">
-        <label for="employee_name">Employee Name</label>
-        <input type="text" id="employee_name" name="employee_name" required>
-      </div>
-      <div class="form-field">
-        <label for="date">Date</label>
-        <input type="date" id="date" name="date" value="{{ current_date }}" required>
-      </div>
-      <!-- Project field with custom suggestion dropdown -->
-      <div class="form-field suggestions">
-        <label for="project">Project</label>
-        <input type="text" id="project" name="project" required autocomplete="off">
-        <ul id="suggestions-list" class="suggestions-list"></ul>
-      </div>
-      <div class="form-field">
-        <label for="hours">Hours Worked</label>
-        <input type="number" id="hours" name="hours" min="0" max="24" step="0.5" required>
-      </div>
-      <div class="form-field">
-        <label for="description">Description of Work</label>
-        <textarea id="description" name="description" rows="4" required></textarea>
-      </div>
-      <div class="form-actions">
-        <button type="submit">Submit</button>
-      </div>
-      {% if error %}
+
+    <!-- 2. Main Project -->
+    <div class="form-group">
+      <label for="main_project">Main Project</label>
+      <input type="text" id="main_project" name="main_project" required>
+    </div>
+
+    <!-- 3. Name of the Project -->
+    <div class="form-group">
+      <label for="project_name">Name of the Project</label>
+      <input type="text" id="project_name" name="project_name" required>
+    </div>
+
+    <!-- 4. Project Key Milestones -->
+    <div class="form-group">
+      <label for="project_key_milestones">Project Key Milestones</label>
+      <textarea id="project_key_milestones" name="project_key_milestones" rows="2" required></textarea>
+    </div>
+
+    <!-- 5. TM (Assuming a text field) -->
+    <div class="form-group">
+      <label for="tm">TM</label>
+      <input type="text" id="tm" name="tm" required>
+    </div>
+
+    <!-- 6. Start Date -->
+    <div class="form-group">
+      <label for="start_date">Start Date</label>
+      <input type="date" id="start_date" name="start_date" required>
+    </div>
+
+    <!-- 7. Completion Date -->
+    <div class="form-group">
+      <label for="completion_date">Completion Date</label>
+      <input type="date" id="completion_date" name="completion_date" required>
+    </div>
+
+    <!-- 8. % of Completion -->
+    <div class="form-group">
+      <label for="percent_completion">% of Completion</label>
+      <input type="number" id="percent_completion" name="percent_completion" min="0" max="100" required>
+    </div>
+
+    <!-- 9. Status -->
+    <div class="form-group">
+      <label for="status">Status</label>
+      <input type="text" id="status" name="status" required>
+    </div>
+
+    <!-- 10. Weekly Time Spent(Hrs) -->
+    <div class="form-group">
+      <label for="weekly_time_spent">Weekly Time Spent (Hrs)</label>
+      <input type="number" id="weekly_time_spent" name="weekly_time_spent" min="0" step="0.5" required>
+    </div>
+
+    <!-- 11. Projected hours -->
+    <div class="form-group">
+      <label for="projected_hours">Projected Hours (E2E Implementation)</label>
+      <input type="number" id="projected_hours" name="projected_hours" min="0" step="0.5" required>
+    </div>
+
+    <!-- 12. Functional Area -->
+    <div class="form-group">
+      <label for="functional_area">Functional Area</label>
+      <select id="functional_area" name="functional_area" required>
+        <option value="">--Select--</option>
+        <option value="CRIT">CRIT</option>
+        <option value="CRIT - Data Management">CRIT - Data Management</option>
+        <option value="CRIT - Data Governance">CRIT - Data Governance</option>
+        <option value="CRIT - Regulatory Reporting">CRIT - Regulatory Reporting</option>
+        <option value="CRIT - Portfolio Reporting">CRIT - Portfolio Reporting</option>
+        <option value="CRIT - Transformation">CRIT - Transformation</option>
+      </select>
+    </div>
+
+    <!-- 13. Project Category -->
+    <div class="form-group">
+      <label for="project_category">Project Category</label>
+      <select id="project_category" name="project_category" required>
+        <option value="">--Select--</option>
+        <option value="Data Infrastructure">Data Infrastructure</option>
+        <option value="Monitoring & Insights">Monitoring & Insights</option>
+        <option value="Analytics / Strategy Development">Analytics / Strategy Development</option>
+        <option value="GDA Related">GDA Related</option>
+        <option value="Trainings and Team Meeting">Trainings and Team Meeting</option>
+      </select>
+    </div>
+
+    <!-- 14. Complexity (H,M,L) -->
+    <div class="form-group">
+      <label for="complexity">Complexity (H, M, L)</label>
+      <select id="complexity" name="complexity" required>
+        <option value="">--Select--</option>
+        <option value="H">H</option>
+        <option value="M">M</option>
+        <option value="L">L</option>
+      </select>
+    </div>
+
+    <!-- 15. Novelty (BAU repetitive, One time repetitive, New one time) -->
+    <div class="form-group">
+      <label for="novelty">Novelty</label>
+      <select id="novelty" name="novelty" required>
+        <option value="">--Select--</option>
+        <option value="BAU repetitive">BAU repetitive</option>
+        <option value="One time repetitive">One time repetitive</option>
+        <option value="New one time">New one time</option>
+      </select>
+    </div>
+
+    <!-- 16. Output Type -->
+    <div class="form-group">
+      <label for="output_type">Output Type</label>
+      <select id="output_type" name="output_type" required>
+        <option value="">--Select--</option>
+        <option value="Core production work">Core production work</option>
+        <option value="Ad-hoc long-term projects">Ad-hoc long-term projects</option>
+        <option value="Ad-hoc short-term projects">Ad-hoc short-term projects</option>
+        <option value="Business Management">Business Management</option>
+        <option value="Administration">Administration</option>
+        <option value="Trainings/L&D activities">Trainings/L&D activities</option>
+        <option value="Others">Others</option>
+      </select>
+    </div>
+
+    <!-- 17. Impact type -->
+    <div class="form-group">
+      <label for="impact_type">Impact Type</label>
+      <select id="impact_type" name="impact_type" required>
+        <option value="">--Select--</option>
+        <option value="Customer Experience">Customer Experience</option>
+        <option value="Financial impact">Financial impact</option>
+        <option value="Insights">Insights</option>
+        <option value="Risk reduction">Risk reduction</option>
+        <option value="Others">Others</option>
+      </select>
+    </div>
+
+    <!-- Submit Button -->
+    <div class="form-actions">
+      <button type="submit">Submit</button>
+    </div>
+    {% if error %}
       <div class="error">{{ error }}</div>
-      {% endif %}
-      {% if message %}
+    {% endif %}
+    {% if message %}
       <div class="message">{{ message }}</div>
-      {% endif %}
-    </form>
-  </div>
-
-  <!-- JavaScript for custom dropdown suggestions -->
-  <script>
-    document.addEventListener("DOMContentLoaded", function() {
-      // Convert backend projects list to a JavaScript array.
-      var projects = JSON.parse('{{ projects | tojson | safe }}');
-      console.log("Projects loaded:", projects);
-      
-      var projectInput = document.getElementById("project");
-      var suggestionsList = document.getElementById("suggestions-list");
-
-      // Update suggestions based on current input.
-      function updateSuggestions() {
-        var inputValue = projectInput.value.toLowerCase();
-        // Clear any existing suggestions
-        suggestionsList.innerHTML = "";
-        // Filter projects that include the input text
-        projects.forEach(function(proj) {
-          if (proj.toLowerCase().includes(inputValue)) {
-            var li = document.createElement("li");
-            li.textContent = proj;
-            li.addEventListener("click", function() {
-              projectInput.value = proj;
-              suggestionsList.innerHTML = "";
-            });
-            suggestionsList.appendChild(li);
-          }
-        });
-      }
-
-      // Listen to input events on the project field
-      projectInput.addEventListener("input", updateSuggestions);
-      
-      // Optional: hide suggestions when clicking outside the project field
-      document.addEventListener("click", function(e) {
-        if (!projectInput.contains(e.target)) {
-          suggestionsList.innerHTML = "";
-        }
-      });
-    });
-  </script>
+    {% endif %}
+  </form>
+</div>
 </body>
 </html>
