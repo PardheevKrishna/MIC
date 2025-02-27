@@ -22,8 +22,12 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
-# List of exception values for start date validation.
-start_date_exceptions = ["N/A", "TBD", "EXCEPTION"]
+# List of exception pairs (Main project, Name of the Project) for which start date change validation should be skipped.
+# Update this list with the actual exception pairs as needed.
+start_date_exceptions = [
+    # Example: ("Internal Update", "Monthly Summary"), 
+    # ("PTO", "PTO")
+]
 
 # The first sheet named 'Home' contains the employee names in column F.
 home_sheet = "Home"
@@ -62,7 +66,7 @@ for emp in employee_names:
     # Record original row numbers (assuming header is row 1)
     df["RowNumber"] = df.index + 2
 
-    # Convert dates using the known format (month-day-year)
+    # Convert "Status Date (Every Friday)" using the known format (month-day-year)
     df["Status Date (Every Friday)"] = pd.to_datetime(
         df["Status Date (Every Friday)"], format='%m-%d-%Y', errors='coerce'
     )
@@ -84,25 +88,21 @@ for emp in employee_names:
         # 3. Validate that the start date for a project is not changed.
         project_name = row.get("Name of the Project")
         start_date = row.get("Start Date")
+        main_project_val = str(row.get("Main project")).strip() if pd.notna(row.get("Main project")) else ""
+        project_name_val = str(project_name).strip() if pd.notna(project_name) else ""
+        # If the (Main project, Name of the Project) pair is in the exception list, skip start date check.
+        if (main_project_val, project_name_val) in start_date_exceptions:
+            continue
         if pd.notna(project_name) and pd.notna(start_date):
-            raw_start_date = str(start_date).strip()
-            # If the current row's start date is in the exception list, skip validation.
-            if raw_start_date in start_date_exceptions:
-                continue
             start_date_converted = pd.to_datetime(start_date, format='%m-%d-%Y', errors='coerce')
             if project_name not in project_start_info:
-                # Record both the raw value and the converted date.
                 project_start_info[project_name] = {
-                    "raw": raw_start_date,
                     "start_date": start_date_converted,
                     "sheet": emp,
                     "row": row_num
                 }
             else:
                 correct_info = project_start_info[project_name]
-                # If either the stored or current raw value is in exceptions, skip validation.
-                if correct_info["raw"] in start_date_exceptions or raw_start_date in start_date_exceptions:
-                    continue
                 if start_date_converted != correct_info["start_date"]:
                     expected_date_str = (correct_info["start_date"].strftime('%m-%d-%Y')
                                            if pd.notna(correct_info["start_date"]) else "NaT")
