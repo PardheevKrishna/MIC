@@ -23,7 +23,7 @@ allowed_values = {
 }
 
 # List of exception values (exact match) for start date validation.
-# If either "Main project" or "Name of the Project" equals any of these values, skip the start date check.
+# If either "Main project" or "Name of the Project" exactly equals one of these, skip the start date check.
 start_date_exceptions = ["Annual Leave"]
 
 # The first sheet named 'Home' contains the employee names in column F.
@@ -68,26 +68,30 @@ for emp in employee_names:
         df["Status Date (Every Friday)"], format='%m-%d-%Y', errors='coerce'
     )
 
-    # Process each row for allowed values and start date validations.
+    # Process each row for validations.
     for idx, row in df.iterrows():
         row_num = row["RowNumber"]
 
         # 1. Validate allowed values for the last six columns.
         for col, allowed in allowed_values.items():
             cell_val = row.get(col)
-            if pd.notna(cell_val) and cell_val not in allowed:
-                violations.append({
-                    "Employee": emp,
-                    "Violation Type": f"Invalid value in '{col}': found '{cell_val}'",
-                    "Location": f"Sheet '{emp}', Row {row_num}"
-                })
+            if pd.notna(cell_val):
+                # Split on comma and strip tokens.
+                tokens = [token.strip() for token in str(cell_val).split(',') if token.strip()]
+                # If there is not exactly one token or the token is not in allowed values, record violation.
+                if len(tokens) != 1 or tokens[0] not in allowed:
+                    violations.append({
+                        "Employee": emp,
+                        "Violation Type": f"Invalid value in '{col}': found '{cell_val}'",
+                        "Location": f"Sheet '{emp}', Row {row_num}"
+                    })
 
         # 3. Validate that the start date for a project is not changed.
         project_name = row.get("Name of the Project")
         start_date = row.get("Start Date")
         main_project_val = str(row.get("Main project")).strip() if pd.notna(row.get("Main project")) else ""
         project_name_val = str(project_name).strip() if pd.notna(project_name) else ""
-        # Skip validation if either value exactly matches any exception.
+        # Skip validation if either column exactly matches an exception.
         if (main_project_val in start_date_exceptions) or (project_name_val in start_date_exceptions):
             continue
 
