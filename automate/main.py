@@ -22,12 +22,9 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
-# List of exception pairs (Main project, Name of the Project) for which start date change validation should be skipped.
-# Update this list with the actual exception pairs as needed.
-start_date_exceptions = [
-    # Example: ("Internal Update", "Monthly Summary"), 
-    # ("PTO", "PTO")
-]
+# List of exception values (exact match) for start date validation.
+# If either "Main project" or "Name of the Project" equals any of these values, skip the start date check.
+start_date_exceptions = ["Annual Leave"]
 
 # The first sheet named 'Home' contains the employee names in column F.
 home_sheet = "Home"
@@ -90,9 +87,10 @@ for emp in employee_names:
         start_date = row.get("Start Date")
         main_project_val = str(row.get("Main project")).strip() if pd.notna(row.get("Main project")) else ""
         project_name_val = str(project_name).strip() if pd.notna(project_name) else ""
-        # If the (Main project, Name of the Project) pair is in the exception list, skip start date check.
-        if (main_project_val, project_name_val) in start_date_exceptions:
+        # Skip validation if either value exactly matches any exception.
+        if (main_project_val in start_date_exceptions) or (project_name_val in start_date_exceptions):
             continue
+
         if pd.notna(project_name) and pd.notna(start_date):
             start_date_converted = pd.to_datetime(start_date, format='%m-%d-%Y', errors='coerce')
             if project_name not in project_start_info:
