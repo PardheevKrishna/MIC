@@ -1,142 +1,148 @@
-#!/usr/bin/env python3
 import pandas as pd
-from openpyxl import load_workbook
+from datetime import datetime
 
-def main():
-    # Input and output file names – change these as needed.
-    input_file = 'input.xlsx'
-    output_file = 'output_validated.xlsx'
-    
-    # Allowed values for the last six columns (case sensitive)
-    allowed_values = {
-        "Functional Area": [
-            "CRIT", "CRIT - Data Management", "CRIT - Data Governance", 
-            "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"
-        ],
-        "Project Category": [
-            "Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", 
-            "GDA Related", "Trainings and Team Meeting"
-        ],
-        "Complexity": ["H", "M", "L"],
-        "Novelity": ["BAU repetitive", "One time repetitive", "New one time"],
-        "Output Type": [
-            "Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", 
-            "Business Management", "Administration", "Trainings/L&D activities", "Others"
-        ],
-        "Impact type": ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
-    }
-    
-    # Open the workbook to get all sheet names.
-    wb = load_workbook(input_file)
-    sheet_names = wb.sheetnames
+# ----------------- CONFIGURATION -----------------
+# Input and output file names
+input_file = "input.xlsx"         # Change this to your Excel file name
+output_file = "output_validated.xlsx"
 
-    # The first sheet 'Home' contains the employee names in column F.
-    # Assuming row 1 contains headers and row 2 (cell F2) is the header for employee names,
-    # then from row 3 downward (index 1 in the DataFrame) are the employee names.
-    home_df = pd.read_excel(input_file, sheet_name='Home')
-    employee_names = home_df.iloc[1:, 5].dropna().tolist()  # column index 5 corresponds to column F
-    employee_names = [str(name) for name in employee_names]
+# Allowed values for the last six columns (exact and case sensitive)
+allowed_values = {
+    "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
+        ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
+    "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)":
+        ["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"],
+    "Complexity (H,M,L)":
+        ["H", "M", "L"],
+    "Novelity (BAU repetitive, One time repetitive, New one time)":
+        ["BAU repetitive", "One time repetitive", "New one time"],
+    "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :":
+        ["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"],
+    "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
+        ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
+}
 
-    # Prepare storage for violations and monthly reports.
-    violations = []  # Each violation will be recorded as a dict with keys: Employee, Violation Type, Location.
-    monthly_reports = {}  # key: employee name, value: monthly summary DataFrame.
+# The first sheet named 'Home' contains the employee names in column F.
+home_sheet = "Home"
 
-    # Dictionary to track a project’s first recorded start date.
-    project_start_dates = {}  # key: project name, value: start date
+# ----------------- READ THE EXCEL FILE -----------------
+# Load the Home sheet to get employee names.
+# Here we assume that cell F2 is the header and employee names start at row 3.
+home_df = pd.read_excel(input_file, sheet_name=home_sheet, header=None)
+employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
 
-    # Process each employee sheet (if found in the workbook)
-    for emp in employee_names:
-        if emp in sheet_names:
-            df = pd.read_excel(input_file, sheet_name=emp)
-            # Expected columns (order matters):
-            expected_columns = [
-                "Status Date (Every Friday)", "Main project", "Name of the Project", 
-                "Project Key Milestones", "TM", "Start Date", "Completion Date % of Completion", 
-                "Status", "Weekly Time Spent(Hrs)", "Projected hours (Based on the Project: End to End implementation)", 
-                "Functional Area", "Project Category", "Complexity", "Novelity", "Output Type", "Impact type"
-            ]
-            # (You can add a check here to ensure df.columns match expected_columns.)
-            
-            # Loop over each row to run validations.
-            for idx, row in df.iterrows():
-                # Compute an Excel-style row number (assuming header is row 1)
-                excel_row = idx + 2  
-                
-                # --- Validation 1: Check that each of the last six columns has an allowed value.
-                for col, allowed in allowed_values.items():
-                    value = row[col]
-                    if value not in allowed:
-                        violations.append({
-                            "Employee": emp,
-                            "Violation Type": f"Invalid value in {col}: '{value}'",
-                            "Location": f"Sheet: {emp}, Row: {excel_row}"
-                        })
-                
-                # --- Validation 3: Start Date consistency.
-                project_name = row["Name of the Project"]
-                start_date = row["Start Date"]
-                if project_name not in project_start_dates:
-                    project_start_dates[project_name] = start_date
-                else:
-                    if start_date != project_start_dates[project_name]:
-                        violations.append({
-                            "Employee": emp,
-                            "Violation Type": f"Start date changed for project '{project_name}'",
-                            "Location": f"Sheet: {emp}, Row: {excel_row}"
-                        })
-            
-            # Convert the "Status Date (Every Friday)" column to datetime.
-            df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], errors='coerce')
-            # Create a new column for month (as a period) from the status date.
-            df["Month"] = df["Status Date (Every Friday)"].dt.to_period("M")
-            
-            # Calculate work hours and PTO hours.
-            # (If "Main project" equals "PTO" then treat the hours as PTO hours.)
-            df["Work Hours"] = df.apply(lambda r: r["Weekly Time Spent(Hrs)"] if r["Main project"] != "PTO" else 0, axis=1)
-            df["PTO Hours"] = df.apply(lambda r: r["Weekly Time Spent(Hrs)"] if r["Main project"] == "PTO" else 0, axis=1)
-            
-            # Create monthly summary for this employee.
-            monthly_summary = df.groupby("Month").agg({"Work Hours": "sum", "PTO Hours": "sum"}).reset_index()
-            monthly_reports[emp] = monthly_summary
+# Get all sheet names from the workbook
+xls = pd.ExcelFile(input_file)
+all_sheet_names = xls.sheet_names
 
-            # --- Validation 2: Check that the employee has worked at least 40 hours in each week.
-            # Group rows by week. We assume that the "Status Date" is always a Friday,
-            # so we use a year-week grouping based on the date.
-            df["Week"] = df["Status Date (Every Friday)"].dt.strftime("%Y-%U")
-            weekly_summary = df.groupby("Week").agg({"Work Hours": "sum"}).reset_index()
-            for _, week_row in weekly_summary.iterrows():
-                if week_row["Work Hours"] < 40:
+# Containers for violations and employee monthly reports.
+violations = []  # Each violation is a dict with Employee, Violation Type, and Location.
+employee_reports = {}  # Key: employee name, Value: monthly summary DataFrame.
+project_start_dates = {}  # Global dictionary to track the first start date for each project
+
+# ----------------- PROCESS EACH EMPLOYEE SHEET -----------------
+for emp in employee_names:
+    if emp not in all_sheet_names:
+        print(f"Warning: No sheet found for employee '{emp}'. Skipping.")
+        continue
+
+    df = pd.read_excel(input_file, sheet_name=emp)
+    # Clean up column headers (strip extra spaces)
+    df.columns = [str(col).strip() for col in df.columns]
+
+    # Ensure required columns are present
+    required_columns = [
+        "Status Date (Every Friday)", "Main project", "Name of the Project", "Start Date", 
+        "Weekly Time Spent(Hrs)"
+    ]
+    for col in required_columns:
+        if col not in df.columns:
+            raise ValueError(f"Column '{col}' not found in sheet '{emp}'.")
+
+    # Process each row in the employee's sheet
+    for idx, row in df.iterrows():
+        # Excel row number (assumes header is row 1)
+        row_num = idx + 2
+
+        # ---- 1. Validate allowed values for the last six columns ----
+        for col, allowed in allowed_values.items():
+            cell_val = row.get(col)
+            # Only flag if the cell is non-empty and does not exactly match one of the allowed values.
+            if pd.notna(cell_val) and cell_val not in allowed:
+                violations.append({
+                    "Employee": emp,
+                    "Violation Type": f"Invalid value in '{col}': found '{cell_val}'",
+                    "Location": f"Sheet '{emp}', Row {row_num}"
+                })
+
+        # ---- 2. Validate weekly hours (each week must have at least 40 hours) ----
+        try:
+            weekly_hours = float(row.get("Weekly Time Spent(Hrs)", 0))
+        except Exception:
+            weekly_hours = 0
+        if weekly_hours < 40:
+            violations.append({
+                "Employee": emp,
+                "Violation Type": f"Insufficient weekly hours: {weekly_hours} (< 40)",
+                "Location": f"Sheet '{emp}', Row {row_num}"
+            })
+
+        # ---- 3. Validate that the start date for a project is not changed ----
+        project_name = row.get("Name of the Project")
+        start_date = row.get("Start Date")
+        if pd.notna(project_name) and pd.notna(start_date):
+            # Convert start_date to a datetime object if it is not already
+            if not isinstance(start_date, (datetime, pd.Timestamp)):
+                try:
+                    start_date = pd.to_datetime(start_date)
+                except Exception:
+                    pass
+            # Check against global project_start_dates
+            if project_name not in project_start_dates:
+                project_start_dates[project_name] = start_date
+            else:
+                if start_date != project_start_dates[project_name]:
                     violations.append({
                         "Employee": emp,
-                        "Violation Type": f"Weekly work hours less than 40 (Total: {week_row['Work Hours']}) in week {week_row['Week']}",
-                        "Location": f"Sheet: {emp}, Week: {week_row['Week']}"
+                        "Violation Type": f"Start date changed for project '{project_name}' (expected {project_start_dates[project_name]}, got {start_date})",
+                        "Location": f"Sheet '{emp}', Row {row_num}"
                     })
-        else:
-            print(f"Warning: Sheet for employee '{emp}' not found in the workbook.")
-    
-    # Write out a new Excel file with:
-    # - The original sheets (Home and each employee)
-    # - New monthly report sheets for each employee (named <Employee>_Report)
-    # - A new "Violations" sheet listing all violations.
-    with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-        # Write all original sheets.
-        for sheet in sheet_names:
-            sheet_df = pd.read_excel(input_file, sheet_name=sheet)
-            sheet_df.to_excel(writer, sheet_name=sheet, index=False)
-        
-        # Write monthly report sheets for each employee.
-        for emp, report_df in monthly_reports.items():
-            # Limit sheet name length (Excel sheet names can have at most 31 characters).
-            sheet_name = f"{emp}_Report"
-            if len(sheet_name) > 31:
-                sheet_name = sheet_name[:31]
-            report_df.to_excel(writer, sheet_name=sheet_name, index=False)
-        
-        # Write the violations sheet.
-        violations_df = pd.DataFrame(violations)
-        violations_df.to_excel(writer, sheet_name="Violations", index=False)
-    
-    print("Validation and report generation completed. Output saved to", output_file)
 
-if __name__ == "__main__":
-    main()
+    # ---- 4. Create monthly summary report for the employee ----
+    # Convert "Status Date (Every Friday)" to datetime; if conversion fails, errors become NaT.
+    df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], errors="coerce")
+    # Create a "Month" column (e.g., "2025-02")
+    df["Month"] = df["Status Date (Every Friday)"].dt.to_period("M")
+    
+    # Determine which rows are PTO: if "Main project" contains 'PTO'
+    df["PTO Hours"] = df.apply(lambda row: row["Weekly Time Spent(Hrs)"]
+                               if "PTO" in str(row.get("Main project", "")) else 0, axis=1)
+    # Work hours are those rows where it is not PTO.
+    df["Work Hours"] = df.apply(lambda row: 0 if "PTO" in str(row.get("Main project", "")) 
+                                else row["Weekly Time Spent(Hrs)"], axis=1)
+    
+    # Group by Month to sum up Work and PTO hours
+    monthly_summary = df.groupby("Month").agg({
+        "Work Hours": "sum",
+        "PTO Hours": "sum"
+    }).reset_index()
+    # Convert month to string format for reporting
+    monthly_summary["Month"] = monthly_summary["Month"].astype(str)
+    employee_reports[emp] = monthly_summary
+
+# ----------------- WRITE RESULTS TO NEW EXCEL FILE -----------------
+with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+    # Write one sheet per employee containing their monthly report.
+    for emp, report_df in employee_reports.items():
+        sheet_name = f"{emp}_Report"
+        # Ensure sheet name fits Excel limitations.
+        report_df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    # Write all violations to a new "Violations" sheet.
+    if violations:
+        violations_df = pd.DataFrame(violations)
+    else:
+        violations_df = pd.DataFrame(columns=["Employee", "Violation Type", "Location"])
+    violations_df.to_excel(writer, sheet_name="Violations", index=False)
+
+print(f"Validation complete. Output written to '{output_file}'.")
