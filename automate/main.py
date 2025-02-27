@@ -70,7 +70,7 @@ for emp in employee_names:
         df["Status Date (Every Friday)"], format='%m-%d-%Y', errors='coerce'
     )
     
-    # Process each row for validations
+    # Process each row for validations (allowed values and project start date)
     for idx, row in df.iterrows():
         row_num = row["RowNumber"]
 
@@ -110,8 +110,8 @@ for emp in employee_names:
                         "Location": f"Sheet '{emp}', Row {row_num}"
                     })
 
-    # ---- 2. Validate weekly work hours (each week must have at least 40 work hours) ----
-    # First, compute Work Hours per row: if "PTO" is in "Main project", then work hours are 0.
+    # ---- 2. Validate weekly work hours ----
+    # Compute Work Hours per row: if "PTO" is in "Main project", then work hours are 0.
     df["Work Hours"] = df.apply(
         lambda row: 0 if "PTO" in str(row.get("Main project", "")) else row["Weekly Time Spent(Hrs)"],
         axis=1
@@ -121,17 +121,25 @@ for emp in employee_names:
         lambda row: row["Weekly Time Spent(Hrs)"] if "PTO" in str(row.get("Main project", "")) else 0,
         axis=1
     )
-    # Group rows by the Status Date (i.e. each week; the date is the Friday for that week)
-    weekly_groups = df.groupby("Status Date (Every Friday)")
-    for week_date, group in weekly_groups:
-        # Sum up the work hours for the week (exclude PTO hours)
-        week_work_sum = group["Work Hours"].sum()
+    # Now, for the weekly check, look for rows where the status date is a Friday.
+    # For each such Friday, define the week as that Friday and the 4 preceding days.
+    friday_df = df[df["Status Date (Every Friday)"].dt.weekday == 4]
+    unique_fridays = friday_df["Status Date (Every Friday)"].dropna().unique()
+
+    for friday in unique_fridays:
+        week_start = friday - pd.Timedelta(days=4)
+        # Filter rows for this week: dates between week_start and friday (inclusive)
+        week_rows = df[(df["Status Date (Every Friday)"] >= week_start) & (df["Status Date (Every Friday)"] <= friday)]
+        week_work_sum = week_rows["Work Hours"].sum()
         if week_work_sum < 40:
-            # List affected rows (row numbers) in this group
-            affected_rows = ", ".join(str(x) for x in group["RowNumber"].tolist())
+            affected_rows = ", ".join(str(x) for x in week_rows["RowNumber"].tolist())
+            violation_message = (
+                f"Insufficient weekly work hours: {week_work_sum} (<40) for week ending {friday.strftime('%m-%d-%Y')} "
+                f"(from {week_start.strftime('%m-%d-%Y')} to {friday.strftime('%m-%d-%Y')})"
+            )
             violations.append({
                 "Employee": emp,
-                "Violation Type": f"Insufficient weekly work hours: {week_work_sum} (<40) for week ending {week_date.strftime('%m-%d-%Y') if pd.notna(week_date) else 'NaT'}",
+                "Violation Type": violation_message,
                 "Location": f"Sheet '{emp}', Rows: {affected_rows}"
             })
 
