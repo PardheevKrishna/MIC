@@ -66,7 +66,6 @@ for emp in employee_names:
     df["RowNumber"] = df.index + 2
 
     # ---- Convert dates using known format (month-day-year) ----
-    # For "Status Date (Every Friday)"
     df["Status Date (Every Friday)"] = pd.to_datetime(
         df["Status Date (Every Friday)"], format='%m-%d-%Y', errors='coerce'
     )
@@ -100,11 +99,13 @@ for emp in employee_names:
             else:
                 correct_info = project_start_info[project_name]
                 if start_date_converted != correct_info["start_date"]:
+                    expected_date_str = correct_info["start_date"].strftime('%m-%d-%Y') if pd.notna(correct_info["start_date"]) else "NaT"
+                    found_date_str = start_date_converted.strftime('%m-%d-%Y') if pd.notna(start_date_converted) else "NaT"
                     violations.append({
                         "Employee": emp,
                         "Violation Type": (
-                            f"Start date changed for project '{project_name}': expected {correct_info['start_date'].strftime('%m-%d-%Y')} "
-                            f"(Sheet: {correct_info['sheet']}, Row: {correct_info['row']}) but found {start_date_converted.strftime('%m-%d-%Y')} at Row {row_num}"
+                            f"Start date changed for project '{project_name}': expected {expected_date_str} "
+                            f"(Sheet: {correct_info['sheet']}, Row: {correct_info['row']}) but found {found_date_str} at Row {row_num}"
                         ),
                         "Location": f"Sheet '{emp}', Row {row_num}"
                     })
@@ -130,7 +131,7 @@ for emp in employee_names:
             affected_rows = ", ".join(str(x) for x in group["RowNumber"].tolist())
             violations.append({
                 "Employee": emp,
-                "Violation Type": f"Insufficient weekly work hours: {week_work_sum} (<40) for week ending {week_date.strftime('%m-%d-%Y')}",
+                "Violation Type": f"Insufficient weekly work hours: {week_work_sum} (<40) for week ending {week_date.strftime('%m-%d-%Y') if pd.notna(week_date) else 'NaT'}",
                 "Location": f"Sheet '{emp}', Rows: {affected_rows}"
             })
 
