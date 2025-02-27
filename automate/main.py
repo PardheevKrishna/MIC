@@ -1,4 +1,5 @@
 import pandas as pd
+import re
 from datetime import datetime
 from openpyxl.styles import Alignment
 
@@ -76,9 +77,9 @@ for emp in employee_names:
         for col, allowed in allowed_values.items():
             cell_val = row.get(col)
             if pd.notna(cell_val):
-                # Split on comma and strip tokens.
-                tokens = [token.strip() for token in str(cell_val).split(',') if token.strip()]
-                # If there is not exactly one token or the token is not in allowed values, record violation.
+                # Split using comma, semicolon, or newline.
+                tokens = [token.strip() for token in re.split(r'[,;\n]', str(cell_val)) if token.strip()]
+                # If there is not exactly one token or the token is not in allowed values, record a violation.
                 if len(tokens) != 1 or tokens[0] not in allowed:
                     violations.append({
                         "Employee": emp,
@@ -91,7 +92,7 @@ for emp in employee_names:
         start_date = row.get("Start Date")
         main_project_val = str(row.get("Main project")).strip() if pd.notna(row.get("Main project")) else ""
         project_name_val = str(project_name).strip() if pd.notna(project_name) else ""
-        # Skip validation if either column exactly matches an exception.
+        # Skip start date validation if either value exactly matches an exception.
         if (main_project_val in start_date_exceptions) or (project_name_val in start_date_exceptions):
             continue
 
