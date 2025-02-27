@@ -1,5 +1,6 @@
 import pandas as pd
 from datetime import datetime
+from openpyxl.styles import Alignment
 
 # ----------------- CONFIGURATION -----------------
 # Input and output file names
@@ -27,7 +28,7 @@ home_sheet = "Home"
 
 # ----------------- READ THE EXCEL FILE -----------------
 # Load the Home sheet to get employee names.
-# Here we assume that cell F2 is the header and employee names start at row 3.
+# We assume that cell F2 is the header and employee names start at row 3.
 home_df = pd.read_excel(input_file, sheet_name=home_sheet, header=None)
 employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
 
@@ -130,12 +131,11 @@ for emp in employee_names:
     monthly_summary["Month"] = monthly_summary["Month"].astype(str)
     employee_reports[emp] = monthly_summary
 
-# ----------------- WRITE RESULTS TO NEW EXCEL FILE -----------------
+# ----------------- WRITE RESULTS TO NEW EXCEL FILE WITH LEFT ALIGNMENT -----------------
 with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
     # Write one sheet per employee containing their monthly report.
     for emp, report_df in employee_reports.items():
         sheet_name = f"{emp}_Report"
-        # Ensure sheet name fits Excel limitations.
         report_df.to_excel(writer, sheet_name=sheet_name, index=False)
 
     # Write all violations to a new "Violations" sheet.
@@ -144,5 +144,13 @@ with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
     else:
         violations_df = pd.DataFrame(columns=["Employee", "Violation Type", "Location"])
     violations_df.to_excel(writer, sheet_name="Violations", index=False)
+
+    # After writing all sheets, iterate over every cell in each worksheet to set left alignment.
+    workbook = writer.book
+    for ws in workbook.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                cell.alignment = Alignment(horizontal="left")
+    # The workbook is automatically saved when the context manager exits.
 
 print(f"Validation complete. Output written to '{output_file}'.")
