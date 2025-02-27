@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 # -------------- FIXED EXCEL FILE PATH --------------
-FILE_PATH = "input.xlsx"  # <-- Change to your actual path
+FILE_PATH = "input.xlsx"  # Change to your actual path
 
 st.set_page_config(page_title="Team Report Dashboard", layout="wide")
 st.title("Team Report Dashboard (Fixed Excel File)")
@@ -13,25 +13,32 @@ st.title("Team Report Dashboard (Fixed Excel File)")
 def process_excel_file(file_path):
     """
     Reads and processes each employee sheet from 'file_path'.
-    Returns:
-      - team_monthly_summary: DataFrame of monthly PTO/Work sums per employee
-      - working_hours_details: DataFrame of all rows from all employees
-      - violations_df: DataFrame with 'Violation Type' in {Invalid value, Working hours less than 40, Start date change}
+    Returns two main DataFrames:
+      - working_hours_details: row-level data for all employees, with columns:
+          Employee, RowNumber, Status Date (Every Friday),
+          Main project, Name of the Project, Start Date,
+          Weekly Time Spent(Hrs), Work Hours, PTO Hours,
+          Month (yyyy-mm), WeekFriday (mm-dd-yyyy)
+      - violations_df: row of violations with:
+          Employee, Violation Type, Violation Details,
+          Location, Violation Date
+        where Violation Type is one of:
+          "Invalid value", "Working hours less than 40", "Start date change"
     """
+    # Read "Home" sheet to get employee names from column F (starting row 3)
     home_df = pd.read_excel(file_path, sheet_name="Home", header=None)
     employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
 
     xls = pd.ExcelFile(file_path)
     all_sheet_names = xls.sheet_names
 
-    employee_reports_list = []
     working_hours_details_list = []
     violations_list = []
 
-    # For start-date checks: track first start date per (project, month)
+    # For start-date checks: track the first start date per (project, month)
     project_month_info = {}
 
-    # Allowed single-token values for the last six columns (exact, case sensitive)
+    # Allowed single-token values for the last six columns
     allowed_values = {
         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
             ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
@@ -47,7 +54,7 @@ def process_excel_file(file_path):
             ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
     }
 
-    # If "Main project" or "Name of the Project" exactly matches any of these, skip start-date check
+    # If "Main project" or "Name of the Project" exactly equals one of these, skip start-date check
     start_date_exceptions = ["Annual Leave"]
 
     # -------------- PROCESS EACH EMPLOYEE --------------
@@ -67,7 +74,7 @@ def process_excel_file(file_path):
         for rc in required_cols:
             if rc not in df.columns:
                 st.error(f"Column '{rc}' not found in sheet '{emp}'.")
-                return None
+                return None, None
 
         df["Employee"] = emp
         df["RowNumber"] = df.index + 2  # assume header is row 1
@@ -77,21 +84,24 @@ def process_excel_file(file_path):
             df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce"
         )
 
-        # ---------- 1) ALLOWED VALUES ----------
+        # ---------- Allowed Values Check ----------
         for col, allowed_list in allowed_values.items():
             for i, val in df[col].items():
                 if pd.isna(val):
                     continue
                 tokens = [t.strip() for t in str(val).split(",") if t.strip()]
                 if len(tokens) != 1 or tokens[0] not in allowed_list:
+                    # For "Invalid value" violation, use the row's date if available
+                    violation_date = df.at[i, "Status Date (Every Friday)"]
                     violations_list.append({
                         "Employee": emp,
                         "Violation Type": "Invalid value",
                         "Violation Details": f"Invalid value in '{col}': '{val}'",
-                        "Location": f"Sheet '{emp}', Row {df.at[i, 'RowNumber']}"
+                        "Location": f"Sheet '{emp}', Row {df.at[i, 'RowNumber']}",
+                        "Violation Date": violation_date  # can be NaT if not available
                     })
 
-        # ---------- 2) START DATE (project+month) ----------
+        # ---------- Start Date Validation (project+month) ----------
         for i, row in df.iterrows():
             proj = row["Name of the Project"]
             start_val = row["Start Date"]
@@ -115,16 +125,20 @@ def process_excel_file(file_path):
                 else:
                     baseline = project_month_info[key]["start_date"]
                     if current_start != baseline:
-                        old_str = baseline.strftime("%m-%d-%Y") if pd.notna(baseline) else "NaT"
-                        new_str = current_start.strftime("%m-%d-%Y") if pd.notna(current_start) else "NaT"
+                        violation_date = row["Status Date (Every Friday)"]
                         violations_list.append({
                             "Employee": emp,
                             "Violation Type": "Start date change",
-                            "Violation Details": f"Expected {old_str}, found {new_str} for '{proj}' in {month_key}",
-                            "Location": f"Sheet '{emp}', Row {row['RowNumber']}"
+                            "Violation Details": (
+                                f"Expected {baseline.strftime('%m-%d-%Y') if pd.notna(baseline) else 'NaT'}, "
+                                f"found {current_start.strftime('%m-%d-%Y') if pd.notna(current_start) else 'NaT'} "
+                                f"for '{proj}' in {month_key}"
+                            ),
+                            "Location": f"Sheet '{emp}', Row {row['RowNumber']}",
+                            "Violation Date": violation_date
                         })
 
-        # ---------- 3) WEEKLY HOURS ----------
+        # ---------- Weekly Hours (≥ 40) ----------
         df["Weekly Time Spent(Hrs)"] = pd.to_numeric(df["Weekly Time Spent(Hrs)"], errors="coerce").fillna(0)
         friday_rows = df[df["Status Date (Every Friday)"].dt.weekday == 4]
         unique_fridays = friday_rows["Status Date (Every Friday)"].dropna().unique()
@@ -134,15 +148,19 @@ def process_excel_file(file_path):
                          (df["Status Date (Every Friday)"] <= friday)]
             total_hrs = week_df["Weekly Time Spent(Hrs)"].sum()
             if total_hrs < 40:
+                # For a weekly violation, store the Friday date
+                for i2, r2 in week_df.iterrows():
+                    pass  # we could list the rownumbers, but we only store one violation
                 row_nums = ", ".join(str(x) for x in week_df["RowNumber"].tolist())
                 violations_list.append({
                     "Employee": emp,
                     "Violation Type": "Working hours less than 40",
                     "Violation Details": f"Insufficient weekly hours: {total_hrs}",
-                    "Location": f"Sheet '{emp}', Rows: {row_nums}"
+                    "Location": f"Sheet '{emp}', Rows: {row_nums}",
+                    "Violation Date": friday
                 })
 
-        # ---------- 4) MONTHLY SUMMARY (PTO vs Work) ----------
+        # ---------- Prepare row-level PTO/Work, Month, Week ----------
         df["PTO Hours"] = df.apply(
             lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" in str(r["Main project"]) else 0,
             axis=1
@@ -152,83 +170,98 @@ def process_excel_file(file_path):
             axis=1
         )
         df["Month"] = df["Status Date (Every Friday)"].dt.to_period("M").astype(str)
+        df["WeekFriday"] = df["Status Date (Every Friday)"].dt.strftime("%m-%d-%Y")
 
-        monthly_summary = df.groupby("Month").agg({
-            "Work Hours": "sum",
-            "PTO Hours": "sum"
-        }).reset_index()
-        monthly_summary["Employee"] = emp
-        employee_reports_list.append(monthly_summary)
-
-        # Keep entire detail
+        # Store the entire detail
         working_hours_details_list.append(df)
 
-    # Combine
-    if employee_reports_list:
-        team_monthly_summary = pd.concat(employee_reports_list, ignore_index=True)
-    else:
-        team_monthly_summary = pd.DataFrame()
-
+    # Combine all employees
     if working_hours_details_list:
         working_hours_details = pd.concat(working_hours_details_list, ignore_index=True)
     else:
         working_hours_details = pd.DataFrame()
 
     violations_df = pd.DataFrame(violations_list)
-    return team_monthly_summary, working_hours_details, violations_df
+    return working_hours_details, violations_df
+
 
 # -------------- READ & PROCESS THE EXCEL --------------
 result = process_excel_file(FILE_PATH)
 if result is None:
     st.error("Error processing the Excel file.")
 else:
-    team_monthly_summary, working_hours_details, violations_df = result
+    working_hours_details, violations_df = result
     st.success("Reports generated successfully!")
 
     # ========== BUILD TABS FOR DASHBOARD ==========
     tabs = st.tabs(["Team Monthly Summary", "Working Hours Summary", "Violations"])
 
-    # ---------------- TAB 1: TEAM MONTHLY SUMMARY ----------------
+    # -------------- TAB 1: TEAM MONTHLY SUMMARY --------------
     with tabs[0]:
         st.subheader("Team Monthly Summary")
-        if team_monthly_summary.empty:
+
+        if working_hours_details.empty:
             st.info("No data available.")
         else:
-            all_employees = sorted(team_monthly_summary["Employee"].unique())
-            all_months = sorted(team_monthly_summary["Month"].unique())
+            # We'll do an on-the-fly aggregator by month (and employee) AFTER we filter by employee, month, week
+            # so we can also incorporate the "Select Week" requirement.
+            all_employees = sorted(working_hours_details["Employee"].dropna().unique())
+            all_months = sorted(working_hours_details["Month"].dropna().unique())
+            all_weeks = sorted(working_hours_details["WeekFriday"].dropna().unique())
 
-            # Use a form so user can pick multiple options & only see changes after "Filter Data"
             with st.form("monthly_summary_form"):
-                # Employees
                 c1, c2 = st.columns([0.7, 0.3])
                 employees_chosen = c1.multiselect("Select Employee(s)", options=all_employees, default=[])
                 select_all_emp = c2.checkbox("Select All Employees")
 
-                # Months
                 c3, c4 = st.columns([0.7, 0.3])
                 months_chosen = c3.multiselect("Select Month(s)", options=all_months, default=[])
                 select_all_months = c4.checkbox("Select All Months")
 
+                # If at least one month is chosen, only show weeks from those months
+                if months_chosen:
+                    subset_for_weeks = working_hours_details[working_hours_details["Month"].isin(months_chosen)]
+                    possible_weeks = sorted(subset_for_weeks["WeekFriday"].dropna().unique())
+                else:
+                    possible_weeks = all_weeks
+
+                c5, c6 = st.columns([0.7, 0.3])
+                weeks_chosen = c5.multiselect("Select Week(s) (Friday date)", options=possible_weeks, default=[])
+                select_all_weeks = c6.checkbox("Select All Weeks")
+
                 filter_btn = st.form_submit_button("Filter Data")
 
             if filter_btn:
+                # Apply the "Select All" logic
                 if select_all_emp:
                     employees_chosen = all_employees
                 if select_all_months:
                     months_chosen = all_months
+                if select_all_weeks:
+                    weeks_chosen = possible_weeks
 
-                filtered_team = team_monthly_summary.copy()
+                filtered_df = working_hours_details.copy()
                 if employees_chosen:
-                    filtered_team = filtered_team[filtered_team["Employee"].isin(employees_chosen)]
+                    filtered_df = filtered_df[filtered_df["Employee"].isin(employees_chosen)]
                 if months_chosen:
-                    filtered_team = filtered_team[filtered_team["Month"].isin(months_chosen)]
+                    filtered_df = filtered_df[filtered_df["Month"].isin(months_chosen)]
+                if weeks_chosen:
+                    filtered_df = filtered_df[filtered_df["WeekFriday"].isin(weeks_chosen)]
 
-                st.dataframe(filtered_team, use_container_width=True)
+                # Now do a monthly aggregator
+                # Summarize by (Employee, Month) => sum of Work Hours, sum of PTO Hours
+                monthly_summary = (
+                    filtered_df.groupby(["Employee", "Month"], dropna=False)
+                    .agg({"Work Hours": "sum", "PTO Hours": "sum"})
+                    .reset_index()
+                )
 
-                # Download filtered
+                st.dataframe(monthly_summary, use_container_width=True)
+
+                # Download the aggregator
                 team_buffer = BytesIO()
                 with pd.ExcelWriter(team_buffer, engine="openpyxl") as writer:
-                    filtered_team.to_excel(writer, sheet_name="Filtered_Team_Monthly", index=False)
+                    monthly_summary.to_excel(writer, sheet_name="Filtered_Team_Monthly", index=False)
                 team_buffer.seek(0)
                 st.download_button(
                     "Download Filtered Team Monthly",
@@ -239,34 +272,34 @@ else:
             else:
                 st.info("Select filters above and click 'Filter Data' to view results.")
 
-    # ---------------- TAB 2: WORKING HOURS SUMMARY ----------------
+    # -------------- TAB 2: WORKING HOURS SUMMARY --------------
     with tabs[1]:
         st.subheader("Working Hours Summary")
         if working_hours_details.empty:
             st.info("No data available.")
         else:
-            # Precompute Month & Week columns
-            working_hours_details["Month"] = working_hours_details["Status Date (Every Friday)"].dt.to_period("M").astype(str)
-            working_hours_details["WeekFriday"] = working_hours_details["Status Date (Every Friday)"].dt.strftime("%m-%d-%Y")
-
-            all_emps_wh = sorted(working_hours_details["Employee"].unique())
-            all_months_wh = sorted(working_hours_details["Month"].unique())
-            all_weeks = sorted(working_hours_details["WeekFriday"].dropna().unique())
+            all_emps_wh = sorted(working_hours_details["Employee"].dropna().unique())
+            all_months_wh = sorted(working_hours_details["Month"].dropna().unique())
+            all_weeks_wh = sorted(working_hours_details["WeekFriday"].dropna().unique())
 
             with st.form("working_hours_form"):
-                # Employees
                 c1, c2 = st.columns([0.7, 0.3])
                 emp_chosen_wh = c1.multiselect("Select Employee(s)", options=all_emps_wh, default=[])
                 select_all_emp_wh = c2.checkbox("Select All Employees")
 
-                # Months
                 c3, c4 = st.columns([0.7, 0.3])
                 months_chosen_wh = c3.multiselect("Select Month(s)", options=all_months_wh, default=[])
                 select_all_months_wh = c4.checkbox("Select All Months")
 
-                # Weeks
+                # If months chosen, only show those weeks
+                if months_chosen_wh:
+                    subset_for_weeks_wh = working_hours_details[working_hours_details["Month"].isin(months_chosen_wh)]
+                    possible_weeks_wh = sorted(subset_for_weeks_wh["WeekFriday"].dropna().unique())
+                else:
+                    possible_weeks_wh = all_weeks_wh
+
                 c5, c6 = st.columns([0.7, 0.3])
-                weeks_chosen_wh = c5.multiselect("Select Week(s) (Friday date)", options=all_weeks, default=[])
+                weeks_chosen_wh = c5.multiselect("Select Week(s) (Friday date)", options=possible_weeks_wh, default=[])
                 select_all_weeks_wh = c6.checkbox("Select All Weeks")
 
                 filter_btn_wh = st.form_submit_button("Filter Data")
@@ -277,7 +310,7 @@ else:
                 if select_all_months_wh:
                     months_chosen_wh = all_months_wh
                 if select_all_weeks_wh:
-                    weeks_chosen_wh = all_weeks
+                    weeks_chosen_wh = possible_weeks_wh
 
                 filtered_wh = working_hours_details.copy()
                 if emp_chosen_wh:
@@ -303,17 +336,17 @@ else:
             else:
                 st.info("Select filters above and click 'Filter Data' to view results.")
 
-    # ---------------- TAB 3: VIOLATIONS ----------------
+    # -------------- TAB 3: VIOLATIONS --------------
     with tabs[2]:
         st.subheader("Violations")
         if violations_df.empty:
             st.info("No violations found.")
         else:
-            # The user wants exactly 3 possible types:
-            #   "Invalid value", "Working hours less than 40", "Start date change"
-            # We'll display only those. If your data has others, they'd appear anyway, but let's assume it's just these 3.
+            # Distinct employees
             all_emps_v = sorted(violations_df["Employee"].dropna().unique())
-            all_types_v = sorted(violations_df["Violation Type"].dropna().unique())
+            # Distinct violation types
+            all_types_v = ["Invalid value", "Working hours less than 40", "Start date change"]
+            # (If your data has more, you can expand this list or just read from violations_df.)
 
             with st.form("violations_form"):
                 c1, c2 = st.columns([0.7, 0.3])
@@ -357,10 +390,9 @@ else:
     # -------------- DOWNLOAD FULL REPORT --------------
     st.markdown("---")
     st.subheader("Download Full Excel Report")
-    if not team_monthly_summary.empty or not working_hours_details.empty or not violations_df.empty:
+    if not working_hours_details.empty or not violations_df.empty:
         full_buffer = BytesIO()
         with pd.ExcelWriter(full_buffer, engine="openpyxl") as writer:
-            team_monthly_summary.to_excel(writer, sheet_name="Team_Monthly_Summary", index=False)
             working_hours_details.to_excel(writer, sheet_name="Working_Hours_Details", index=False)
             violations_df.to_excel(writer, sheet_name="Violations", index=False)
         full_buffer.seek(0)
