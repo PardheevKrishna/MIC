@@ -48,10 +48,10 @@ for emp in employee_names:
         continue
 
     df = pd.read_excel(input_file, sheet_name=emp)
-    # Clean up column headers (strip extra spaces)
-    df.columns = [str(col).strip() for col in df.columns]
+    # Normalize column headers by replacing newline characters with a space and stripping extra spaces.
+    df.columns = [str(col).replace("\n", " ").strip() for col in df.columns]
 
-    # Ensure required columns are present
+    # Ensure required columns are present. Note that "Status Date (Every Friday)" now will match if originally split over two lines.
     required_columns = [
         "Status Date (Every Friday)", "Main project", "Name of the Project", "Start Date", 
         "Weekly Time Spent(Hrs)"
