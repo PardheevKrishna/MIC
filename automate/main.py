@@ -22,7 +22,7 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
-# List of exception values for start date (adjust as needed)
+# List of exception values for start date validation.
 start_date_exceptions = ["N/A", "TBD", "EXCEPTION"]
 
 # The first sheet named 'Home' contains the employee names in column F.
@@ -38,7 +38,7 @@ all_sheet_names = xls.sheet_names
 # Containers for violations and monthly reports.
 violations = []    # Each violation is a dict with Employee, Violation Type, and Location.
 employee_reports = {}  # Key: employee name, Value: monthly summary DataFrame.
-# For project start date tracking: map project name to its first encountered start date with sheet and row.
+# For project start date tracking: map project name to its first encountered start date info.
 project_start_info = {}
 
 # ----------------- PROCESS EACH EMPLOYEE SHEET -----------------
@@ -67,7 +67,7 @@ for emp in employee_names:
         df["Status Date (Every Friday)"], format='%m-%d-%Y', errors='coerce'
     )
 
-    # Process each row for allowed value and project start date validations.
+    # Process each row for allowed values and start date validations.
     for idx, row in df.iterrows():
         row_num = row["RowNumber"]
 
@@ -81,24 +81,28 @@ for emp in employee_names:
                     "Location": f"Sheet '{emp}', Row {row_num}"
                 })
 
-        # 3. Validate that the start date for a project is not changed,
-        # unless the cell value is an exception.
+        # 3. Validate that the start date for a project is not changed.
         project_name = row.get("Name of the Project")
         start_date = row.get("Start Date")
         if pd.notna(project_name) and pd.notna(start_date):
-            # Check for exception values.
-            if str(start_date).strip() in start_date_exceptions:
-                # Skip start date validation for this row.
+            raw_start_date = str(start_date).strip()
+            # If the current row's start date is in the exception list, skip validation.
+            if raw_start_date in start_date_exceptions:
                 continue
             start_date_converted = pd.to_datetime(start_date, format='%m-%d-%Y', errors='coerce')
             if project_name not in project_start_info:
+                # Record both the raw value and the converted date.
                 project_start_info[project_name] = {
+                    "raw": raw_start_date,
                     "start_date": start_date_converted,
                     "sheet": emp,
                     "row": row_num
                 }
             else:
                 correct_info = project_start_info[project_name]
+                # If either the stored or current raw value is in exceptions, skip validation.
+                if correct_info["raw"] in start_date_exceptions or raw_start_date in start_date_exceptions:
+                    continue
                 if start_date_converted != correct_info["start_date"]:
                     expected_date_str = (correct_info["start_date"].strftime('%m-%d-%Y')
                                            if pd.notna(correct_info["start_date"]) else "NaT")
@@ -114,18 +118,17 @@ for emp in employee_names:
                     })
 
     # 2. Validate weekly work hours.
-    # For weekly totals, sum up the raw "Weekly Time Spent(Hrs)" so that PTO hours are counted.
-    # First, ensure "Weekly Time Spent(Hrs)" is numeric.
+    # For weekly totals, sum up the raw "Weekly Time Spent(Hrs)" (including PTO).
     df["Weekly Time Spent(Hrs)"] = pd.to_numeric(df["Weekly Time Spent(Hrs)"], errors='coerce').fillna(0)
-
     # For the weekly check, find rows where the status date is a Friday.
     friday_df = df[df["Status Date (Every Friday)"].dt.weekday == 4]
     unique_fridays = friday_df["Status Date (Every Friday)"].dropna().unique()
 
     for friday in unique_fridays:
         week_start = friday - pd.Timedelta(days=4)
-        # Define the week as from week_start through friday (inclusive).
-        week_rows = df[(df["Status Date (Every Friday)"] >= week_start) & (df["Status Date (Every Friday)"] <= friday)]
+        # Define the week as from week_start through Friday (inclusive).
+        week_rows = df[(df["Status Date (Every Friday)"] >= week_start) & 
+                       (df["Status Date (Every Friday)"] <= friday)]
         week_hours_sum = week_rows["Weekly Time Spent(Hrs)"].sum()
         if week_hours_sum < 40:
             affected_rows = ", ".join(str(x) for x in week_rows["RowNumber"].tolist())
@@ -140,7 +143,7 @@ for emp in employee_names:
             })
 
     # 4. Create monthly summary report for the employee.
-    # For monthly reporting, we still want separate totals for non-PTO and PTO.
+    # For reporting, also calculate separate totals for non-PTO and PTO.
     df["PTO Hours"] = df.apply(lambda row: row["Weekly Time Spent(Hrs)"]
                                if "PTO" in str(row.get("Main project", "")) else 0, axis=1)
     df["Work Hours"] = df.apply(lambda row: row["Weekly Time Spent(Hrs)"]
