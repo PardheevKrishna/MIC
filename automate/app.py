@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from openpyxl import load_workbook
 
-# ---------------- CONFIG ----------------
+# ---------- CONFIGURATION ----------
 FILE_PATH = "input.xlsx"  # CHANGE this to your actual Excel file path
 
 st.set_page_config(page_title="Team Report Dashboard", layout="wide")
@@ -13,10 +13,9 @@ st.title("Team Report Dashboard (Fixed Excel File)")
 # ===================== PROCESS FUNCTION =====================
 def process_excel_file(file_path):
     """
-    Reads each employee sheet (employee names in 'Home' sheet) and returns two DataFrames:
-      - working_details: all employee data, with columns (Employee, RowNumber, Month, WeekFriday, etc.)
-      - violations_df: rows flagged as violations (Invalid value, Start date change, Weekly hours < 40, etc.)
-    Guards all .strftime() calls to avoid 'NaTType does not support strftime'.
+    Reads each employee sheet (names in 'Home') and returns two DataFrames:
+      - working_details: row-level data for all employees
+      - violations_df: flagged violations (Invalid value, Start date change, Weekly < 40, etc.)
     """
     try:
         home_df = pd.read_excel(file_path, sheet_name="Home", header=None)
@@ -47,7 +46,7 @@ def process_excel_file(file_path):
         "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
             ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
     }
-    # If main project or project name is "Annual Leave", skip start date checks
+    # If main project or project name = "Annual Leave", skip start-date check
     start_date_exceptions = ["Annual Leave"]
 
     for emp in employee_names:
@@ -66,7 +65,6 @@ def process_excel_file(file_path):
 
         df["Employee"] = emp
         df["RowNumber"] = df.index + 2  # row 1 is header
-        # Convert the status date, guarding errors
         df["Status Date (Every Friday)"] = pd.to_datetime(
             df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce"
         )
@@ -86,7 +84,7 @@ def process_excel_file(file_path):
                         "Violation Date": df.at[i, "Status Date (Every Friday)"]
                     })
 
-        # (2) Start date consistency
+        # (2) Start Date consistency
         for i, row in df.iterrows():
             proj = row["Name of the Project"]
             start_val = row["Start Date"]
@@ -103,25 +101,22 @@ def process_excel_file(file_path):
                 else:
                     baseline = project_month_info[key]
                     if pd.notna(current_start) and pd.notna(baseline) and current_start != baseline:
-                        # Safe strftime usage
-                        baseline_str = baseline.strftime("%m-%d-%Y") if pd.notna(baseline) else "N/A"
-                        current_str = current_start.strftime("%m-%d-%Y") if pd.notna(current_start) else "N/A"
+                        old_str = baseline.strftime("%m-%d-%Y") if pd.notna(baseline) else "N/A"
+                        new_str = current_start.strftime("%m-%d-%Y") if pd.notna(current_start) else "N/A"
                         viol_list.append({
                             "Employee": emp,
                             "Violation Type": "Start date change",
-                            "Violation Details": f"{proj}: expected {baseline_str}, got {current_str}",
+                            "Violation Details": f"{proj}: expected {old_str}, got {new_str}",
                             "Location": f"Sheet {emp}, Row {row['RowNumber']}",
                             "Violation Date": row["Status Date (Every Friday)"]
                         })
 
         # (3) Weekly hours check
         df["Weekly Time Spent(Hrs)"] = pd.to_numeric(df["Weekly Time Spent(Hrs)"], errors="coerce").fillna(0)
-        # Only consider valid dates and day-of-week == Friday
         friday_dates = df[(df["Status Date (Every Friday)"].dt.weekday == 4) & (df["Status Date (Every Friday)"].notna())]["Status Date (Every Friday)"].unique()
         for friday in friday_dates:
             if pd.isna(friday):
                 continue
-            # Safe strftime usage
             friday_str = friday.strftime("%m-%d-%Y") if pd.notna(friday) else "N/A"
             week_start = friday - timedelta(days=4)
             week_df = df[(df["Status Date (Every Friday)"] >= week_start) & (df["Status Date (Every Friday)"] <= friday)]
@@ -212,7 +207,6 @@ with tab1:
             else:
                 summary = df_tm.groupby(["Employee", "Month"]).agg({"Work Hours": "sum", "PTO Hours": "sum"}).reset_index()
             st.dataframe(summary, use_container_width=True)
-            # Download
             buf = BytesIO()
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
                 summary.to_excel(writer, sheet_name="Team_Monthly", index=False)
@@ -263,7 +257,6 @@ with tab2:
             if week_sel_wh:
                 df_wh = df_wh[df_wh["WeekFriday"].isin(week_sel_wh)]
             st.dataframe(df_wh, use_container_width=True)
-            # Download
             buf_wh = BytesIO()
             with pd.ExcelWriter(buf_wh, engine="openpyxl") as writer:
                 df_wh.to_excel(writer, sheet_name="Working_Hours", index=False)
@@ -281,174 +274,192 @@ with tab3:
     if violations_df.empty:
         st.info("No violations found.")
     else:
-        # Filter violations
+        # Step 1: Filter by Employee & Violation Type
         all_emps_v = sorted(violations_df["Employee"].dropna().unique())
         all_types_v = ["Invalid value", "Working hours less than 40", "Start date change"]
-        emp_sel_v = st.multiselect("Select Employee(s)", options=all_emps_v)
-        type_sel_v = st.multiselect("Select Violation Type(s)", options=all_types_v)
-        df_v = violations_df.copy()
-        if emp_sel_v:
-            df_v = df_v[df_v["Employee"].isin(emp_sel_v)]
-        if type_sel_v:
-            df_v = df_v[df_v["Violation Type"].isin(type_sel_v)]
+        with st.form("violations_filter_form"):
+            c1, c2 = st.columns([0.7, 0.3])
+            emp_sel_v = c1.multiselect("Select Employee(s)", options=all_emps_v)
+            select_all_emp_v = c2.checkbox("Select All Employees")
+            c3, c4 = st.columns([0.7, 0.3])
+            type_sel_v = c3.multiselect("Select Violation Type(s)", options=all_types_v)
+            select_all_type_v = c4.checkbox("Select All Violation Types")
+            filter_btn_v = st.form_submit_button("Filter Violations")
 
-        # UniqueID from Employee + row number extracted from 'Location'
-        def extract_rownum(loc_str):
-            try:
-                return loc_str.split("Row ")[-1]
-            except:
-                return ""
-        df_v["UniqueID"] = df_v.apply(lambda r: f"{r['Employee']}_{extract_rownum(r['Location'])}", axis=1)
+        if filter_btn_v:
+            if select_all_emp_v:
+                emp_sel_v = all_emps_v
+            if select_all_type_v:
+                type_sel_v = all_types_v
 
-        st.dataframe(df_v, use_container_width=True)
+            df_v = violations_df.copy()
+            if emp_sel_v:
+                df_v = df_v[df_v["Employee"].isin(emp_sel_v)]
+            if type_sel_v:
+                df_v = df_v[df_v["Violation Type"].isin(type_sel_v)]
 
-        st.markdown("#### Select Rows to Update (by UniqueID)")
-        selected_ids = st.multiselect("Select UniqueIDs", options=df_v["UniqueID"].unique())
+            # UniqueID from Employee + RowNumber extracted from 'Location'
+            def extract_rownum(loc_str):
+                try:
+                    return loc_str.split("Row ")[-1]
+                except:
+                    return ""
+            df_v["UniqueID"] = df_v.apply(lambda r: f"{r['Employee']}_{extract_rownum(r['Location'])}", axis=1)
 
-        if st.button("Proceed to Update"):
-            if not selected_ids:
-                st.error("No rows selected for update.")
+            st.dataframe(df_v, use_container_width=True)
+
+            # Step 2: Select rows
+            st.markdown("#### Select Rows to Update (by UniqueID)")
+            all_ids = sorted(df_v["UniqueID"].unique())
+            select_all_rows = st.checkbox("Select All Rows")
+            if select_all_rows:
+                selected_ids = all_ids
             else:
-                st.session_state["selected_rows"] = selected_ids
-                st.markdown(f"**Rows selected for update:** {selected_ids}")
+                selected_ids = st.multiselect("Pick UniqueIDs to update", options=all_ids)
 
-                st.markdown("### Update Options")
-                upd_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0)
-
-                # Categorical fields
-                categorical_fields = [
-                    "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
-                    "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
-                    "Complexity (H,M,L)",
-                    "Novelity (BAU repetitive, One time repetitive, New one time)",
-                    "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
-                    "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
-                ]
-
-                # Re-check full working_details for these selected IDs
-                working_details["UniqueID"] = working_details.apply(lambda r: f"{r['Employee']}_{r['RowNumber']}", axis=1)
-                sel_rows = working_details[working_details["UniqueID"].isin(selected_ids)]
-                st.markdown("#### Selected Rows Preview")
-                st.dataframe(sel_rows, use_container_width=True)
-
-                update_options = {}
-                if upd_mode == "Automatic":
-                    st.markdown("**Automatic Mode**")
-                    if not sel_rows.empty:
-                        auto_start = sel_rows["Start Date"].apply(lambda x: pd.to_datetime(x, format="%m-%d-%Y", errors="coerce")).min()
-                        if "Completion Date" in sel_rows.columns:
-                            auto_comp = sel_rows["Completion Date"].apply(lambda x: pd.to_datetime(x, format="%m-%d-%Y", errors="coerce")).max()
-                        else:
-                            auto_comp = None
-                    else:
-                        st.error("No rows found for update.")
-                        auto_start, auto_comp = None, None
-
-                    # Safe strftime usage
-                    if pd.notna(auto_start):
-                        auto_start_str = auto_start.strftime("%m-%d-%Y")
-                    else:
-                        auto_start_str = None
-                    if auto_comp is not None and pd.notna(auto_comp):
-                        auto_comp_str = auto_comp.strftime("%m-%d-%Y")
-                    else:
-                        auto_comp_str = None
-
-                    st.write("Auto Start Date:", auto_start_str if auto_start_str else "N/A")
-                    st.write("Auto Completion Date:", auto_comp_str if auto_comp_str else "N/A")
-
-                    auto_sugg = {}
-                    auto_choices = {}
-                    for field in categorical_fields:
-                        if field in sel_rows.columns and not sel_rows[field].dropna().empty:
-                            first_occ = sel_rows[field].iloc[0]
-                            most_freq = sel_rows[field].mode().iloc[0]
-                        else:
-                            first_occ, most_freq = None, None
-                        auto_sugg[field] = {"First Occurrence": first_occ, "Most Frequent": most_freq}
-                        auto_choices[field] = st.radio(
-                            f"Update {field} with",
-                            options=["First Occurrence", "Most Frequent"],
-                            index=0,
-                            key=field+"_upd_auto"
-                        )
-
-                    update_options["Start Date"] = auto_start_str
-                    update_options["Completion Date"] = auto_comp_str
-                    for field in categorical_fields:
-                        update_options[field] = auto_sugg[field][auto_choices[field]]
-
+            # Step 3: "Proceed to Update"
+            if st.button("Proceed to Update"):
+                if not selected_ids:
+                    st.error("No rows selected for update.")
                 else:
-                    st.markdown("**Manual Mode**")
-                    manual_start = st.date_input("Select Start Date", value=datetime.today())
-                    manual_comp = st.date_input("Select Completion Date", value=datetime.today())
+                    st.session_state["selected_rows"] = selected_ids
+                    st.markdown(f"**Rows selected for update:** {selected_ids}")
 
-                    manual_start_str = manual_start.strftime("%m-%d-%Y")
-                    manual_comp_str = manual_comp.strftime("%m-%d-%Y")
-                    update_options["Start Date"] = manual_start_str
-                    update_options["Completion Date"] = manual_comp_str
+                    st.markdown("### Update Options")
+                    upd_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0)
 
-                    allowed_manual = {
-                        "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
-                            ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
-                        "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)":
-                            ["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"],
-                        "Complexity (H,M,L)":
-                            ["H", "M", "L"],
-                        "Novelity (BAU repetitive, One time repetitive, New one time)":
-                            ["BAU repetitive", "One time repetitive", "New one time"],
-                        "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :":
-                            ["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"],
-                        "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
-                            ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
-                    }
-                    for field in categorical_fields:
-                        chosen_val = st.selectbox(
-                            f"Select value for {field}",
-                            options=allowed_manual[field],
-                            key=field+"_upd_manual"
-                        )
-                        update_options[field] = chosen_val
+                    # Categorical fields
+                    categorical_fields = [
+                        "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
+                        "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
+                        "Complexity (H,M,L)",
+                        "Novelity (BAU repetitive, One time repetitive, New one time)",
+                        "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
+                        "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
+                    ]
 
-                st.markdown("#### Final Update Options")
-                st.write(update_options)
+                    # Re-check working_details for these selected IDs
+                    working_details["UniqueID"] = working_details.apply(lambda r: f"{r['Employee']}_{r['RowNumber']}", axis=1)
+                    sel_rows = working_details[working_details["UniqueID"].isin(selected_ids)]
+                    st.markdown("#### Selected Rows Preview")
+                    st.dataframe(sel_rows, use_container_width=True)
 
-                if st.button("Update Excel"):
-                    try:
-                        wb = load_workbook(FILE_PATH)
-                    except Exception as e:
-                        st.error(f"Error opening workbook: {e}")
-                        st.stop()
+                    update_options = {}
+                    if upd_mode == "Automatic":
+                        st.markdown("**Automatic Mode**")
+                        if not sel_rows.empty:
+                            auto_start = sel_rows["Start Date"].apply(lambda x: pd.to_datetime(x, format="%m-%d-%Y", errors="coerce")).min()
+                            if "Completion Date" in sel_rows.columns:
+                                auto_comp = sel_rows["Completion Date"].apply(lambda x: pd.to_datetime(x, format="%m-%d-%Y", errors="coerce")).max()
+                            else:
+                                auto_comp = None
+                        else:
+                            st.error("No rows found for update.")
+                            auto_start, auto_comp = None, None
 
-                    # For each sheet (except 'Home'), update only the rows with matching UniqueID
-                    for sheet_name in wb.sheetnames:
-                        if sheet_name == "Home":
-                            continue
-                        ws = wb[sheet_name]
-                        # Assume header is row 1
-                        headers = {cell.value: cell.column for cell in ws[1]}
-                        if "Employee" not in headers or "Start Date" not in headers:
-                            continue
+                        # Safely handle NaT
+                        if pd.notna(auto_start):
+                            auto_start_str = auto_start.strftime("%m-%d-%Y")
+                        else:
+                            auto_start_str = None
+                        if auto_comp is not None and pd.notna(auto_comp):
+                            auto_comp_str = auto_comp.strftime("%m-%d-%Y")
+                        else:
+                            auto_comp_str = None
 
-                        for r in range(2, ws.max_row + 1):
-                            emp_val = ws.cell(row=r, column=headers["Employee"]).value
-                            unique_id = f"{emp_val}_{r}"
-                            if unique_id in st.session_state["selected_rows"]:
-                                # Start Date
-                                if "Start Date" in headers and update_options.get("Start Date"):
-                                    ws.cell(row=r, column=headers["Start Date"], value=update_options["Start Date"])
-                                # Completion Date
-                                if "Completion Date" in headers and update_options.get("Completion Date"):
-                                    ws.cell(row=r, column=headers["Completion Date"], value=update_options["Completion Date"])
-                                # Categorical fields
-                                for field in categorical_fields:
-                                    if field in headers and update_options.get(field):
-                                        ws.cell(row=r, column=headers[field], value=update_options[field])
+                        st.write("Auto Start Date:", auto_start_str if auto_start_str else "N/A")
+                        st.write("Auto Completion Date:", auto_comp_str if auto_comp_str else "N/A")
 
-                    try:
-                        wb.save(FILE_PATH)
-                        st.success("Excel file updated successfully.")
-                    except Exception as e:
-                        st.error(f"Error saving workbook: {e}")
+                        auto_sugg = {}
+                        auto_choices = {}
+                        for field in categorical_fields:
+                            if field in sel_rows.columns and not sel_rows[field].dropna().empty:
+                                first_occ = sel_rows[field].iloc[0]
+                                most_freq = sel_rows[field].mode().iloc[0]
+                            else:
+                                first_occ, most_freq = None, None
+                            auto_sugg[field] = {"First Occurrence": first_occ, "Most Frequent": most_freq}
+                            auto_choices[field] = st.radio(
+                                f"Update {field} with",
+                                options=["First Occurrence", "Most Frequent"],
+                                index=0,
+                                key=field+"_upd_auto"
+                            )
+                        update_options["Start Date"] = auto_start_str
+                        update_options["Completion Date"] = auto_comp_str
+                        for field in categorical_fields:
+                            update_options[field] = auto_sugg[field][auto_choices[field]]
+                    else:
+                        st.markdown("**Manual Mode**")
+                        manual_start = st.date_input("Select Start Date", value=datetime.today())
+                        manual_comp = st.date_input("Select Completion Date", value=datetime.today())
+                        manual_start_str = manual_start.strftime("%m-%d-%Y")
+                        manual_comp_str = manual_comp.strftime("%m-%d-%Y")
+                        update_options["Start Date"] = manual_start_str
+                        update_options["Completion Date"] = manual_comp_str
+
+                        allowed_manual = {
+                            "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
+                                ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
+                            "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)":
+                                ["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"],
+                            "Complexity (H,M,L)":
+                                ["H", "M", "L"],
+                            "Novelity (BAU repetitive, One time repetitive, New one time)":
+                                ["BAU repetitive", "One time repetitive", "New one time"],
+                            "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :":
+                                ["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"],
+                            "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
+                                ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
+                        }
+                        for field in categorical_fields:
+                            chosen_val = st.selectbox(
+                                f"Select value for {field}",
+                                options=allowed_manual[field],
+                                key=field+"_upd_manual"
+                            )
+                            update_options[field] = chosen_val
+
+                    st.markdown("#### Final Update Options")
+                    st.write(update_options)
+
+                    if st.button("Update Excel"):
+                        try:
+                            wb = load_workbook(FILE_PATH)
+                        except Exception as e:
+                            st.error(f"Error opening workbook: {e}")
+                            st.stop()
+
+                        for sheet_name in wb.sheetnames:
+                            if sheet_name == "Home":
+                                continue
+                            ws = wb[sheet_name]
+                            # Assume header row is 1
+                            headers = {cell.value: cell.column for cell in ws[1]}
+                            if "Employee" not in headers or "Start Date" not in headers:
+                                continue
+
+                            for r in range(2, ws.max_row + 1):
+                                emp_val = ws.cell(row=r, column=headers["Employee"]).value
+                                unique_id = f"{emp_val}_{r}"
+                                if unique_id in st.session_state["selected_rows"]:
+                                    # Start Date
+                                    if "Start Date" in headers and update_options.get("Start Date"):
+                                        ws.cell(row=r, column=headers["Start Date"], value=update_options["Start Date"])
+                                    # Completion Date
+                                    if "Completion Date" in headers and update_options.get("Completion Date"):
+                                        ws.cell(row=r, column=headers["Completion Date"], value=update_options["Completion Date"])
+                                    # Categorical fields
+                                    for field in categorical_fields:
+                                        if field in headers and update_options.get(field):
+                                            ws.cell(row=r, column=headers[field], value=update_options[field])
+
+                        try:
+                            wb.save(FILE_PATH)
+                            st.success("Excel file updated successfully.")
+                        except Exception as e:
+                            st.error(f"Error saving workbook: {e}")
+            else:
+                st.info("Please filter violations and then select rows to update.")
         else:
-            st.info("Please filter violations and then select rows to update.")
+            st.info("Please select filters above and click 'Filter Violations'.")
