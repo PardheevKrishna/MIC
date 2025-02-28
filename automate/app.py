@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import timedelta
 from io import BytesIO
 from openpyxl import load_workbook
 
@@ -25,8 +25,7 @@ def process_excel_file(file_path):
       - working_details: row-level data for all employees
       - violations_df: flagged violations (Invalid value, Start date change, Weekly < 40, etc.)
     """
-
-    # -------------- ALLOWED VALUES (with careful spacing) --------------
+    # Allowed values for validation
     allowed_values = {
         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)": [
             "CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"
@@ -34,9 +33,7 @@ def process_excel_file(file_path):
         "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)": [
             "Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"
         ],
-        "Complexity (H,M,L)": [
-            "H", "M", "L"
-        ],
+        "Complexity (H,M,L)": ["H", "M", "L"],
         "Novelity (BAU repetitive, One time repetitive, New one time)": [
             "BAU repetitive", "One time repetitive", "New one time"
         ],
@@ -48,7 +45,7 @@ def process_excel_file(file_path):
         ]
     }
 
-    # -------------- START DATE EXCEPTIONS (with careful spacing) --------------
+    # Exceptions for start date check
     start_date_exceptions = [
         "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
         "External meetings", "External Meeting", "External meeting", "external meetings",
@@ -68,7 +65,7 @@ def process_excel_file(file_path):
     all_sheet_names = xls.sheet_names
 
     working_list = []
-    viol_list = []  # using a list to collect violation dictionaries
+    viol_list = []  # list to collect violations
     project_month_info = {}
 
     for emp in employee_names:
@@ -86,10 +83,8 @@ def process_excel_file(file_path):
             continue
 
         df["Employee"] = emp
-        df["RowNumber"] = df.index + 2  # Excel row (header is row 1)
-        df["Status Date (Every Friday)"] = pd.to_datetime(
-            df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce"
-        )
+        df["RowNumber"] = df.index + 2  # Excel row number (header row = 1)
+        df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce")
 
         # (1) Validate allowed values
         for col, a_list in allowed_values.items():
@@ -108,7 +103,7 @@ def process_excel_file(file_path):
                         "Violation Date": df.at[i, "Status Date (Every Friday)"]
                     })
 
-        # (2) Start Date consistency (skip if main project or project name in start_date_exceptions)
+        # (2) Check start date consistency (unless project is in exceptions)
         for i, row in df.iterrows():
             proj = row["Name of the Project"]
             start_val = row["Start Date"]
@@ -117,7 +112,7 @@ def process_excel_file(file_path):
             if mp_val in start_date_exceptions or proj_val in start_date_exceptions:
                 continue
             if pd.notna(proj) and pd.notna(start_val) and pd.notna(row["Status Date (Every Friday)"]):
-                month_key = row["Status Date (Every Friday)"].strftime("%Y-%m") if pd.notna(row["Status Date (Every Friday)"]) else "N/A"
+                month_key = row["Status Date (Every Friday)"].strftime("%Y-%m")
                 key = (proj, month_key)
                 current_start = pd.to_datetime(start_val, format="%m-%d-%Y", errors="coerce")
                 if key not in project_month_info:
@@ -125,8 +120,8 @@ def process_excel_file(file_path):
                 else:
                     baseline = project_month_info[key]
                     if pd.notna(current_start) and pd.notna(baseline) and current_start != baseline:
-                        old_str = baseline.strftime("%m-%d-%Y") if pd.notna(baseline) else "N/A"
-                        new_str = current_start.strftime("%m-%d-%Y") if pd.notna(current_start) else "N/A"
+                        old_str = baseline.strftime("%m-%d-%Y")
+                        new_str = current_start.strftime("%m-%d-%Y")
                         viol_list.append({
                             "Employee": emp,
                             "Violation Type": "Start date change",
@@ -141,7 +136,7 @@ def process_excel_file(file_path):
         for friday in friday_dates:
             if pd.isna(friday):
                 continue
-            friday_str = friday.strftime("%m-%d-%Y") if pd.notna(friday) else "N/A"
+            friday_str = friday.strftime("%m-%d-%Y")
             week_start = friday - timedelta(days=4)
             week_df = df[(df["Status Date (Every Friday)"] >= week_start) & (df["Status Date (Every Friday)"] <= friday)]
             total_hrs = week_df["Weekly Time Spent(Hrs)"].sum()
@@ -155,7 +150,7 @@ def process_excel_file(file_path):
                     "Violation Date": friday
                 })
 
-        # (4) Additional columns
+        # (4) Additional columns for further processing
         df["PTO Hours"] = df.apply(lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" in str(r["Main project"]) else 0, axis=1)
         df["Work Hours"] = df.apply(lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" not in str(r["Main project"]) else 0, axis=1)
         df["Month"] = df["Status Date (Every Friday)"].dt.to_period("M").astype(str)
@@ -164,21 +159,24 @@ def process_excel_file(file_path):
 
         working_list.append(df)
 
-    if working_list:
-        working_details = pd.concat(working_list, ignore_index=True)
-    else:
-        working_details = pd.DataFrame()
-
+    working_details = pd.concat(working_list, ignore_index=True) if working_list else pd.DataFrame()
     violations_df = pd.DataFrame(viol_list)
     return working_details, violations_df
 
-# ---------- PROCESS EXCEL ----------
-working_details, violations_df = process_excel_file(FILE_PATH)
-if working_details is None or violations_df is None:
-    st.error("Error processing the Excel file.")
-    st.stop()
-else:
+# ======= SESSION STATE DATA LOADING / INITIALIZATION =======
+if "working_details" not in st.session_state or "violations_df" not in st.session_state:
+    wd, vd = process_excel_file(FILE_PATH)
+    if wd is None or vd is None:
+        st.error("Error processing the Excel file.")
+        st.stop()
+    st.session_state["working_details"] = wd
+    st.session_state["violations_df"] = vd
     st.success("Reports generated successfully!")
+else:
+    st.success("Using cached data from session state.")
+
+working_details = st.session_state["working_details"]
+violations_df = st.session_state["violations_df"]
 
 # ========== TABS ==========
 tab1, tab2, tab3 = st.tabs(["Team Monthly Summary", "Working Hours Summary", "Violations and Update"])
@@ -189,7 +187,6 @@ with tab1:
     if working_details.empty:
         st.info("No data available.")
     else:
-        # Filter form
         all_emps = sorted(working_details["Employee"].dropna().unique())
         all_months = sorted(working_details["Month"].dropna().unique())
         all_weeks = sorted(working_details["WeekFriday"].dropna().unique())
@@ -200,10 +197,7 @@ with tab1:
             c3, c4 = st.columns([0.7, 0.3])
             month_sel = c3.multiselect("Select Month(s)", options=all_months)
             all_month_check = c4.checkbox("Select All Months", key="tm_all_month")
-            if month_sel:
-                possible_weeks = sorted(working_details[working_details["Month"].isin(month_sel)]["WeekFriday"].dropna().unique())
-            else:
-                possible_weeks = all_weeks
+            possible_weeks = sorted(working_details[working_details["Month"].isin(month_sel)]["WeekFriday"].dropna().unique()) if month_sel else all_weeks
             c5, c6 = st.columns([0.7, 0.3])
             week_sel = c5.multiselect("Select Week(s)", options=possible_weeks)
             all_week_check = c6.checkbox("Select All Weeks", key="tm_all_week")
@@ -231,12 +225,9 @@ with tab1:
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
                 summary.to_excel(writer, sheet_name="Team_Monthly", index=False)
             buf.seek(0)
-            st.download_button(
-                "Download Team Monthly Summary",
-                data=buf,
-                file_name="Team_Monthly_Summary.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.download_button("Download Team Monthly Summary", data=buf,
+                               file_name="Team_Monthly_Summary.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ========== TAB 2: WORKING HOURS SUMMARY ==========
 with tab2:
@@ -254,10 +245,7 @@ with tab2:
             col3, col4 = st.columns([0.7, 0.3])
             month_sel_wh = col3.multiselect("Select Month(s)", options=all_months_wh)
             all_month_wh = col4.checkbox("Select All Months", key="wh_all_month")
-            if month_sel_wh:
-                poss_weeks_wh = sorted(working_details[working_details["Month"].isin(month_sel_wh)]["WeekFriday"].dropna().unique())
-            else:
-                poss_weeks_wh = all_weeks_wh
+            poss_weeks_wh = sorted(working_details[working_details["Month"].isin(month_sel_wh)]["WeekFriday"].dropna().unique()) if month_sel_wh else all_weeks_wh
             col5, col6 = st.columns([0.7, 0.3])
             week_sel_wh = col5.multiselect("Select Week(s)", options=poss_weeks_wh)
             all_week_wh = col6.checkbox("Select All Weeks", key="wh_all_week")
@@ -281,12 +269,9 @@ with tab2:
             with pd.ExcelWriter(buf_wh, engine="openpyxl") as writer:
                 df_wh.to_excel(writer, sheet_name="Working_Hours", index=False)
             buf_wh.seek(0)
-            st.download_button(
-                "Download Working Hours",
-                data=buf_wh,
-                file_name="Working_Hours_Summary.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.download_button("Download Working Hours", data=buf_wh,
+                               file_name="Working_Hours_Summary.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ========== TAB 3: VIOLATIONS & UPDATE ==========
 with tab3:
@@ -306,35 +291,27 @@ with tab3:
             type_sel_v = col3_v.multiselect("Select Violation Type(s)", options=all_types_v)
             select_all_type_v = col4_v.checkbox("Select All Violation Types")
             filter_btn_v = st.form_submit_button("Filter Violations")
-
         if filter_btn_v:
             if select_all_emp_v:
                 emp_sel_v = all_emps_v
             if select_all_type_v:
                 type_sel_v = all_types_v
-
             df_v = violations_df.copy()
             if emp_sel_v:
                 df_v = df_v[df_v["Employee"].isin(emp_sel_v)]
             if type_sel_v:
                 df_v = df_v[df_v["Violation Type"].isin(type_sel_v)]
-
-            # Show filtered violations
             st.dataframe(df_v, use_container_width=True)
 
-            # Step 2: Select rows
+            # Step 2: Select rows for update (by UniqueID)
             all_ids = sorted(df_v.apply(lambda r: f"{r['Employee']}_{r['Location'].split('Row ')[-1]}", axis=1).unique())
             st.markdown("#### Select Rows to Update (by UniqueID)")
             select_all_rows = st.checkbox("Select All Rows")
-            if select_all_rows:
-                selected_ids = all_ids
-            else:
-                selected_ids = st.multiselect("Select UniqueIDs", options=all_ids)
+            selected_ids = all_ids if select_all_rows else st.multiselect("Select UniqueIDs", options=all_ids)
 
             # Step 3: Choose update mode
             update_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0)
             proceed_btn = st.button("Load Selected Rows for Editing")
-
             if proceed_btn:
                 if not selected_ids:
                     st.error("No rows selected for update.")
@@ -342,21 +319,16 @@ with tab3:
                     st.session_state["selected_rows"] = selected_ids
                     st.markdown(f"**Rows selected for update:** {selected_ids}")
 
-                    # Step 4: For each selected row, show textboxes
                     st.markdown("### Edit Each Selected Row Below")
-                    # We'll gather the updated data in a dictionary
-                    updated_data = {}
+                    updated_data = {}  # dictionary to collect updated row info
 
-                    # For Automatic mode, we define a helper function to compute suggestions
+                    # Function to compute auto suggestions for automatic mode
                     def compute_auto_suggestions(row, df):
-                        # Only consider rows with the same "Main project"
                         proj_group = df[df["Main project"] == row["Main project"]]
-                        # Min Start, Max Completion in that project
                         auto_start = pd.to_datetime(proj_group["Start Date"], errors="coerce").min()
                         auto_comp = None
                         if "Completion Date" in proj_group.columns:
                             auto_comp = pd.to_datetime(proj_group["Completion Date"], errors="coerce").max()
-                        # For each categorical field, get the mode
                         cat_fields = [
                             "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
                             "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
@@ -371,12 +343,10 @@ with tab3:
                                 cat_suggestions[cf] = proj_group[cf].mode().iloc[0]
                             else:
                                 cat_suggestions[cf] = ""
-                        # Convert to strings
                         auto_start_str = auto_start.strftime("%m-%d-%Y") if pd.notna(auto_start) else ""
                         auto_comp_str = auto_comp.strftime("%m-%d-%Y") if auto_comp is not None and pd.notna(auto_comp) else ""
                         return auto_start_str, auto_comp_str, cat_suggestions
 
-                    # We'll need a list of the categorical fields for editing
                     cat_fields = [
                         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
                         "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
@@ -386,17 +356,15 @@ with tab3:
                         "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
                     ]
 
-                    # Build a dictionary of all row data from working_details
-                    # Key = UniqueID, Value = row
+                    # Build a lookup from UniqueID to the corresponding row in working_details
                     working_details_dict = {}
-                    for i, r in working_details.iterrows():
+                    for idx, r in working_details.iterrows():
                         uid = r["UniqueID"]
                         working_details_dict[uid] = r
 
-                    # Show each selected row as an expander
                     for uid in selected_ids:
                         if uid not in working_details_dict:
-                            st.warning(f"No data found in working_details for {uid}")
+                            st.warning(f"No data found for {uid}")
                             continue
                         row = working_details_dict[uid]
                         with st.expander(f"Edit row {uid}", expanded=True):
@@ -407,7 +375,6 @@ with tab3:
                                 new_comp = ""
                                 if "Completion Date" in row and "Completion Date" in working_details.columns:
                                     new_comp = st.text_input("Completion Date", value=auto_comp_str, key=f"{uid}_comp")
-                                # For each categorical field, text input with auto suggestion
                                 cat_vals = {}
                                 for cf in cat_fields:
                                     cat_vals[cf] = st.text_input(cf, value=cat_sugg[cf], key=f"{uid}_{cf}")
@@ -419,7 +386,6 @@ with tab3:
                                     **cat_vals
                                 }
                             else:
-                                # Manual: prefill with current row values
                                 current_start = str(row.get("Start Date", ""))
                                 new_start = st.text_input("Start Date", value=current_start, key=f"{uid}_start")
                                 current_comp = ""
@@ -439,10 +405,8 @@ with tab3:
                                     "Completion Date": new_comp,
                                     **cat_vals
                                 }
-
-                    # Once done editing all rows, we have a final button to update
+                    # Once editing is complete, update when button is clicked
                     if st.button("Update Excel"):
-                        # Use openpyxl to update the Excel file
                         try:
                             wb = load_workbook(FILE_PATH)
                         except Exception as e:
@@ -454,7 +418,6 @@ with tab3:
                             if sheet_name not in wb.sheetnames:
                                 continue
                             ws = wb[sheet_name]
-                            # Map headers to their respective column numbers
                             headers = {cell.value: cell.column for cell in ws[1]}
                             r_num = row_vals["RowNumber"]
                             if "Start Date" in headers and row_vals["Start Date"]:
@@ -467,8 +430,16 @@ with tab3:
                         try:
                             wb.save(FILE_PATH)
                             st.success("Excel file updated successfully.")
-                            st.experimental_rerun()  # Force re-run to load updated file
                         except Exception as e:
                             st.error(f"Error saving workbook: {e}")
+
+                        # --- Workaround: Update the session state working_details in memory ---
+                        for uid, row_vals in updated_data.items():
+                            mask = st.session_state["working_details"]["UniqueID"] == uid
+                            if mask.any():
+                                idx = st.session_state["working_details"].index[mask][0]
+                                for col, new_val in row_vals.items():
+                                    st.session_state["working_details"].at[idx, col] = new_val
+                        st.success("Session data updated. The changes will now appear in your dashboard.")
         else:
             st.info("Please use the form above to filter violations.")
