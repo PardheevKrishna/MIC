@@ -12,15 +12,13 @@ st.title("Team Report Dashboard (Fixed Excel File)")
 # ===================== PROCESS FUNCTION (for Report Tabs) =====================
 def process_excel_file(file_path):
     """
-    Process each employee sheet (listed in the "Home" sheet) and returns:
-      - working_hours_details: row-level data from all employee sheets with additional columns:
-          "Employee", "RowNumber", "Month" (yyyy-mm), "WeekFriday" (mm-dd-yyyy)
-      - violations_df: rows flagged as violations, with columns:
+    Reads and processes each employee sheet (listed in "Home") from the Excel file.
+    Returns:
+      - working_hours_details: row-level data from all employee sheets with extra columns:
+          Employee, RowNumber, Month (yyyy-mm), WeekFriday (mm-dd-yyyy)
+      - violations_df: DataFrame of violations with columns:
           Employee, Violation Type, Violation Details, Location, Violation Date
-    Violation Type is one of:
-      "Invalid value", "Working hours less than 40", "Start date change"
     """
-    # Get employee names from Home sheet (assume employee names in column F, starting row 3)
     home_df = pd.read_excel(file_path, sheet_name="Home", header=None)
     employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
     xls = pd.ExcelFile(file_path)
@@ -28,9 +26,9 @@ def process_excel_file(file_path):
 
     working_hours_details_list = []
     violations_list = []
-    project_month_info = {}  # for start date validation
+    project_month_info = {}  # For start date validation
 
-    # Allowed values for six categorical columns (exact one-token match)
+    # Allowed values for the six categorical columns (single-token exact match)
     allowed_values = {
         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
             ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
@@ -45,7 +43,6 @@ def process_excel_file(file_path):
         "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
             ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
     }
-    # Exception: if "Main project" or "Name of the Project" equals "Annual Leave", skip start date check.
     start_date_exceptions = ["Annual Leave"]
 
     for emp in employee_names:
@@ -53,7 +50,6 @@ def process_excel_file(file_path):
             st.warning(f"Sheet for employee '{emp}' not found; skipping.")
             continue
         df = pd.read_excel(file_path, sheet_name=emp)
-        # Normalize headers
         df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
         required_cols = ["Status Date (Every Friday)", "Main project", "Name of the Project", "Start Date", "Weekly Time Spent(Hrs)"]
         for rc in required_cols:
@@ -62,7 +58,7 @@ def process_excel_file(file_path):
                 return None, None
 
         df["Employee"] = emp
-        df["RowNumber"] = df.index + 2  # assume header is row 1
+        df["RowNumber"] = df.index + 2  # assuming header is row 1
         df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce")
 
         # (1) Allowed values validation
@@ -125,7 +121,7 @@ def process_excel_file(file_path):
                     "Violation Date": friday
                 })
 
-        # (4) Additional columns: compute PTO, Work, Month and WeekFriday.
+        # (4) Additional computed columns
         df["PTO Hours"] = df.apply(lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" in str(r["Main project"]) else 0, axis=1)
         df["Work Hours"] = df.apply(lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" not in str(r["Main project"]) else 0, axis=1)
         df["Month"] = df["Status Date (Every Friday)"].dt.to_period("M").astype(str)
@@ -137,7 +133,6 @@ def process_excel_file(file_path):
         working_hours_details = pd.concat(working_hours_details_list, ignore_index=True)
     else:
         working_hours_details = pd.DataFrame()
-
     violations_df = pd.DataFrame(violations_list)
     return working_hours_details, violations_df
 
@@ -278,8 +273,14 @@ else:
                     filtered_v = filtered_v[filtered_v["Employee"].isin(emp_chosen_v)]
                 if types_chosen_v:
                     filtered_v = filtered_v[filtered_v["Violation Type"].isin(types_chosen_v)]
-                # Add a UniqueID for each row (Employee_RowNumber)
-                filtered_v["UniqueID"] = filtered_v.apply(lambda r: f"{r['Employee']}_{r['Location'].split('Row ')[-1]}", axis=1)
+                # Add a UniqueID column: here we use Employee + RowNumber from Location info.
+                # (Assuming Location ends with "Row {number}")
+                def extract_row(location_str):
+                    try:
+                        return location_str.split("Row ")[-1]
+                    except:
+                        return ""
+                filtered_v["UniqueID"] = filtered_v.apply(lambda r: f"{r['Employee']}_{extract_row(r['Location'])}", axis=1)
                 st.dataframe(filtered_v, use_container_width=True)
                 v_buffer = BytesIO()
                 with pd.ExcelWriter(v_buffer, engine="openpyxl") as writer:
@@ -292,16 +293,21 @@ else:
     # -------------- TAB 3: UPDATE DATA --------------
     with tabs[3]:
         st.subheader("Update Data for Violations")
-        st.markdown("This section allows you to update the rows (violations) in the source Excel file. Use the filters below (which are similar to the Violations tab) to select the rows to update.")
-
-        # Use the same filters as in the Violations tab:
+        st.markdown("Use the filters below (same as in the Violations tab) to select the rows you wish to update. Then, use the inline checkboxes to choose which rows to update. Finally, select your update mode and options, then click the update button.")
+        
         if violations_df.empty:
             st.info("No violations available for update.")
         else:
-            # Ensure UniqueID exists in violations_df
-            violations_df["UniqueID"] = violations_df.apply(lambda r: f"{r['Employee']}_{r['Location'].split('Row ')[-1]}", axis=1)
+            # Ensure UniqueID exists
+            def extract_row(location_str):
+                try:
+                    return location_str.split("Row ")[-1]
+                except:
+                    return ""
+            violations_df["UniqueID"] = violations_df.apply(lambda r: f"{r['Employee']}_{extract_row(r['Location'])}", axis=1)
             all_emps_update = sorted(violations_df["Employee"].dropna().unique())
             all_types_update = ["Invalid value", "Working hours less than 40", "Start date change"]
+            
             with st.form("update_filter_form"):
                 col1_u, col2_u = st.columns([0.7, 0.3])
                 emp_chosen_update = col1_u.multiselect("Select Employee(s)", options=all_emps_update, default=[])
@@ -309,7 +315,7 @@ else:
                 col3_u, col4_u = st.columns([0.7, 0.3])
                 type_chosen_update = col3_u.multiselect("Select Violation Type(s)", options=all_types_update, default=[])
                 select_all_type_update = col4_u.checkbox("Select All Types", key="update_type_all")
-                filter_update_btn = st.form_submit_button("Filter Data")
+                filter_update_btn = st.form_submit_button("Apply Filters")
             if filter_update_btn:
                 if select_all_emp_update:
                     emp_chosen_update = all_emps_update
@@ -322,49 +328,50 @@ else:
                     filtered_update_df = filtered_update_df[filtered_update_df["Violation Type"].isin(type_chosen_update)]
                 st.markdown("#### Filtered Violations for Update")
                 st.dataframe(filtered_update_df, use_container_width=True)
-                # Provide a multi-select for the user to choose which rows (by UniqueID) to update.
-                all_update_ids = sorted(filtered_update_df["UniqueID"].unique())
-                with st.form("select_rows_form"):
-                    col_id, col_id_select = st.columns([0.7, 0.3])
-                    rows_to_update = col_id.multiselect("Select Rows to Update (UniqueID)", options=all_update_ids, default=[])
-                    select_all_rows = col_id_select.checkbox("Select All Rows", key="update_rows_all")
-                    submit_row_selection = st.form_submit_button("Apply Row Selection")
-                if submit_row_selection:
-                    if select_all_rows:
-                        rows_to_update = all_update_ids
-                    st.markdown(f"**Rows selected for update:** {rows_to_update}")
-                    # Now, let the user choose update options.
-                    st.markdown("### Update Options")
-                    update_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0, key="upd_mode")
-                    # Filter the underlying working_hours_details to only those rows whose UniqueID is in rows_to_update.
-                    # We need to compute UniqueID for working_hours_details similarly.
-                    working_hours_details["UniqueID"] = working_hours_details.apply(lambda r: f"{r['Employee']}_{r['RowNumber']}", axis=1)
-                    selected_rows_df = working_hours_details[working_hours_details["UniqueID"].isin(rows_to_update)]
-                    st.markdown("#### Selected Rows Preview")
-                    st.dataframe(selected_rows_df, use_container_width=True)
-                    
-                    # Define the list of categorical fields (with allowed options from our allowed_values)
-                    categorical_fields = [
-                        "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
-                        "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
-                        "Complexity (H,M,L)",
-                        "Novelity (BAU repetitive, One time repetitive, New one time)",
-                        "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
-                        "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
-                    ]
-                    # For date fields, we assume "Start Date" and optionally "Completion Date"
-                    # In Automatic mode, suggestions are computed from selected_rows_df:
-                    auto_update = {}
-                    if not selected_rows_df.empty:
-                        auto_start_date = selected_rows_df["Start Date"].apply(lambda x: pd.to_datetime(x, format="%m-%d-%Y", errors="coerce")).min()
-                        if "Completion Date" in selected_rows_df.columns:
-                            auto_completion_date = selected_rows_df["Completion Date"].apply(lambda x: pd.to_datetime(x, format="%m-%d-%Y", errors="coerce")).max()
-                        else:
-                            auto_completion_date = None
+                
+                # Instead of a separate multiselect for row selection, show the filtered table with an inline checkbox column.
+                # We add a new column "Select" (default False) and use st.data_editor to allow checkboxes.
+                filtered_update_df = filtered_update_df.copy()
+                filtered_update_df["Select"] = False
+                st.markdown("#### Select Rows to Update (Check the box in the 'Select' column)")
+                updated_table = st.data_editor(filtered_update_df, key="update_data_editor", num_rows="dynamic")
+                # Get the UniqueIDs of rows that are selected.
+                selected_ids = updated_table[updated_table["Select"] == True]["UniqueID"].tolist()
+                st.markdown(f"**Rows selected for update:** {selected_ids}")
+                
+                # Now, let the user choose update options for the selected rows.
+                st.markdown("### Update Options")
+                update_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0, key="upd_mode")
+                categorical_fields = [
+                    "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
+                    "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
+                    "Complexity (H,M,L)",
+                    "Novelity (BAU repetitive, One time repetitive, New one time)",
+                    "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
+                    "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
+                ]
+                # Filter the underlying working_hours_details to get suggestions for the selected rows.
+                # We assume UniqueID in working_hours_details is Employee_RowNumber.
+                working_hours_details["UniqueID"] = working_hours_details.apply(lambda r: f"{r['Employee']}_{r['RowNumber']}", axis=1)
+                selected_rows_df = working_hours_details[working_hours_details["UniqueID"].isin(selected_ids)]
+                st.markdown("#### Selected Rows Preview")
+                st.dataframe(selected_rows_df, use_container_width=True)
+                
+                # For date fields, compute suggestions:
+                if not selected_rows_df.empty:
+                    auto_start_date = selected_rows_df["Start Date"].apply(lambda x: pd.to_datetime(x, format="%m-%d-%Y", errors="coerce")).min()
+                    if "Completion Date" in selected_rows_df.columns:
+                        auto_completion_date = selected_rows_df["Completion Date"].apply(lambda x: pd.to_datetime(x, format="%m-%d-%Y", errors="coerce")).max()
                     else:
-                        auto_start_date, auto_completion_date = None, None
-
-                    # For each categorical field, compute suggestions:
+                        auto_completion_date = None
+                else:
+                    auto_start_date, auto_completion_date = None, None
+                
+                if update_mode == "Automatic":
+                    st.markdown("**Automatic Update Mode**")
+                    st.write("Start Date will be updated to (first occurrence):", auto_start_date.strftime("%m-%d-%Y") if pd.notna(auto_start_date) else "N/A")
+                    st.write("Completion Date will be updated to (last occurrence):", auto_completion_date.strftime("%m-%d-%Y") if auto_completion_date is not None and pd.notna(auto_completion_date) else "N/A")
+                    auto_choices = {}
                     auto_suggestions = {}
                     for field in categorical_fields:
                         if field in selected_rows_df.columns and not selected_rows_df[field].dropna().empty:
@@ -374,47 +381,11 @@ else:
                             first_occurrence = None
                             most_freq = None
                         auto_suggestions[field] = {"First Occurrence": first_occurrence, "Most Frequent": most_freq}
-
-                    if update_mode == "Automatic":
-                        st.markdown("**Automatic Update Mode**")
-                        st.write("Start Date will be updated to (first occurrence):", auto_start_date.strftime("%m-%d-%Y") if pd.notna(auto_start_date) else "N/A")
-                        st.write("Completion Date will be updated to (last occurrence):", auto_completion_date.strftime("%m-%d-%Y") if auto_completion_date is not None and pd.notna(auto_completion_date) else "N/A")
-                        auto_choices = {}
-                        for field, opts in auto_suggestions.items():
-                            auto_choices[field] = st.radio(f"Select update method for **{field}**", options=["First Occurrence", "Most Frequent"], index=0, key=field+"_upd_auto")
-                        upd_btn = st.button("Update Data (Automatic)")
-                    else:
-                        st.markdown("**Manual Update Mode**")
-                        manual_start_date = st.date_input("Select Start Date", value=auto_start_date.date() if pd.notna(auto_start_date) else None)
-                        if "Completion Date" in selected_rows_df.columns and auto_completion_date is not None and pd.notna(auto_completion_date):
-                            manual_completion_date = st.date_input("Select Completion Date", value=auto_completion_date.date())
-                        else:
-                            manual_completion_date = None
-                        manual_choices = {}
-                        # For manual mode, allow selection from all allowed options (from our allowed_values)
-                        allowed_values = {
-                            "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
-                                ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
-                            "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)":
-                                ["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"],
-                            "Complexity (H,M,L)":
-                                ["H", "M", "L"],
-                            "Novelity (BAU repetitive, One time repetitive, New one time)":
-                                ["BAU repetitive", "One time repetitive", "New one time"],
-                            "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :":
-                                ["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"],
-                            "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
-                                ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
-                        }
-                        for field in categorical_fields:
-                            if field in selected_rows_df.columns:
-                                manual_choices[field] = st.selectbox(f"Select value for **{field}**", options=allowed_values[field], key=field+"_upd_manual")
-                            else:
-                                manual_choices[field] = None
-                        upd_btn = st.button("Update Data (Manual)")
-
+                        auto_choices[field] = st.radio(f"Select update method for **{field}**", options=["First Occurrence", "Most Frequent"], index=0, key=field+"_upd_auto")
+                    upd_btn = st.button("Update Data (Automatic)")
                     if upd_btn:
-                        # For each sheet in sheets_dict (except Home), update rows whose UniqueID is in rows_to_update.
+                        # Define sheets_dict from the Excel file.
+                        sheets_dict = pd.read_excel(FILE_PATH, sheet_name=None)
                         for sheet_name, df in sheets_dict.items():
                             if sheet_name == "Home":
                                 continue
@@ -424,31 +395,73 @@ else:
                             df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce")
                             df["RowNumber"] = df.index + 2
                             df["UniqueID"] = df.apply(lambda r: f"{r['Employee']}_{r['RowNumber']}", axis=1)
-                            # We update only rows whose UniqueID is in rows_to_update.
-                            condition = df["UniqueID"].isin(rows_to_update)
+                            condition = df["UniqueID"].isin(selected_ids)
                             if condition.any():
-                                if update_mode == "Automatic":
-                                    new_start = auto_start_date.strftime("%m-%d-%Y") if pd.notna(auto_start_date) else None
-                                    new_completion = auto_completion_date.strftime("%m-%d-%Y") if auto_completion_date is not None and pd.notna(auto_completion_date) else None
-                                    df.loc[condition, "Start Date"] = new_start if new_start is not None else df.loc[condition, "Start Date"]
-                                    if "Completion Date" in df.columns and new_completion is not None:
-                                        df.loc[condition, "Completion Date"] = new_completion
-                                    for field in categorical_fields:
-                                        if field in df.columns:
-                                            chosen_val = auto_suggestions[field][auto_choices[field]]
-                                            df.loc[condition, field] = chosen_val
-                                else:
-                                    new_start = manual_start_date.strftime("%m-%d-%Y")
-                                    new_completion = manual_completion_date.strftime("%m-%d-%Y") if manual_completion_date is not None else None
-                                    df.loc[condition, "Start Date"] = new_start
-                                    if "Completion Date" in df.columns and new_completion is not None:
-                                        df.loc[condition, "Completion Date"] = new_completion
-                                    for field in categorical_fields:
-                                        if field in df.columns:
-                                            df.loc[condition, field] = manual_choices[field]
+                                new_start = auto_start_date.strftime("%m-%d-%Y") if pd.notna(auto_start_date) else None
+                                new_completion = auto_completion_date.strftime("%m-%d-%Y") if auto_completion_date is not None and pd.notna(auto_completion_date) else None
+                                df.loc[condition, "Start Date"] = new_start if new_start is not None else df.loc[condition, "Start Date"]
+                                if "Completion Date" in df.columns and new_completion is not None:
+                                    df.loc[condition, "Completion Date"] = new_completion
+                                for field in categorical_fields:
+                                    if field in df.columns:
+                                        chosen_val = auto_suggestions[field][auto_choices[field]]
+                                        df.loc[condition, field] = chosen_val
                                 sheets_dict[sheet_name] = df
-                        # Write updated sheets_dict back to the Excel file.
                         with pd.ExcelWriter(FILE_PATH, engine="openpyxl", mode="w") as writer:
                             for sheet_name, df in sheets_dict.items():
                                 df.to_excel(writer, sheet_name=sheet_name, index=False)
-                        st.success("Selected data updated successfully in the Excel file.")
+                        st.success("Selected data updated successfully (Automatic Mode).")
+                else:
+                    st.markdown("**Manual Update Mode**")
+                    manual_start_date = st.date_input("Select Start Date", value=auto_start_date.date() if pd.notna(auto_start_date) else None)
+                    if "Completion Date" in selected_rows_df.columns and auto_completion_date is not None and pd.notna(auto_completion_date):
+                        manual_completion_date = st.date_input("Select Completion Date", value=auto_completion_date.date())
+                    else:
+                        manual_completion_date = None
+                    manual_choices = {}
+                    allowed_values_manual = {
+                        "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
+                            ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
+                        "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)":
+                            ["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"],
+                        "Complexity (H,M,L)":
+                            ["H", "M", "L"],
+                        "Novelity (BAU repetitive, One time repetitive, New one time)":
+                            ["BAU repetitive", "One time repetitive", "New one time"],
+                        "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :":
+                            ["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"],
+                        "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
+                            ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
+                    }
+                    for field in categorical_fields:
+                        if field in selected_rows_df.columns:
+                            manual_choices[field] = st.selectbox(f"Select value for **{field}**", options=allowed_values_manual[field], key=field+"_upd_manual")
+                        else:
+                            manual_choices[field] = None
+                    upd_btn_manual = st.button("Update Data (Manual)")
+                    if upd_btn_manual:
+                        sheets_dict = pd.read_excel(FILE_PATH, sheet_name=None)
+                        for sheet_name, df in sheets_dict.items():
+                            if sheet_name == "Home":
+                                continue
+                            df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
+                            if "Status Date (Every Friday)" not in df.columns or "Main project" not in df.columns:
+                                continue
+                            df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce")
+                            df["RowNumber"] = df.index + 2
+                            df["UniqueID"] = df.apply(lambda r: f"{r['Employee']}_{r['RowNumber']}", axis=1)
+                            condition = df["UniqueID"].isin(selected_ids)
+                            if condition.any():
+                                new_start = manual_start_date.strftime("%m-%d-%Y")
+                                new_completion = manual_completion_date.strftime("%m-%d-%Y") if manual_completion_date is not None else None
+                                df.loc[condition, "Start Date"] = new_start
+                                if "Completion Date" in df.columns and new_completion is not None:
+                                    df.loc[condition, "Completion Date"] = new_completion
+                                for field in categorical_fields:
+                                    if field in df.columns:
+                                        df.loc[condition, field] = manual_choices[field]
+                                sheets_dict[sheet_name] = df
+                        with pd.ExcelWriter(FILE_PATH, engine="openpyxl", mode="w") as writer:
+                            for sheet_name, df in sheets_dict.items():
+                                df.to_excel(writer, sheet_name=sheet_name, index=False)
+                        st.success("Selected data updated successfully (Manual Mode).")
