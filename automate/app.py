@@ -7,18 +7,56 @@ from openpyxl import load_workbook
 # ---------- CONFIGURATION ----------
 FILE_PATH = "input.xlsx"  # CHANGE this to your actual Excel file path
 
-st.set_page_config(page_title="Team Report Dashboard", layout="wide")
-st.title("Team Report Dashboard (Fixed Excel File)")
+# -------------- CUSTOM CSS & TITLE --------------
+st.markdown("""
+<style>
+.mySkipButton {
+    visibility: hidden;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("Team Report Dashboard")
 
 # ===================== PROCESS FUNCTION =====================
 def process_excel_file(file_path):
     """
     Reads each employee sheet (employee names from "Home") and returns two DataFrames:
-      - working_details: all employee data with added columns:
-            Employee, RowNumber, Month (yyyy-mm), WeekFriday (mm-dd-yyyy)
-      - violations_df: rows flagged as violations (Invalid value, Start date change, Weekly hours < 40)
-         Each violation row gets a UniqueID (constructed later as "Employee_RowNumber")
+      - working_details: row-level data for all employees
+      - violations_df: flagged violations (Invalid value, Start date change, Weekly < 40, etc.)
     """
+
+    # -------------- ALLOWED VALUES (with careful spacing) --------------
+    allowed_values = {
+        "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)": [
+            "CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"
+        ],
+        "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)": [
+            "Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"
+        ],
+        "Complexity (H,M,L)": [
+            "H", "M", "L"
+        ],
+        "Novelity (BAU repetitive, One time repetitive, New one time)": [
+            "BAU repetitive", "One time repetitive", "New one time"
+        ],
+        "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :": [
+            "Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"
+        ],
+        "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)": [
+            "Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"
+        ]
+    }
+
+    # -------------- START DATE EXCEPTIONS (with careful spacing) --------------
+    start_date_exceptions = [
+        "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
+        "External meetings", "External Meeting", "External meeting", "external meetings",
+        "Sick leave", "Sick Leave", "Sick day",
+        "Annual meeting", "annual meeting", "Traveling", "Develop/Dev training",
+        "Internal Taining", "internal taining", "Interview"
+    ]
+
     try:
         home_df = pd.read_excel(file_path, sheet_name="Home", header=None)
     except Exception as e:
@@ -30,25 +68,9 @@ def process_excel_file(file_path):
     all_sheet_names = xls.sheet_names
 
     working_list = []
+    viol_list = {}
     viol_list = []
     project_month_info = {}
-
-    # Allowed categorical values
-    allowed_values = {
-        "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
-            ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
-        "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)":
-            ["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"],
-        "Complexity (H,M,L)":
-            ["H", "M", "L"],
-        "Novelity (BAU repetitive, One time repetitive, New one time)":
-            ["BAU repetitive", "One time repetitive", "New one time"],
-        "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :":
-            ["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"],
-        "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
-            ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
-    }
-    start_date_exceptions = ["Annual Leave"]
 
     for emp in employee_names:
         if emp not in all_sheet_names:
@@ -58,24 +80,27 @@ def process_excel_file(file_path):
         except Exception as e:
             st.warning(f"Could not read sheet for {emp}: {e}")
             continue
+
         df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
-        req_cols = ["Status Date (Every Friday)", "Main project", "Name of the Project", "Start Date", "Weekly Time Spent(Hrs)"]
-        if not all(c in df.columns for c in req_cols):
+        required_cols = ["Status Date (Every Friday)", "Main project", "Name of the Project", "Start Date", "Weekly Time Spent(Hrs)"]
+        if not all(c in df.columns for c in required_cols):
             continue
 
         df["Employee"] = emp
-        df["RowNumber"] = df.index + 2  # Excel row number (header is row 1)
+        df["RowNumber"] = df.index + 2  # Excel row (header is row 1)
         df["Status Date (Every Friday)"] = pd.to_datetime(
             df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce"
         )
 
         # (1) Validate allowed values
-        for col, allowed_list in allowed_values.items():
+        for col, a_list in allowed_values.items():
+            if col not in df.columns:
+                continue
             for i, val in df[col].items():
                 if pd.isna(val):
                     continue
                 tokens = [t.strip() for t in str(val).split(",") if t.strip()]
-                if len(tokens) != 1 or tokens[0] not in allowed_list:
+                if len(tokens) != 1 or tokens[0] not in a_list:
                     viol_list.append({
                         "Employee": emp,
                         "Violation Type": "Invalid value",
@@ -84,11 +109,13 @@ def process_excel_file(file_path):
                         "Violation Date": df.at[i, "Status Date (Every Friday)"]
                     })
 
-        # (2) Check start date consistency within project & month
+        # (2) Start Date consistency (skip if main project or project name in start_date_exceptions)
         for i, row in df.iterrows():
             proj = row["Name of the Project"]
             start_val = row["Start Date"]
-            if str(row["Main project"]).strip() in start_date_exceptions or str(proj).strip() in start_date_exceptions:
+            mp_val = str(row["Main project"]).strip() if pd.notna(row["Main project"]) else ""
+            proj_val = str(proj).strip() if pd.notna(proj) else ""
+            if mp_val in start_date_exceptions or proj_val in start_date_exceptions:
                 continue
             if pd.notna(proj) and pd.notna(start_val) and pd.notna(row["Status Date (Every Friday)"]):
                 month_key = row["Status Date (Every Friday)"].strftime("%Y-%m") if pd.notna(row["Status Date (Every Friday)"]) else "N/A"
@@ -118,7 +145,8 @@ def process_excel_file(file_path):
             friday_str = friday.strftime("%m-%d-%Y") if pd.notna(friday) else "N/A"
             week_start = friday - timedelta(days=4)
             week_df = df[(df["Status Date (Every Friday)"] >= week_start) & (df["Status Date (Every Friday)"] <= friday)]
-            if week_df["Weekly Time Spent(Hrs)"].sum() < 40:
+            total_hrs = week_df["Weekly Time Spent(Hrs)"].sum()
+            if total_hrs < 40:
                 row_nums_str = ", ".join(str(x) for x in week_df["RowNumber"].tolist())
                 viol_list.append({
                     "Employee": emp,
@@ -128,11 +156,13 @@ def process_excel_file(file_path):
                     "Violation Date": friday
                 })
 
-        # (4) Add extra columns
+        # (4) Additional columns
         df["PTO Hours"] = df.apply(lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" in str(r["Main project"]) else 0, axis=1)
         df["Work Hours"] = df.apply(lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" not in str(r["Main project"]) else 0, axis=1)
         df["Month"] = df["Status Date (Every Friday)"].dt.to_period("M").astype(str)
         df["WeekFriday"] = df["Status Date (Every Friday)"].dt.strftime("%m-%d-%Y").fillna("N/A")
+        df["UniqueID"] = df["Employee"] + "_" + df["RowNumber"].astype(str)
+
         working_list.append(df)
 
     if working_list:
@@ -143,7 +173,7 @@ def process_excel_file(file_path):
     violations_df = pd.DataFrame(viol_list)
     return working_details, violations_df
 
-# ---------- READ DATA ----------
+# ---------- PROCESS EXCEL ----------
 working_details, violations_df = process_excel_file(FILE_PATH)
 if working_details is None or violations_df is None:
     st.error("Error processing the Excel file.")
@@ -151,7 +181,7 @@ if working_details is None or violations_df is None:
 else:
     st.success("Reports generated successfully!")
 
-# ========== CREATE TABS ==========
+# ========== TABS ==========
 tab1, tab2, tab3 = st.tabs(["Team Monthly Summary", "Working Hours Summary", "Violations and Update"])
 
 # ========== TAB 1: TEAM MONTHLY SUMMARY ==========
@@ -160,6 +190,7 @@ with tab1:
     if working_details.empty:
         st.info("No data available.")
     else:
+        # Filter form
         all_emps = sorted(working_details["Employee"].dropna().unique())
         all_months = sorted(working_details["Month"].dropna().unique())
         all_weeks = sorted(working_details["WeekFriday"].dropna().unique())
@@ -201,7 +232,12 @@ with tab1:
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
                 summary.to_excel(writer, sheet_name="Team_Monthly", index=False)
             buf.seek(0)
-            st.download_button("Download Team Monthly Summary", data=buf, file_name="Team_Monthly_Summary.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "Download Team Monthly Summary",
+                data=buf,
+                file_name="Team_Monthly_Summary.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 # ========== TAB 2: WORKING HOURS SUMMARY ==========
 with tab2:
@@ -246,7 +282,12 @@ with tab2:
             with pd.ExcelWriter(buf_wh, engine="openpyxl") as writer:
                 df_wh.to_excel(writer, sheet_name="Working_Hours", index=False)
             buf_wh.seek(0)
-            st.download_button("Download Working Hours", data=buf_wh, file_name="Working_Hours_Summary.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "Download Working Hours",
+                data=buf_wh,
+                file_name="Working_Hours_Summary.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 # ========== TAB 3: VIOLATIONS & UPDATE ==========
 with tab3:
@@ -257,6 +298,7 @@ with tab3:
         # Step 1: Filter Violations
         all_emps_v = sorted(violations_df["Employee"].dropna().unique())
         all_types_v = ["Invalid value", "Working hours less than 40", "Start date change"]
+
         with st.form("violations_filter_form"):
             col1_v, col2_v = st.columns([0.7, 0.3])
             emp_sel_v = col1_v.multiselect("Select Employee(s)", options=all_emps_v)
@@ -265,149 +307,165 @@ with tab3:
             type_sel_v = col3_v.multiselect("Select Violation Type(s)", options=all_types_v)
             select_all_type_v = col4_v.checkbox("Select All Violation Types")
             filter_btn_v = st.form_submit_button("Filter Violations")
+
         if filter_btn_v:
             if select_all_emp_v:
                 emp_sel_v = all_emps_v
             if select_all_type_v:
                 type_sel_v = all_types_v
+
             df_v = violations_df.copy()
             if emp_sel_v:
                 df_v = df_v[df_v["Employee"].isin(emp_sel_v)]
             if type_sel_v:
                 df_v = df_v[df_v["Violation Type"].isin(type_sel_v)]
-            # Create UniqueID as "Employee_RowNumber" from the Location field
-            def extract_rownum(loc_str):
-                try:
-                    return loc_str.split("Row ")[-1]
-                except:
-                    return ""
-            df_v["UniqueID"] = df_v.apply(lambda r: f"{r['Employee']}_{extract_rownum(r['Location'])}", axis=1)
+
+            # Show filtered violations
             st.dataframe(df_v, use_container_width=True)
 
-            # Step 2: Select rows to update
+            # Step 2: Select rows
+            all_ids = sorted(df_v.apply(lambda r: f"{r['Employee']}_{r['Location'].split('Row ')[-1]}", axis=1).unique())
             st.markdown("#### Select Rows to Update (by UniqueID)")
-            all_ids = sorted(df_v["UniqueID"].unique())
             select_all_rows = st.checkbox("Select All Rows")
             if select_all_rows:
                 selected_ids = all_ids
             else:
                 selected_ids = st.multiselect("Select UniqueIDs", options=all_ids)
 
-            # Step 3: Proceed to Update (load row-edit forms)
-            if st.button("Proceed to Update"):
+            # Step 3: Choose update mode
+            update_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0)
+            proceed_btn = st.button("Load Selected Rows for Editing")
+
+            if proceed_btn:
                 if not selected_ids:
                     st.error("No rows selected for update.")
                 else:
                     st.session_state["selected_rows"] = selected_ids
                     st.markdown(f"**Rows selected for update:** {selected_ids}")
-                    # Choose update mode now:
-                    upd_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0)
-                    
-                    st.markdown("### Edit Details for Each Selected Row")
-                    # Prepare to collect updated data
-                    updated_rows = {}
-                    # For each selected UniqueID, display an expander with a form
-                    for uid in selected_ids:
-                        row_data = working_details[working_details["UniqueID"] == uid]
-                        if row_data.empty:
-                            continue
-                        row = row_data.iloc[0]
-                        with st.expander(f"Edit details for {uid} (Employee: {row['Employee']})", expanded=True):
-                            # For Automatic mode, compute suggestions within this row's main project group
-                            if upd_mode == "Automatic":
-                                group = working_details[working_details["Main project"] == row["Main project"]]
-                                sug_start = group["Start Date"].apply(lambda x: pd.to_datetime(x, errors="coerce")).min()
-                                sug_comp = (group["Completion Date"].apply(lambda x: pd.to_datetime(x, errors="coerce")).max()
-                                            if "Completion Date" in group.columns else None)
-                                # For categorical fields, use most frequent value in the group
-                                sug_values = {}
-                                for field in ["Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
-                                              "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
-                                              "Complexity (H,M,L)",
-                                              "Novelity (BAU repetitive, One time repetitive, New one time)",
-                                              "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
-                                              "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"]:
-                                    if field in group.columns and not group[field].dropna().empty:
-                                        sug_values[field] = group[field].mode().iloc[0]
-                                    else:
-                                        sug_values[field] = ""
-                                # Convert suggested dates to strings safely
-                                if pd.notna(sug_start):
-                                    sug_start_str = sug_start.strftime("%m-%d-%Y")
-                                else:
-                                    sug_start_str = ""
-                                if sug_comp is not None and pd.notna(sug_comp):
-                                    sug_comp_str = sug_comp.strftime("%m-%d-%Y")
-                                else:
-                                    sug_comp_str = ""
-                            else:
-                                # Manual mode: use current row values
-                                current_start = pd.to_datetime(row["Start Date"], errors="coerce")
-                                if pd.notna(current_start):
-                                    sug_start_str = current_start.strftime("%m-%d-%Y")
-                                else:
-                                    sug_start_str = ""
-                                if "Completion Date" in row and pd.notna(row.get("Completion Date", None)):
-                                    current_comp = pd.to_datetime(row["Completion Date"], errors="coerce")
-                                    if pd.notna(current_comp):
-                                        sug_comp_str = current_comp.strftime("%m-%d-%Y")
-                                    else:
-                                        sug_comp_str = ""
-                                else:
-                                    sug_comp_str = ""
-                                sug_values = {}
-                                for field in ["Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
-                                              "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
-                                              "Complexity (H,M,L)",
-                                              "Novelity (BAU repetitive, One time repetitive, New one time)",
-                                              "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
-                                              "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"]:
-                                    sug_values[field] = row.get(field, "")
 
-                            # Now, show editable fields for this row
-                            new_start = st.date_input("Start Date", value=datetime.strptime(sug_start_str, "%m-%d-%Y") if sug_start_str else datetime.today(), key=f"{uid}_start")
-                            if "Completion Date" in row:
-                                new_comp = st.date_input("Completion Date", value=datetime.strptime(sug_comp_str, "%m-%d-%Y") if sug_comp_str else datetime.today(), key=f"{uid}_comp")
+                    # Step 4: For each selected row, show textboxes
+                    st.markdown("### Edit Each Selected Row Below")
+                    # We'll gather the updated data in a dictionary
+                    updated_data = {}
+
+                    # For Automatic mode, we define a helper function to compute suggestions
+                    def compute_auto_suggestions(row, df):
+                        # Only consider rows with the same "Main project"
+                        proj_group = df[df["Main project"] == row["Main project"]]
+                        # Min Start, Max Completion in that project
+                        auto_start = pd.to_datetime(proj_group["Start Date"], errors="coerce").min()
+                        auto_comp = None
+                        if "Completion Date" in proj_group.columns:
+                            auto_comp = pd.to_datetime(proj_group["Completion Date"], errors="coerce").max()
+                        # For each categorical field, get the mode
+                        cat_fields = [
+                            "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
+                            "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
+                            "Complexity (H,M,L)",
+                            "Novelity (BAU repetitive, One time repetitive, New one time)",
+                            "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
+                            "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
+                        ]
+                        cat_suggestions = {}
+                        for cf in cat_fields:
+                            if cf in proj_group.columns and not proj_group[cf].dropna().empty:
+                                cat_suggestions[cf] = proj_group[cf].mode().iloc[0]
                             else:
-                                new_comp = None
-                            new_data = {
-                                "Start Date": new_start.strftime("%m-%d-%Y"),
-                                "Completion Date": new_comp.strftime("%m-%d-%Y") if new_comp else ""
-                            }
-                            for field in categorical_fields:
-                                # For automatic mode, you might want to use a selectbox pre-filled with suggestion and allowed options.
-                                # We'll use allowed options from our allowed_values dictionary.
-                                allowed_opts = allowed_values.get(field, [])
-                                new_val = st.selectbox(f"{field}", options=allowed_opts, index=allowed_opts.index(sug_values[field]) if sug_values[field] in allowed_opts else 0, key=f"{uid}_{field}")
-                                new_data[field] = new_val
-                            updated_rows[uid] = {
-                                "Employee": row["Employee"],
-                                "RowNumber": row["RowNumber"],
-                                **new_data
-                            }
-                    # End of per-row editing loop
-                    if st.button("Update Details"):
-                        # Now update the Excel file using openpyxl
+                                cat_suggestions[cf] = ""
+                        # Convert to strings
+                        auto_start_str = auto_start.strftime("%m-%d-%Y") if pd.notna(auto_start) else ""
+                        auto_comp_str = auto_comp.strftime("%m-%d-%Y") if auto_comp is not None and pd.notna(auto_comp) else ""
+                        return auto_start_str, auto_comp_str, cat_suggestions
+
+                    # We'll need a list of the categorical fields for editing
+                    cat_fields = [
+                        "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
+                        "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
+                        "Complexity (H,M,L)",
+                        "Novelity (BAU repetitive, One time repetitive, New one time)",
+                        "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
+                        "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
+                    ]
+
+                    # Build a dictionary of all row data from working_details
+                    # Key = UniqueID, Value = row
+                    working_details_dict = {}
+                    for i, r in working_details.iterrows():
+                        uid = r["UniqueID"]
+                        working_details_dict[uid] = r
+
+                    # Show each selected row as an expander
+                    for uid in selected_ids:
+                        if uid not in working_details_dict:
+                            st.warning(f"No data found in working_details for {uid}")
+                            continue
+                        row = working_details_dict[uid]
+                        with st.expander(f"Edit row {uid}", expanded=True):
+                            if update_mode == "Automatic":
+                                auto_start_str, auto_comp_str, cat_sugg = compute_auto_suggestions(row, working_details)
+                                # Prefill with auto suggestions
+                                st.write(f"Main project: {row['Main project']}")
+                                new_start = st.text_input("Start Date", value=auto_start_str, key=f"{uid}_start")
+                                new_comp = ""
+                                if "Completion Date" in row and "Completion Date" in working_details.columns:
+                                    new_comp = st.text_input("Completion Date", value=auto_comp_str, key=f"{uid}_comp")
+                                # For each cat field, text input with auto suggestion
+                                cat_vals = {}
+                                for cf in cat_fields:
+                                    cat_vals[cf] = st.text_input(cf, value=cat_sugg[cf], key=f"{uid}_{cf}")
+                                updated_data[uid] = {
+                                    "Employee": row["Employee"],
+                                    "RowNumber": row["RowNumber"],
+                                    "Start Date": new_start,
+                                    "Completion Date": new_comp,
+                                    **cat_vals
+                                }
+                            else:
+                                # Manual: prefill with current row values
+                                current_start = str(row.get("Start Date", ""))
+                                new_start = st.text_input("Start Date", value=current_start, key=f"{uid}_start")
+                                current_comp = ""
+                                if "Completion Date" in row and "Completion Date" in working_details.columns:
+                                    current_comp = str(row.get("Completion Date", ""))
+                                    new_comp = st.text_input("Completion Date", value=current_comp, key=f"{uid}_comp")
+                                else:
+                                    new_comp = ""
+                                cat_vals = {}
+                                for cf in cat_fields:
+                                    cat_current = str(row.get(cf, ""))
+                                    cat_vals[cf] = st.text_input(cf, value=cat_current, key=f"{uid}_{cf}")
+                                updated_data[uid] = {
+                                    "Employee": row["Employee"],
+                                    "RowNumber": row["RowNumber"],
+                                    "Start Date": new_start,
+                                    "Completion Date": new_comp,
+                                    **cat_vals
+                                }
+
+                    # Once done editing all rows, we have a final button to update
+                    if st.button("Update Excel"):
+                        # Use openpyxl
                         try:
                             wb = load_workbook(FILE_PATH)
                         except Exception as e:
                             st.error(f"Error opening workbook: {e}")
                             st.stop()
-                        for uid, new_vals in updated_rows.items():
-                            sheet_name = new_vals["Employee"]  # assume sheet name equals employee name
+
+                        for uid, row_vals in updated_data.items():
+                            sheet_name = row_vals["Employee"]
                             if sheet_name not in wb.sheetnames:
                                 continue
                             ws = wb[sheet_name]
-                            # Get header mapping (assume header in row 1)
+                            # Header row
                             headers = {cell.value: cell.column for cell in ws[1]}
-                            r_num = new_vals["RowNumber"]
-                            if "Start Date" in headers:
-                                ws.cell(row=r_num, column=headers["Start Date"], value=new_vals["Start Date"])
-                            if "Completion Date" in headers and new_vals.get("Completion Date", ""):
-                                ws.cell(row=r_num, column=headers["Completion Date"], value=new_vals["Completion Date"])
-                            for field in categorical_fields:
-                                if field in headers:
-                                    ws.cell(row=r_num, column=headers[field], value=new_vals[field])
+                            r_num = row_vals["RowNumber"]
+                            if "Start Date" in headers and row_vals["Start Date"]:
+                                ws.cell(row=r_num, column=headers["Start Date"], value=row_vals["Start Date"])
+                            if "Completion Date" in headers and row_vals["Completion Date"]:
+                                ws.cell(row=r_num, column=headers["Completion Date"], value=row_vals["Completion Date"])
+                            for cf in cat_fields:
+                                if cf in headers and row_vals.get(cf, ""):
+                                    ws.cell(row=r_num, column=headers[cf], value=row_vals[cf])
                         try:
                             wb.save(FILE_PATH)
                             st.success("Excel file updated successfully.")
