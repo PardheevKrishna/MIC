@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 # -------------- FIXED EXCEL FILE PATH --------------
-FILE_PATH = "input.xlsx"  # <-- Change this to your actual Excel file path
+FILE_PATH = "input.xlsx"  # CHANGE this to your actual Excel file path
 
 st.set_page_config(page_title="Team Report Dashboard", layout="wide")
 st.title("Team Report Dashboard (Fixed Excel File)")
@@ -18,8 +18,7 @@ def process_excel_file(file_path):
             Employee, RowNumber, Month (yyyy-mm), WeekFriday (mm-dd-yyyy)
       - violations_df: rows flagged as violations, with columns:
             Employee, Violation Type, Violation Details, Location, Violation Date
-         where Violation Type is one of:
-            "Invalid value", "Working hours less than 40", "Start date change"
+         (Violation Type is one of: "Invalid value", "Working hours less than 40", "Start date change")
     """
     home_df = pd.read_excel(file_path, sheet_name="Home", header=None)
     employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
@@ -30,7 +29,7 @@ def process_excel_file(file_path):
     violations_list = []
     project_month_info = {}  # for start date validation
 
-    # Allowed values for six categorical columns (exact one-token match)
+    # Allowed values for six categorical columns (must be a single token exactly matching)
     allowed_values = {
         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
             ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
@@ -250,9 +249,9 @@ else:
             else:
                 st.info("Select filters and click 'Filter Data' to view results.")
 
-    # -------------- TAB 2: VIOLATIONS & UPDATE FUNCTIONALITY --------------
+    # -------------- TAB 2: VIOLATIONS (with integrated update) --------------
     with tabs[2]:
-        st.subheader("Violations")
+        st.subheader("Violations and Update")
         if violations_df.empty:
             st.info("No violations found.")
         else:
@@ -261,10 +260,10 @@ else:
             with st.form("violations_form"):
                 col1_v, col2_v = st.columns([0.7, 0.3])
                 emp_chosen_v = col1_v.multiselect("Select Employee(s)", options=all_emps_v, default=[])
-                select_all_emp_v = col2_v.checkbox("Select All Employees", key="v_emp_all")
+                select_all_emp_v = col1_v.checkbox("Select All Employees", key="v_emp_all")
                 col3_v, col4_v = st.columns([0.7, 0.3])
                 types_chosen_v = col3_v.multiselect("Select Violation Type(s)", options=all_types_v, default=[])
-                select_all_types_v = col4_v.checkbox("Select All Types", key="v_type_all")
+                select_all_types_v = col3_v.checkbox("Select All Types", key="v_type_all")
                 filter_btn_v = st.form_submit_button("Filter Data")
             if filter_btn_v:
                 if select_all_emp_v:
@@ -276,7 +275,6 @@ else:
                     filtered_v = filtered_v[filtered_v["Employee"].isin(emp_chosen_v)]
                 if types_chosen_v:
                     filtered_v = filtered_v[filtered_v["Violation Type"].isin(types_chosen_v)]
-                # Create UniqueID from Employee and RowNumber (extracted from Location)
                 def extract_row(loc_str):
                     try:
                         return loc_str.split("Row ")[-1]
@@ -290,28 +288,26 @@ else:
                 v_buffer.seek(0)
                 st.download_button("Download Filtered Violations", data=v_buffer, file_name="filtered_violations.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 
-                # ----- UPDATE FUNCTIONALITY IN VIOLATIONS TAB -----
-                st.markdown("### Update Violations")
-                st.markdown("After filtering violations, select the rows you wish to update using the inline checkboxes below. Then click **Proceed to Update** to see update options.")
-                # Add a "Select" column (if not already present)
-                filtered_v = filtered_v.copy()
-                if "Select" not in filtered_v.columns:
-                    filtered_v["Select"] = False
-                # Show the data editor with inline checkboxes
-                edited_v_df = st.data_editor(filtered_v, key="violation_update_editor", use_container_width=True)
-                # Save the selected UniqueIDs in session state
-                selected_ids = edited_v_df[edited_v_df["Select"] == True]["UniqueID"].tolist()
-                st.session_state["selected_rows"] = selected_ids
-                st.markdown(f"**Rows selected for update:** {st.session_state['selected_rows']}")
-                
-                # Only proceed if at least one row is selected
-                if st.session_state["selected_rows"]:
-                    # Let user choose update mode via a button click
+                # --- Now wait for user to select rows for update ---
+                st.markdown("### Select Rows to Update")
+                # Wrap the data editor inside a form so that changes are saved only when you click the button.
+                with st.form("select_rows_form"):
+                    # Add an inline "Select" column if not present.
+                    update_df = filtered_v.copy()
+                    if "Select" not in update_df.columns:
+                        update_df["Select"] = False
+                    edited_table = st.data_editor(update_df, key="update_data_editor", use_container_width=True)
+                    save_selection = st.form_submit_button("Save Row Selection")
+                if save_selection:
+                    # Save the selected UniqueIDs in session state
+                    selected_ids = edited_table[edited_table["Select"] == True]["UniqueID"].tolist()
+                    st.session_state["selected_rows"] = selected_ids
+                    st.markdown(f"**Rows selected for update:** {st.session_state['selected_rows']}")
+                    
+                    # Only show update options after the user clicks "Proceed to Update"
                     if st.button("Proceed to Update", key="proceed_update"):
-                        # Show update options (Automatic vs Manual)
                         st.markdown("### Update Options")
                         upd_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0, key="upd_mode")
-                        # Define the categorical fields for update
                         categorical_fields = [
                             "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
                             "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
@@ -320,7 +316,7 @@ else:
                             "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
                             "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
                         ]
-                        # Get the full working_hours_details DataFrame to compute suggestions.
+                        # Get full working_hours_details to compute suggestions.
                         working_hours_details["UniqueID"] = working_hours_details.apply(lambda r: f"{r['Employee']}_{r['RowNumber']}", axis=1)
                         selected_rows_df = working_hours_details[working_hours_details["UniqueID"].isin(st.session_state["selected_rows"])]
                         st.markdown("#### Selected Rows Preview")
