@@ -14,11 +14,12 @@ def process_excel_file(file_path):
     """
     Reads and processes each employee sheet (listed in "Home") from the Excel file.
     Returns two DataFrames:
-      - working_hours_details: row-level data with extra columns:
+      - working_hours_details: row-level data from all employee sheets with extra columns:
             Employee, RowNumber, Month (yyyy-mm), WeekFriday (mm-dd-yyyy)
       - violations_df: rows flagged as violations, with columns:
             Employee, Violation Type, Violation Details, Location, Violation Date
-         (Violation Type is one of: "Invalid value", "Working hours less than 40", "Start date change")
+         where Violation Type is one of:
+            "Invalid value", "Working hours less than 40", "Start date change"
     """
     home_df = pd.read_excel(file_path, sheet_name="Home", header=None)
     employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
@@ -288,23 +289,19 @@ else:
                 v_buffer.seek(0)
                 st.download_button("Download Filtered Violations", data=v_buffer, file_name="filtered_violations.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 
-                # --- Now wait for user to select rows for update ---
-                st.markdown("### Select Rows to Update")
-                # Wrap the data editor inside a form so that changes are saved only when you click the button.
-                with st.form("select_rows_form"):
-                    # Add an inline "Select" column if not present.
-                    update_df = filtered_v.copy()
-                    if "Select" not in update_df.columns:
-                        update_df["Select"] = False
-                    edited_table = st.data_editor(update_df, key="update_data_editor", use_container_width=True)
-                    save_selection = st.form_submit_button("Save Row Selection")
-                if save_selection:
-                    # Save the selected UniqueIDs in session state
+                st.markdown("### Update Violations")
+                st.markdown("After filtering, please use the table below to check the rows you wish to update. Once you are finished selecting, click **Save Row Selection**.")
+                # Show the data editor with an inline "Select" column.
+                update_df = filtered_v.copy()
+                if "Select" not in update_df.columns:
+                    update_df["Select"] = False
+                edited_table = st.data_editor(update_df, key="update_data_editor", use_container_width=True)
+                if st.button("Save Row Selection", key="save_selection"):
                     selected_ids = edited_table[edited_table["Select"] == True]["UniqueID"].tolist()
                     st.session_state["selected_rows"] = selected_ids
-                    st.markdown(f"**Rows selected for update:** {st.session_state['selected_rows']}")
-                    
-                    # Only show update options after the user clicks "Proceed to Update"
+                    st.success(f"Rows selected for update: {selected_ids}")
+                
+                if "selected_rows" in st.session_state and st.session_state["selected_rows"]:
                     if st.button("Proceed to Update", key="proceed_update"):
                         st.markdown("### Update Options")
                         upd_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0, key="upd_mode")
@@ -316,7 +313,7 @@ else:
                             "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
                             "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
                         ]
-                        # Get full working_hours_details to compute suggestions.
+                        # Compute suggestions from working_hours_details for selected rows.
                         working_hours_details["UniqueID"] = working_hours_details.apply(lambda r: f"{r['Employee']}_{r['RowNumber']}", axis=1)
                         selected_rows_df = working_hours_details[working_hours_details["UniqueID"].isin(st.session_state["selected_rows"])]
                         st.markdown("#### Selected Rows Preview")
