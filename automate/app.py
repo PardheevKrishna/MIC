@@ -12,12 +12,14 @@ st.title("Team Report Dashboard (Fixed Excel File)")
 # ===================== PROCESS FUNCTION (for Report Tabs) =====================
 def process_excel_file(file_path):
     """
-    Reads and processes each employee sheet (listed in "Home") from the Excel file.
-    Returns:
-      - working_hours_details: row-level data from all employee sheets with extra columns:
+    Reads and processes each employee sheet (listed in the "Home" sheet) from the Excel file.
+    Returns two DataFrames:
+      - working_hours_details: row-level data from all employee sheets with additional columns:
           Employee, RowNumber, Month (yyyy-mm), WeekFriday (mm-dd-yyyy)
       - violations_df: DataFrame of violations with columns:
           Employee, Violation Type, Violation Details, Location, Violation Date
+        where Violation Type is one of:
+          "Invalid value", "Working hours less than 40", "Start date change"
     """
     home_df = pd.read_excel(file_path, sheet_name="Home", header=None)
     employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
@@ -26,9 +28,9 @@ def process_excel_file(file_path):
 
     working_hours_details_list = []
     violations_list = []
-    project_month_info = {}  # For start date validation
+    project_month_info = {}  # for start date validation
 
-    # Allowed values for the six categorical columns (single-token exact match)
+    # Allowed values for six categorical columns (must be a single token exactly matching)
     allowed_values = {
         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
             ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
@@ -43,6 +45,7 @@ def process_excel_file(file_path):
         "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
             ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
     }
+    # Exception: if "Main project" or "Name of the Project" equals "Annual Leave", skip start date check.
     start_date_exceptions = ["Annual Leave"]
 
     for emp in employee_names:
@@ -58,7 +61,7 @@ def process_excel_file(file_path):
                 return None, None
 
         df["Employee"] = emp
-        df["RowNumber"] = df.index + 2  # assuming header is row 1
+        df["RowNumber"] = df.index + 2  # assume header is row 1
         df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce")
 
         # (1) Allowed values validation
@@ -273,11 +276,10 @@ else:
                     filtered_v = filtered_v[filtered_v["Employee"].isin(emp_chosen_v)]
                 if types_chosen_v:
                     filtered_v = filtered_v[filtered_v["Violation Type"].isin(types_chosen_v)]
-                # Add a UniqueID column: here we use Employee + RowNumber from Location info.
-                # (Assuming Location ends with "Row {number}")
-                def extract_row(location_str):
+                # Create UniqueID from Employee and RowNumber extracted from Location.
+                def extract_row(loc_str):
                     try:
-                        return location_str.split("Row ")[-1]
+                        return loc_str.split("Row ")[-1]
                     except:
                         return ""
                 filtered_v["UniqueID"] = filtered_v.apply(lambda r: f"{r['Employee']}_{extract_row(r['Location'])}", axis=1)
@@ -293,21 +295,19 @@ else:
     # -------------- TAB 3: UPDATE DATA --------------
     with tabs[3]:
         st.subheader("Update Data for Violations")
-        st.markdown("Use the filters below (same as in the Violations tab) to select the rows you wish to update. Then, use the inline checkboxes to choose which rows to update. Finally, select your update mode and options, then click the update button.")
-        
+        st.markdown("Use the filters below (same as in the Violations tab) to select the rows you wish to update. Then, update the inline checkboxes to select specific rows, choose update options, and click the update button.")
         if violations_df.empty:
             st.info("No violations available for update.")
         else:
             # Ensure UniqueID exists
-            def extract_row(location_str):
+            def extract_row(loc_str):
                 try:
-                    return location_str.split("Row ")[-1]
+                    return loc_str.split("Row ")[-1]
                 except:
                     return ""
             violations_df["UniqueID"] = violations_df.apply(lambda r: f"{r['Employee']}_{extract_row(r['Location'])}", axis=1)
             all_emps_update = sorted(violations_df["Employee"].dropna().unique())
             all_types_update = ["Invalid value", "Working hours less than 40", "Start date change"]
-            
             with st.form("update_filter_form"):
                 col1_u, col2_u = st.columns([0.7, 0.3])
                 emp_chosen_update = col1_u.multiselect("Select Employee(s)", options=all_emps_update, default=[])
@@ -328,20 +328,20 @@ else:
                     filtered_update_df = filtered_update_df[filtered_update_df["Violation Type"].isin(type_chosen_update)]
                 st.markdown("#### Filtered Violations for Update")
                 st.dataframe(filtered_update_df, use_container_width=True)
-                
-                # Instead of a separate multiselect for row selection, show the filtered table with an inline checkbox column.
-                # We add a new column "Select" (default False) and use st.data_editor to allow checkboxes.
-                filtered_update_df = filtered_update_df.copy()
-                filtered_update_df["Select"] = False
-                st.markdown("#### Select Rows to Update (Check the box in the 'Select' column)")
-                updated_table = st.data_editor(filtered_update_df, key="update_data_editor", num_rows="dynamic")
-                # Get the UniqueIDs of rows that are selected.
+
+                # Add an inline "Select" column to allow row-by-row selection.
+                if "selected_rows" not in st.session_state:
+                    st.session_state["selected_rows"] = []
+                # Prepopulate "Select" based on previously selected IDs.
+                filtered_update_df["Select"] = filtered_update_df["UniqueID"].apply(lambda uid: uid in st.session_state["selected_rows"])
+                updated_table = st.data_editor(filtered_update_df, key="update_data_editor", num_rows="dynamic", use_container_width=True)
+                # Save updated selection in session state.
                 selected_ids = updated_table[updated_table["Select"] == True]["UniqueID"].tolist()
-                st.markdown(f"**Rows selected for update:** {selected_ids}")
-                
-                # Now, let the user choose update options for the selected rows.
+                st.session_state["selected_rows"] = selected_ids
+                st.markdown(f"**Rows selected for update:** {st.session_state['selected_rows']}")
+
                 st.markdown("### Update Options")
-                update_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0, key="upd_mode")
+                upd_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0, key="upd_mode")
                 categorical_fields = [
                     "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
                     "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
@@ -350,25 +350,19 @@ else:
                     "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
                     "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
                 ]
-                # Filter the underlying working_hours_details to get suggestions for the selected rows.
-                # We assume UniqueID in working_hours_details is Employee_RowNumber.
+                # Get suggestions from working_hours_details for the selected rows.
                 working_hours_details["UniqueID"] = working_hours_details.apply(lambda r: f"{r['Employee']}_{r['RowNumber']}", axis=1)
-                selected_rows_df = working_hours_details[working_hours_details["UniqueID"].isin(selected_ids)]
+                selected_rows_df = working_hours_details[working_hours_details["UniqueID"].isin(st.session_state["selected_rows"])]
                 st.markdown("#### Selected Rows Preview")
                 st.dataframe(selected_rows_df, use_container_width=True)
                 
-                # For date fields, compute suggestions:
-                if not selected_rows_df.empty:
+                if upd_mode == "Automatic":
+                    st.markdown("**Automatic Mode**")
                     auto_start_date = selected_rows_df["Start Date"].apply(lambda x: pd.to_datetime(x, format="%m-%d-%Y", errors="coerce")).min()
                     if "Completion Date" in selected_rows_df.columns:
                         auto_completion_date = selected_rows_df["Completion Date"].apply(lambda x: pd.to_datetime(x, format="%m-%d-%Y", errors="coerce")).max()
                     else:
                         auto_completion_date = None
-                else:
-                    auto_start_date, auto_completion_date = None, None
-                
-                if update_mode == "Automatic":
-                    st.markdown("**Automatic Update Mode**")
                     st.write("Start Date will be updated to (first occurrence):", auto_start_date.strftime("%m-%d-%Y") if pd.notna(auto_start_date) else "N/A")
                     st.write("Completion Date will be updated to (last occurrence):", auto_completion_date.strftime("%m-%d-%Y") if auto_completion_date is not None and pd.notna(auto_completion_date) else "N/A")
                     auto_choices = {}
@@ -384,7 +378,6 @@ else:
                         auto_choices[field] = st.radio(f"Select update method for **{field}**", options=["First Occurrence", "Most Frequent"], index=0, key=field+"_upd_auto")
                     upd_btn = st.button("Update Data (Automatic)")
                     if upd_btn:
-                        # Define sheets_dict from the Excel file.
                         sheets_dict = pd.read_excel(FILE_PATH, sheet_name=None)
                         for sheet_name, df in sheets_dict.items():
                             if sheet_name == "Home":
@@ -395,7 +388,7 @@ else:
                             df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce")
                             df["RowNumber"] = df.index + 2
                             df["UniqueID"] = df.apply(lambda r: f"{r['Employee']}_{r['RowNumber']}", axis=1)
-                            condition = df["UniqueID"].isin(selected_ids)
+                            condition = df["UniqueID"].isin(st.session_state["selected_rows"])
                             if condition.any():
                                 new_start = auto_start_date.strftime("%m-%d-%Y") if pd.notna(auto_start_date) else None
                                 new_completion = auto_completion_date.strftime("%m-%d-%Y") if auto_completion_date is not None and pd.notna(auto_completion_date) else None
@@ -412,7 +405,7 @@ else:
                                 df.to_excel(writer, sheet_name=sheet_name, index=False)
                         st.success("Selected data updated successfully (Automatic Mode).")
                 else:
-                    st.markdown("**Manual Update Mode**")
+                    st.markdown("**Manual Mode**")
                     manual_start_date = st.date_input("Select Start Date", value=auto_start_date.date() if pd.notna(auto_start_date) else None)
                     if "Completion Date" in selected_rows_df.columns and auto_completion_date is not None and pd.notna(auto_completion_date):
                         manual_completion_date = st.date_input("Select Completion Date", value=auto_completion_date.date())
@@ -450,7 +443,7 @@ else:
                             df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce")
                             df["RowNumber"] = df.index + 2
                             df["UniqueID"] = df.apply(lambda r: f"{r['Employee']}_{r['RowNumber']}", axis=1)
-                            condition = df["UniqueID"].isin(selected_ids)
+                            condition = df["UniqueID"].isin(st.session_state["selected_rows"])
                             if condition.any():
                                 new_start = manual_start_date.strftime("%m-%d-%Y")
                                 new_completion = manual_completion_date.strftime("%m-%d-%Y") if manual_completion_date is not None else None
