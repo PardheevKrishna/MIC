@@ -68,8 +68,7 @@ def process_excel_file(file_path):
     all_sheet_names = xls.sheet_names
 
     working_list = []
-    viol_list = {}
-    viol_list = []
+    viol_list = []  # using a list to collect violation dictionaries
     project_month_info = {}
 
     for emp in employee_names:
@@ -403,13 +402,12 @@ with tab3:
                         with st.expander(f"Edit row {uid}", expanded=True):
                             if update_mode == "Automatic":
                                 auto_start_str, auto_comp_str, cat_sugg = compute_auto_suggestions(row, working_details)
-                                # Prefill with auto suggestions
                                 st.write(f"Main project: {row['Main project']}")
                                 new_start = st.text_input("Start Date", value=auto_start_str, key=f"{uid}_start")
                                 new_comp = ""
                                 if "Completion Date" in row and "Completion Date" in working_details.columns:
                                     new_comp = st.text_input("Completion Date", value=auto_comp_str, key=f"{uid}_comp")
-                                # For each cat field, text input with auto suggestion
+                                # For each categorical field, text input with auto suggestion
                                 cat_vals = {}
                                 for cf in cat_fields:
                                     cat_vals[cf] = st.text_input(cf, value=cat_sugg[cf], key=f"{uid}_{cf}")
@@ -444,7 +442,7 @@ with tab3:
 
                     # Once done editing all rows, we have a final button to update
                     if st.button("Update Excel"):
-                        # Use openpyxl
+                        # Use openpyxl to update the Excel file
                         try:
                             wb = load_workbook(FILE_PATH)
                         except Exception as e:
@@ -456,7 +454,7 @@ with tab3:
                             if sheet_name not in wb.sheetnames:
                                 continue
                             ws = wb[sheet_name]
-                            # Header row
+                            # Map headers to their respective column numbers
                             headers = {cell.value: cell.column for cell in ws[1]}
                             r_num = row_vals["RowNumber"]
                             if "Start Date" in headers and row_vals["Start Date"]:
@@ -469,6 +467,7 @@ with tab3:
                         try:
                             wb.save(FILE_PATH)
                             st.success("Excel file updated successfully.")
+                            st.experimental_rerun()  # Force re-run to load updated file
                         except Exception as e:
                             st.error(f"Error saving workbook: {e}")
         else:
