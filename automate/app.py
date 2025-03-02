@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import timedelta
 from io import BytesIO
 from openpyxl import load_workbook
+import json
 import os
 
 # ---------- CONFIGURATION ----------
@@ -11,9 +12,7 @@ FILE_PATH = "input.xlsx"  # CHANGE this to your actual Excel file path
 # -------------- CUSTOM CSS & TITLE --------------
 st.markdown("""
 <style>
-.mySkipButton {
-    visibility: hidden;
-}
+.mySkipButton { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 st.title("Team Report Dashboard")
@@ -25,7 +24,6 @@ def process_excel_file(file_path):
       - working_details: row-level data for all employees
       - violations_df: flagged violations (Invalid value, Start date change, Weekly < 40, etc.)
     """
-    # Allowed values for validation
     allowed_values = {
         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)": [
             "CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"
@@ -44,7 +42,6 @@ def process_excel_file(file_path):
             "Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"
         ]
     }
-    # Exceptions for start date check
     start_date_exceptions = [
         "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
         "External meetings", "External Meeting", "External meeting", "external meetings",
@@ -63,7 +60,7 @@ def process_excel_file(file_path):
     all_sheet_names = xls.sheet_names
 
     working_list = []
-    viol_list = []  # collect violations
+    viol_list = []  # list to collect violation dictionaries
     project_month_info = {}
 
     for emp in employee_names:
@@ -81,8 +78,10 @@ def process_excel_file(file_path):
             continue
 
         df["Employee"] = emp
-        df["RowNumber"] = df.index + 2  # Excel row number (header is row 1)
-        df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce")
+        df["RowNumber"] = df.index + 2  # Excel row (header is row 1)
+        df["Status Date (Every Friday)"] = pd.to_datetime(
+            df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce"
+        )
 
         # (1) Validate allowed values
         for col, a_list in allowed_values.items():
@@ -101,7 +100,7 @@ def process_excel_file(file_path):
                         "Violation Date": df.at[i, "Status Date (Every Friday)"]
                     })
 
-        # (2) Check start date consistency (unless project is in exceptions)
+        # (2) Check start date consistency (skip exceptions)
         for i, row in df.iterrows():
             proj = row["Name of the Project"]
             start_val = row["Start Date"]
@@ -176,25 +175,30 @@ else:
 working_details = st.session_state["working_details"]
 violations_df = st.session_state["violations_df"]
 
-# ========== TABS ==========
-tab1, tab2, tab3 = st.tabs(["Team Monthly Summary", "Working Hours Summary", "Violations and Update"])
+# ---------- USE st.radio TO SELECT A TAB (this preserves the active view) ----------
+tab_option = st.radio("Select Report Tab", 
+                       ["Team Monthly Summary", "Working Hours Summary", "Violations and Update"],
+                       index=0)
 
-# ---------- TAB 1 & TAB 2: (Same as before – not shown here for brevity) ----------
-with tab1:
+# ---------- TEAM MONTHLY SUMMARY (Tab 1) ----------
+if tab_option == "Team Monthly Summary":
     st.subheader("Team Monthly Summary")
-    # ... [Team Monthly Summary code unchanged] ...
+    # [Insert your Team Monthly Summary code here]
+    st.write("Team Monthly Summary code goes here.")
 
-with tab2:
+# ---------- WORKING HOURS SUMMARY (Tab 2) ----------
+elif tab_option == "Working Hours Summary":
     st.subheader("Working Hours Summary")
-    # ... [Working Hours Summary code unchanged] ...
+    # [Insert your Working Hours Summary code here]
+    st.write("Working Hours Summary code goes here.")
 
-# ---------- TAB 3: VIOLATIONS & UPDATE ----------
-with tab3:
+# ---------- VIOLATIONS & UPDATE (Tab 3) ----------
+elif tab_option == "Violations and Update":
     st.subheader("Violations and Update")
     if violations_df.empty:
         st.info("No violations found.")
     else:
-        # --- Step 1: Filter Violations ---
+        # Step 1: Filter Violations
         all_emps_v = sorted(violations_df["Employee"].dropna().unique())
         all_types_v = ["Invalid value", "Working hours less than 40", "Start date change"]
 
@@ -218,7 +222,7 @@ with tab3:
                 df_v = df_v[df_v["Violation Type"].isin(type_sel_v)]
             st.dataframe(df_v, use_container_width=True)
             
-            # --- Step 2: Row Selection (outside any form) ---
+            # Step 2: Row Selection (this part no longer forces a tab change)
             all_ids = sorted(df_v.apply(lambda r: f"{r['Employee']}_{r['Location'].split('Row ')[-1]}", axis=1).unique())
             st.markdown("#### Select Rows to Update (by UniqueID)")
             select_all_rows = st.checkbox("Select All Rows", key="select_all_rows")
@@ -227,18 +231,18 @@ with tab3:
             else:
                 selected_ids = st.multiselect("Select UniqueIDs", options=all_ids, key="selected_ids")
             
-            # Button to load editing forms (this button does not trigger the editing forms until clicked)
+            # Button to load editing forms – this does not trigger a page change because we use radio for tabs
             if st.button("Load Editing Forms", key="load_editing"):
                 if not selected_ids:
                     st.error("No rows selected for update.")
                 else:
                     st.session_state["selected_rows"] = selected_ids
                     st.success(f"Selected rows: {selected_ids}")
-        
-        # --- Step 3: Load Editing Forms Only After Confirmation ---
+
+        # Step 3: Load Editing Forms (only if row selection has been confirmed)
         if "selected_rows" in st.session_state:
             st.markdown("### Edit Each Selected Row")
-            updated_data = {}  # to collect the new values
+            updated_data = {}  # Dictionary to collect new values
             cat_fields = [
                 "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
                 "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
@@ -247,7 +251,7 @@ with tab3:
                 "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :",
                 "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
             ]
-            # Build a lookup from UniqueID to row in working_details
+            # Build a lookup from UniqueID to corresponding row in working_details
             working_details_dict = {}
             for idx, row in working_details.iterrows():
                 uid = row["UniqueID"]
@@ -259,7 +263,6 @@ with tab3:
                     continue
                 row = working_details_dict[uid]
                 with st.expander(f"Edit row {uid}", expanded=True):
-                    # Use text inputs with unique keys (these values persist across re-runs via st.session_state)
                     new_start = st.text_input("Start Date", value=str(row["Start Date"]), key=f"{uid}_start")
                     new_comp = st.text_input("Completion Date", value=str(row.get("Completion Date", "")), key=f"{uid}_comp")
                     row_data = {
@@ -272,7 +275,7 @@ with tab3:
                         row_data[cf] = st.text_input(cf, value=str(row.get(cf, "")), key=f"{uid}_{cf}")
                     updated_data[uid] = row_data
 
-            # --- Step 4: Update Excel using a pure Python function (no Streamlit reactivity in the update logic) ---
+            # Step 4: Update Excel using a pure Python function (no Streamlit involvement in the update logic)
             if st.button("Update Excel", key="update_excel"):
                 def update_excel_file_py(updated_data):
                     try:
@@ -303,8 +306,8 @@ with tab3:
                         return False
 
                 if update_excel_file_py(updated_data):
-                    st.success("Excel file updated successfully (via Python function).")
-                    # Optionally update the in-memory session_state working_details so changes show immediately.
+                    st.success("Excel file updated successfully (via pure Python function).")
+                    # Optionally update session_state working_details so that changes show immediately
                     for uid, row_vals in updated_data.items():
                         mask = st.session_state["working_details"]["UniqueID"] == uid
                         if mask.any():
