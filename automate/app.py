@@ -7,7 +7,7 @@ from io import BytesIO
 import os
 
 # ---------- CONFIGURATION ----------
-FILE_PATH = "input.xlsx"  # Change this to your actual Excel file path
+FILE_PATH = "input.xlsx"        # Path to your main Excel file
 TEMP_UPDATE_FILE = "temp_update.json"  # Temporary file to store update instructions
 
 st.set_page_config(page_title="Team Report Dashboard", layout="wide")
@@ -16,12 +16,13 @@ st.title("Team Report Dashboard")
 # ===================== PROCESS EXCEL FILE =====================
 def process_excel_file(file_path):
     """
-    Reads each employee sheet (employee names in "Home") and returns two DataFrames:
-      - working_details: All rows from each employee sheet with added columns:
-            Employee, RowNumber, Month (yyyy-mm), WeekFriday (mm-dd-yyyy)
-      - violations_df: Rows flagged as violations (not used in Update Data but kept for context)
+    Reads each employee sheet (employee names are in the "Home" sheet)
+    and returns two DataFrames:
+      - working_details: All rows from each employee sheet with extra columns:
+            Employee, RowNumber, Month (yyyy-mm), WeekFriday (mm-dd-yyyy), UniqueID
+      - violations_df: Rows flagged as violations (for context)
     """
-    # Allowed categorical values with proper spacing
+    # Allowed categorical values (make sure spacing is correct)
     allowed_values = {
         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
             ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
@@ -36,7 +37,6 @@ def process_excel_file(file_path):
         "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
             ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
     }
-    # Exceptions for Start Date check
     start_date_exceptions = [
         "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
         "External meetings", "External Meeting", "External meeting", "external meetings",
@@ -78,10 +78,10 @@ def process_excel_file(file_path):
             continue
 
         df["Employee"] = emp
-        df["RowNumber"] = df.index + 2  # Header is row 1
+        df["RowNumber"] = df.index + 2  # Assuming header is row 1
         df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce")
 
-        # Validate allowed values (not critical for update, but included)
+        # Validate allowed values
         for col, a_list in allowed_values.items():
             if col not in df.columns:
                 continue
@@ -98,7 +98,7 @@ def process_excel_file(file_path):
                         "Violation Date": df.at[i, "Status Date (Every Friday)"]
                     })
 
-        # Check start date consistency within each project/month
+        # Check start date consistency
         for i, row in df.iterrows():
             proj = row["Name of the Project"]
             start_val = row["Start Date"]
@@ -125,7 +125,7 @@ def process_excel_file(file_path):
                             "Violation Date": row["Status Date (Every Friday)"]
                         })
 
-        # Weekly hours check (omitted for brevity)
+        # Weekly hours check
         df["Weekly Time Spent(Hrs)"] = pd.to_numeric(df["Weekly Time Spent(Hrs)"], errors="coerce").fillna(0)
         friday_dates = df[(df["Status Date (Every Friday)"].dt.weekday == 4) & (df["Status Date (Every Friday)"].notna())]["Status Date (Every Friday)"].unique()
         for friday in friday_dates:
@@ -159,7 +159,7 @@ def process_excel_file(file_path):
 
 # ---- LOAD DATA ----
 working_details, violations_df = process_excel_file(FILE_PATH)
-if working_details is None:
+if working_details is None or violations_df is None:
     st.error("Error processing the Excel file.")
     st.stop()
 else:
@@ -188,35 +188,29 @@ elif tab_option == "Violations":
 else:
     st.subheader("Update Data")
 
-    # Step 1: Filter by Main project and Month
-    # Convert to string to avoid TypeError when sorting
+    # Step 1: Filtering
     projects_col = working_details["Main project"].dropna().astype(str).unique()
     all_projects = sorted(projects_col)
     months_col = working_details["Month"].dropna().astype(str).unique()
     all_months = sorted(months_col)
-
     with st.form("update_filter_form"):
         sel_projects = st.multiselect("Select Main Project(s)", options=all_projects, default=all_projects)
         sel_months = st.multiselect("Select Month(s)", options=all_months, default=all_months)
         filter_update = st.form_submit_button("Apply Filters")
-
     if filter_update:
         df_update = working_details.copy()
-        # Convert df_update columns to string if needed
         df_update["Main project"] = df_update["Main project"].astype(str)
         df_update["Month"] = df_update["Month"].astype(str)
-
         if sel_projects:
             df_update = df_update[df_update["Main project"].isin(sel_projects)]
         if sel_months:
             df_update = df_update[df_update["Month"].isin(sel_months)]
-
         st.dataframe(df_update, use_container_width=True)
 
-        # Group by (Main project, Month)
+        # Group data by (Main project, Month)
         groups = df_update.groupby(["Main project", "Month"])
 
-        # Step 2: Automatic or Manual
+        # Step 2: Choose mode
         mode = st.radio("Select Update Mode", ["Automatic", "Manual"], index=0)
         update_instructions = {}
 
@@ -224,18 +218,14 @@ else:
             st.markdown("### Automatic Mode")
             for (proj, mon), group in groups:
                 with st.expander(f"Group: {proj} | {mon}", expanded=True):
-                    # For Start Date: earliest in that group
                     auto_start = pd.to_datetime(group["Start Date"], errors="coerce").min()
                     auto_start_str = auto_start.strftime("%m-%d-%Y") if pd.notna(auto_start) else ""
-                    # For Completion Date: latest in that group
                     auto_comp = None
                     if "Completion Date" in group.columns:
                         auto_comp = pd.to_datetime(group["Completion Date"], errors="coerce").max()
                     auto_comp_str = auto_comp.strftime("%m-%d-%Y") if auto_comp is not None and pd.notna(auto_comp) else ""
                     st.write(f"**Earliest Start:** {auto_start_str}")
                     st.write(f"**Latest Completion:** {auto_comp_str}")
-
-                    # For each categorical col, user picks "first occurrence" or "most frequent"
                     cat_fields = [
                         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
                         "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
@@ -247,26 +237,24 @@ else:
                     cat_choices = {}
                     for cf in cat_fields:
                         if cf in group.columns and not group[cf].dropna().empty:
-                            # first occurrence = the value from the earliest row
                             sorted_group = group.sort_values("RowNumber")
                             first_occ = sorted_group[cf].iloc[0]
                             most_freq = group[cf].mode().iloc[0]
                         else:
                             first_occ, most_freq = "", ""
                         choice = st.radio(
-                            f"{cf}",
+                            f"For {cf}:",
                             ["First occurrence within month", "Most frequent within month"],
                             key=f"{proj}_{mon}_{cf}"
                         )
                         cat_val = first_occ if choice == "First occurrence within month" else most_freq
                         cat_choices[cf] = cat_val
-
                     update_instructions[f"{proj}||{mon}"] = {
                         "Start Date": auto_start_str,
                         "Completion Date": auto_comp_str,
                         **cat_choices
                     }
-
+                    st.write(f"Debug: Instructions for {proj} | {mon} ->", update_instructions[f"{proj}||{mon}"])
         else:
             st.markdown("### Manual Mode")
             allowed_values_manual = {
@@ -284,79 +272,83 @@ else:
             }
             for (proj, mon), group in groups:
                 with st.expander(f"Group: {proj} | {mon}", expanded=True):
-                    # min Start, max Completion
-                    min_start = pd.to_datetime(group["Start Date"], errors="coerce").min()
-                    max_comp = pd.to_datetime(group["Completion Date"], errors="coerce").max() if "Completion Date" in group.columns else None
+                    try:
+                        min_start = pd.to_datetime(group["Start Date"], errors="coerce").min()
+                        max_comp = pd.to_datetime(group["Completion Date"], errors="coerce").max() if "Completion Date" in group.columns else None
+                    except:
+                        min_start, max_comp = None, None
                     min_start_str = min_start.strftime("%m-%d-%Y") if pd.notna(min_start) else ""
                     max_comp_str = max_comp.strftime("%m-%d-%Y") if max_comp is not None and pd.notna(max_comp) else ""
-                    # Let user pick final values
-                    new_start_date = st.text_input("Start Date", value=min_start_str, key=f"{proj}_{mon}_start")
-                    new_comp_date = st.text_input("Completion Date", value=max_comp_str, key=f"{proj}_{mon}_comp")
-
-                    # For each cat field, pick from allowed
-                    cat_map = {}
-                    for cf, opts in allowed_values_manual.items():
-                        # Just pick the first row's value as the "suggestion"
-                        current_val = group[cf].iloc[0] if cf in group.columns and not group[cf].dropna().empty else ""
-                        if current_val in opts:
-                            idx_default = opts.index(current_val)
-                        else:
-                            idx_default = 0
-                        cat_map[cf] = st.selectbox(f"{cf}", options=opts, index=idx_default, key=f"{proj}_{mon}_{cf}")
-
-                    update_instructions[f"{proj}||{mon}"] = {
-                        "Start Date": new_start_date,
-                        "Completion Date": new_comp_date,
-                        **cat_map
+                    new_start = st.date_input("Start Date", value=datetime.strptime(min_start_str, "%m-%d-%Y") if min_start_str else datetime.today(), key=f"{proj}_{mon}_start")
+                    new_comp = st.date_input("Completion Date", value=datetime.strptime(max_comp_str, "%m-%d-%Y") if max_comp_str else datetime.today(), key=f"{proj}_{mon}_comp")
+                    manual_updates = {
+                        "Start Date": new_start.strftime("%m-%d-%Y"),
+                        "Completion Date": new_comp.strftime("%m-%d-%Y")
                     }
+                    for cf, opts in allowed_values_manual.items():
+                        current_val = group[cf].iloc[0] if cf in group.columns and not group[cf].dropna().empty else ""
+                        idx_default = opts.index(current_val) if current_val in opts else 0
+                        manual_updates[cf] = st.selectbox(f"{cf}", options=opts, index=idx_default, key=f"{proj}_{mon}_{cf}")
+                    update_instructions[f"{proj}||{mon}"] = manual_updates
+                    st.write(f"Debug: Instructions for {proj} | {mon} ->", update_instructions[f"{proj}||{mon}"])
 
         st.markdown("#### Final Update Instructions:")
         st.json(update_instructions)
 
+        # Step 3: Save instructions to text file and update Excel
         if st.button("Update Data"):
-            # Save instructions to text file
+            # Save to text file
             try:
                 with open(TEMP_UPDATE_FILE, "w", encoding="utf-8") as f:
                     json.dump(update_instructions, f, indent=2)
                 st.success(f"Update instructions saved to {TEMP_UPDATE_FILE}.")
+                st.write("Debug: Update instructions written to file:", update_instructions)
             except Exception as e:
                 st.error(f"Error writing to text file: {e}")
                 st.stop()
 
-            # Now read them and update Excel
+            # Now update Excel from the text file with debugging lines
             try:
                 wb = load_workbook(FILE_PATH)
+                st.write("Debug: Workbook opened successfully.")
             except Exception as e:
                 st.error(f"Error opening workbook: {e}")
                 st.stop()
 
-            # For each row in working_details, if (Main project, Month) is in instructions, update
+            updated_count = 0
             for i, row in working_details.iterrows():
-                proj = str(row["Main project"])  # ensure string
-                mon = str(row["Month"])          # ensure string
+                proj = str(row["Main project"])
+                mon = str(row["Month"])
                 key = f"{proj}||{mon}"
                 if key in update_instructions:
                     instructions = update_instructions[key]
                     sheet_name = row["Employee"]
+                    st.write(f"Debug: Processing row with UniqueID {row['UniqueID']} in group {key}")
                     if sheet_name not in wb.sheetnames:
+                        st.write(f"Debug: Sheet {sheet_name} not found. Skipping row {row['RowNumber']}.")
                         continue
                     ws = wb[sheet_name]
                     headers = {cell.value: cell.column for cell in ws[1]}
                     r_num = row["RowNumber"]
-                    if r_num < 1:
+                    if not isinstance(r_num, int) or r_num < 1:
+                        st.write(f"Debug: Invalid RowNumber {r_num} for {row['UniqueID']}. Skipping.")
                         continue
+                    st.write(f"Debug: Updating sheet {sheet_name} row {r_num} with instructions: {instructions}")
                     if "Start Date" in headers and instructions.get("Start Date", ""):
                         ws.cell(row=r_num, column=headers["Start Date"], value=instructions["Start Date"])
                     if "Completion Date" in headers and instructions.get("Completion Date", ""):
                         ws.cell(row=r_num, column=headers["Completion Date"], value=instructions["Completion Date"])
-                    # For each categorical col in allowed_values
                     for cf in allowed_values.keys():
                         if cf in headers and instructions.get(cf, ""):
                             ws.cell(row=r_num, column=headers[cf], value=instructions[cf])
+                    updated_count += 1
+
+            st.write(f"Debug: Total rows updated: {updated_count}")
 
             try:
                 wb.save(FILE_PATH)
                 st.success("Excel file updated successfully.")
+                st.write("Debug: Workbook saved successfully.")
             except Exception as e:
                 st.error(f"Error saving workbook: {e}")
     else:
