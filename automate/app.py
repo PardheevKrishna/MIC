@@ -16,7 +16,7 @@ st.title("Team Report Dashboard")
 # ===================== PROCESS EXCEL FILE =====================
 def process_excel_file(file_path):
     """
-    Reads each employee sheet (employee names are in "Home") and returns two DataFrames:
+    Reads each employee sheet (employee names in "Home") and returns two DataFrames:
       - working_details: All rows from each employee sheet with added columns:
             Employee, RowNumber, Month (yyyy-mm), WeekFriday (mm-dd-yyyy)
       - violations_df: Rows flagged as violations (not used in Update Data but kept for context)
@@ -176,53 +176,66 @@ tab_option = st.radio("Select a Tab", [
 if tab_option == "Team Monthly Summary":
     st.subheader("Team Monthly Summary")
     st.write("Placeholder for summary logic.")
+
 elif tab_option == "Working Hours Summary":
     st.subheader("Working Hours Summary")
     st.write("Placeholder for working hours logic.")
+
 elif tab_option == "Violations":
     st.subheader("Violations")
     st.write("Placeholder for violations filtering.")
+
 else:
     st.subheader("Update Data")
-    
-    # Step 1: Filtering for update – allow user to filter by Main project and Month
-    all_projects = sorted(working_details["Main project"].unique())
-    all_months = sorted(working_details["Month"].unique())
+
+    # Step 1: Filter by Main project and Month
+    # Convert to string to avoid TypeError when sorting
+    projects_col = working_details["Main project"].dropna().astype(str).unique()
+    all_projects = sorted(projects_col)
+    months_col = working_details["Month"].dropna().astype(str).unique()
+    all_months = sorted(months_col)
+
     with st.form("update_filter_form"):
         sel_projects = st.multiselect("Select Main Project(s)", options=all_projects, default=all_projects)
         sel_months = st.multiselect("Select Month(s)", options=all_months, default=all_months)
         filter_update = st.form_submit_button("Apply Filters")
+
     if filter_update:
         df_update = working_details.copy()
+        # Convert df_update columns to string if needed
+        df_update["Main project"] = df_update["Main project"].astype(str)
+        df_update["Month"] = df_update["Month"].astype(str)
+
         if sel_projects:
             df_update = df_update[df_update["Main project"].isin(sel_projects)]
         if sel_months:
             df_update = df_update[df_update["Month"].isin(sel_months)]
+
         st.dataframe(df_update, use_container_width=True)
-        
-        # Group by Main project and Month
+
+        # Group by (Main project, Month)
         groups = df_update.groupby(["Main project", "Month"])
-        
-        # Step 2: Choose mode: Automatic or Manual
+
+        # Step 2: Automatic or Manual
         mode = st.radio("Select Update Mode", ["Automatic", "Manual"], index=0)
-        update_instructions = {}  # Will be a dict keyed by "Main project||Month"
-        
+        update_instructions = {}
+
         if mode == "Automatic":
-            st.markdown("### Automatic Mode: Choose options for each group")
+            st.markdown("### Automatic Mode")
             for (proj, mon), group in groups:
                 with st.expander(f"Group: {proj} | {mon}", expanded=True):
-                    # For Start Date: first occurrence
+                    # For Start Date: earliest in that group
                     auto_start = pd.to_datetime(group["Start Date"], errors="coerce").min()
                     auto_start_str = auto_start.strftime("%m-%d-%Y") if pd.notna(auto_start) else ""
-                    # For Completion Date: last occurrence
+                    # For Completion Date: latest in that group
                     auto_comp = None
                     if "Completion Date" in group.columns:
                         auto_comp = pd.to_datetime(group["Completion Date"], errors="coerce").max()
                     auto_comp_str = auto_comp.strftime("%m-%d-%Y") if auto_comp is not None and pd.notna(auto_comp) else ""
-                    st.write(f"**Suggested Start Date:** {auto_start_str}")
-                    st.write(f"**Suggested Completion Date:** {auto_comp_str}")
-                    
-                    # For categorical fields, give two options: first occurrence and most frequent
+                    st.write(f"**Earliest Start:** {auto_start_str}")
+                    st.write(f"**Latest Completion:** {auto_comp_str}")
+
+                    # For each categorical col, user picks "first occurrence" or "most frequent"
                     cat_fields = [
                         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
                         "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
@@ -234,81 +247,74 @@ else:
                     cat_choices = {}
                     for cf in cat_fields:
                         if cf in group.columns and not group[cf].dropna().empty:
-                            first_occ = group.sort_values("RowNumber")[cf].iloc[0]
+                            # first occurrence = the value from the earliest row
+                            sorted_group = group.sort_values("RowNumber")
+                            first_occ = sorted_group[cf].iloc[0]
                             most_freq = group[cf].mode().iloc[0]
                         else:
-                            first_occ = ""
-                            most_freq = ""
+                            first_occ, most_freq = "", ""
                         choice = st.radio(
-                            f"For {cf}:",
+                            f"{cf}",
                             ["First occurrence within month", "Most frequent within month"],
-                            index=0,
                             key=f"{proj}_{mon}_{cf}"
                         )
-                        if choice == "First occurrence within month":
-                            cat_choices[cf] = first_occ
-                        else:
-                            cat_choices[cf] = most_freq
-                    
+                        cat_val = first_occ if choice == "First occurrence within month" else most_freq
+                        cat_choices[cf] = cat_val
+
                     update_instructions[f"{proj}||{mon}"] = {
                         "Start Date": auto_start_str,
                         "Completion Date": auto_comp_str,
                         **cat_choices
                     }
-                    
+
         else:
-            st.markdown("### Manual Mode: Adjust each field for each group")
-            update_instructions = {}
+            st.markdown("### Manual Mode")
             allowed_values_manual = {
-                "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)": [
-                    "CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"
-                ],
-                "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)": [
-                    "Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"
-                ],
+                "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
+                    ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
+                "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)":
+                    ["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"],
                 "Complexity (H,M,L)": ["H", "M", "L"],
-                "Novelity (BAU repetitive, One time repetitive, New one time)": [
-                    "BAU repetitive", "One time repetitive", "New one time"
-                ],
-                "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :": [
-                    "Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"
-                ],
-                "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)": [
-                    "Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"
-                ]
+                "Novelity (BAU repetitive, One time repetitive, New one time)":
+                    ["BAU repetitive", "One time repetitive", "New one time"],
+                "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others) :":
+                    ["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"],
+                "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
+                    ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
             }
             for (proj, mon), group in groups:
                 with st.expander(f"Group: {proj} | {mon}", expanded=True):
-                    try:
-                        min_start = pd.to_datetime(group["Start Date"], errors="coerce").min()
-                        max_comp = pd.to_datetime(group["Completion Date"], errors="coerce").max() if "Completion Date" in group.columns else None
-                    except:
-                        min_start, max_comp = None, None
-                    if pd.notna(min_start):
-                        min_start_str = min_start.strftime("%m-%d-%Y")
-                    else:
-                        min_start_str = ""
-                    if max_comp is not None and pd.notna(max_comp):
-                        max_comp_str = max_comp.strftime("%m-%d-%Y")
-                    else:
-                        max_comp_str = ""
-                    new_start = st.date_input("Start Date", value=datetime.strptime(min_start_str, "%m-%d-%Y") if min_start_str else datetime.today(), key=f"{proj}_{mon}_start")
-                    new_comp = st.date_input("Completion Date", value=datetime.strptime(max_comp_str, "%m-%d-%Y") if max_comp_str else datetime.today(), key=f"{proj}_{mon}_comp")
-                    manual_updates = {
-                        "Start Date": new_start.strftime("%m-%d-%Y"),
-                        "Completion Date": new_comp.strftime("%m-%d-%Y")
-                    }
-                    for cf in allowed_values_manual.keys():
+                    # min Start, max Completion
+                    min_start = pd.to_datetime(group["Start Date"], errors="coerce").min()
+                    max_comp = pd.to_datetime(group["Completion Date"], errors="coerce").max() if "Completion Date" in group.columns else None
+                    min_start_str = min_start.strftime("%m-%d-%Y") if pd.notna(min_start) else ""
+                    max_comp_str = max_comp.strftime("%m-%d-%Y") if max_comp is not None and pd.notna(max_comp) else ""
+                    # Let user pick final values
+                    new_start_date = st.text_input("Start Date", value=min_start_str, key=f"{proj}_{mon}_start")
+                    new_comp_date = st.text_input("Completion Date", value=max_comp_str, key=f"{proj}_{mon}_comp")
+
+                    # For each cat field, pick from allowed
+                    cat_map = {}
+                    for cf, opts in allowed_values_manual.items():
+                        # Just pick the first row's value as the "suggestion"
                         current_val = group[cf].iloc[0] if cf in group.columns and not group[cf].dropna().empty else ""
-                        manual_updates[cf] = st.selectbox(f"{cf}", options=allowed_values_manual[cf], index=allowed_values_manual[cf].index(current_val) if current_val in allowed_values_manual[cf] else 0, key=f"{proj}_{mon}_{cf}")
-                    update_instructions[f"{proj}||{mon}"] = manual_updates
+                        if current_val in opts:
+                            idx_default = opts.index(current_val)
+                        else:
+                            idx_default = 0
+                        cat_map[cf] = st.selectbox(f"{cf}", options=opts, index=idx_default, key=f"{proj}_{mon}_{cf}")
+
+                    update_instructions[f"{proj}||{mon}"] = {
+                        "Start Date": new_start_date,
+                        "Completion Date": new_comp_date,
+                        **cat_map
+                    }
 
         st.markdown("#### Final Update Instructions:")
         st.json(update_instructions)
 
-        # Step 3: Save instructions to text file and update Excel
         if st.button("Update Data"):
-            # Save to text file
+            # Save instructions to text file
             try:
                 with open(TEMP_UPDATE_FILE, "w", encoding="utf-8") as f:
                     json.dump(update_instructions, f, indent=2)
@@ -317,17 +323,17 @@ else:
                 st.error(f"Error writing to text file: {e}")
                 st.stop()
 
-            # Now update Excel from the text file
+            # Now read them and update Excel
             try:
                 wb = load_workbook(FILE_PATH)
             except Exception as e:
                 st.error(f"Error opening workbook: {e}")
                 st.stop()
 
-            # For each row in working_details, if its (Main project, Month) matches a key in update_instructions, update the row
+            # For each row in working_details, if (Main project, Month) is in instructions, update
             for i, row in working_details.iterrows():
-                proj = row["Main project"]
-                mon = row["Month"]
+                proj = str(row["Main project"])  # ensure string
+                mon = str(row["Month"])          # ensure string
                 key = f"{proj}||{mon}"
                 if key in update_instructions:
                     instructions = update_instructions[key]
@@ -343,9 +349,11 @@ else:
                         ws.cell(row=r_num, column=headers["Start Date"], value=instructions["Start Date"])
                     if "Completion Date" in headers and instructions.get("Completion Date", ""):
                         ws.cell(row=r_num, column=headers["Completion Date"], value=instructions["Completion Date"])
+                    # For each categorical col in allowed_values
                     for cf in allowed_values.keys():
                         if cf in headers and instructions.get(cf, ""):
                             ws.cell(row=r_num, column=headers[cf], value=instructions[cf])
+
             try:
                 wb.save(FILE_PATH)
                 st.success("Excel file updated successfully.")
