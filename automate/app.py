@@ -303,25 +303,27 @@ with tab3:
                 df_v = df_v[df_v["Violation Type"].isin(type_sel_v)]
             st.dataframe(df_v, use_container_width=True)
 
-            # Step 2: Select rows for update (by UniqueID)
+            # Step 2: Select rows for update (using a form to hold your selection until confirmed)
             all_ids = sorted(df_v.apply(lambda r: f"{r['Employee']}_{r['Location'].split('Row ')[-1]}", axis=1).unique())
-            st.markdown("#### Select Rows to Update (by UniqueID)")
-            select_all_rows = st.checkbox("Select All Rows")
-            selected_ids = all_ids if select_all_rows else st.multiselect("Select UniqueIDs", options=all_ids)
-
-            # Step 3: Choose update mode
-            update_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0)
-            proceed_btn = st.button("Load Selected Rows for Editing")
-            if proceed_btn:
+            with st.form("select_rows_form"):
+                st.markdown("#### Select Rows to Update (by UniqueID)")
+                select_all_rows = st.checkbox("Select All Rows")
+                if select_all_rows:
+                    selected_ids = all_ids
+                else:
+                    selected_ids = st.multiselect("Select UniqueIDs", options=all_ids)
+                update_mode = st.radio("Select Update Mode", options=["Automatic", "Manual"], index=0)
+                confirm_selection = st.form_submit_button("Confirm Selection")
+            if confirm_selection:
                 if not selected_ids:
                     st.error("No rows selected for update.")
                 else:
                     st.session_state["selected_rows"] = selected_ids
                     st.markdown(f"**Rows selected for update:** {selected_ids}")
+                    # Step 3: Now load the editing forms
                     st.markdown("### Edit Each Selected Row Below")
                     updated_data = {}  # dictionary to collect updated row info
 
-                    # Function to compute auto suggestions for automatic mode
                     def compute_auto_suggestions(row, df):
                         proj_group = df[df["Main project"] == row["Main project"]]
                         auto_start = pd.to_datetime(proj_group["Start Date"], errors="coerce").min()
@@ -404,9 +406,8 @@ with tab3:
                                     "Completion Date": new_comp,
                                     **cat_vals
                                 }
-                    # --- Workaround: Save updated data to a temporary text file and then update Excel ---
+                    # --- Workaround: Save updated data to a temporary file and update Excel ---
                     if st.button("Update Excel"):
-                        # Write updated_data to a temporary file
                         temp_file = "temp_updates.txt"
                         try:
                             with open(temp_file, "w") as f:
@@ -414,14 +415,12 @@ with tab3:
                         except Exception as e:
                             st.error(f"Error writing temporary file: {e}")
                             st.stop()
-                        # Read from the temporary file
                         try:
                             with open(temp_file, "r") as f:
                                 temp_data = json.load(f)
                         except Exception as e:
                             st.error(f"Error reading temporary file: {e}")
                             st.stop()
-                        # Update Excel file using the data from temp file
                         try:
                             wb = load_workbook(FILE_PATH)
                         except Exception as e:
@@ -444,7 +443,7 @@ with tab3:
                         try:
                             wb.save(FILE_PATH)
                             st.success("Excel file updated successfully.")
-                            # Optionally update the session state working_details in memory
+                            # Update session state working_details accordingly
                             for uid, row_vals in temp_data.items():
                                 mask = st.session_state["working_details"]["UniqueID"] == uid
                                 if mask.any():
@@ -454,7 +453,6 @@ with tab3:
                             st.success("Session data updated. Changes now appear in your dashboard.")
                         except Exception as e:
                             st.error(f"Error saving workbook: {e}")
-                        # Remove the temporary file
                         try:
                             os.remove(temp_file)
                         except Exception as e:
