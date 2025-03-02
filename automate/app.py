@@ -7,7 +7,7 @@ from openpyxl import load_workbook
 import os
 
 # ---------- CONFIGURATION ----------
-FILE_PATH = "input.xlsx"        # Change this to your actual Excel file path
+FILE_PATH = "input.xlsx"        # Change to your actual Excel file path
 TEMP_JSON_FILE = "temp_changes.json"  # Where we temporarily store row edits
 
 # -------------- CUSTOM CSS & TITLE --------------
@@ -26,6 +26,7 @@ def process_excel_file(file_path):
       - working_details: row-level data for all employees
       - violations_df: flagged violations
     """
+
     # Allowed categorical values
     allowed_values = {
         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)": [
@@ -160,7 +161,7 @@ def process_excel_file(file_path):
         df["Work Hours"] = df.apply(lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" not in str(r["Main project"]) else 0, axis=1)
         df["Month"] = df["Status Date (Every Friday)"].dt.to_period("M").astype(str)
         df["WeekFriday"] = df["Status Date (Every Friday)"].dt.strftime("%m-%d-%Y").fillna("N/A")
-        # Unique ID
+        # Unique ID for working_details
         df["UniqueID"] = df["Employee"] + "_" + df["RowNumber"].astype(str)
 
         working_list.append(df)
@@ -173,62 +174,73 @@ def process_excel_file(file_path):
     violations_df = pd.DataFrame(viol_list)
     return working_details, violations_df
 
-# ---- LOAD DATA ----
-wd, vd = process_excel_file(FILE_PATH)
-if wd is None or vd is None:
+# ---- LOAD THE DATA ----
+working_details, violations_df = process_excel_file(FILE_PATH)
+if working_details is None or violations_df is None:
     st.error("Error processing the Excel file.")
     st.stop()
 else:
     st.success("Reports generated successfully!")
 
-# TABS
+# ========== TABS (via radio, or you can use st.tabs) ==========
 tab_option = st.radio("Select a Tab", ["Team Monthly Summary", "Working Hours Summary", "Violations and Update"])
 
 if tab_option == "Team Monthly Summary":
     st.subheader("Team Monthly Summary")
-    st.write("Placeholder for your summary logic.")
+    st.write("Placeholder for summary logic / filtering / downloads.")
 
 elif tab_option == "Working Hours Summary":
     st.subheader("Working Hours Summary")
-    st.write("Placeholder for your summary logic.")
+    st.write("Placeholder for summary logic / filtering / downloads.")
 
 else:
-    st.subheader("Violations and Update (No Session State)")
-    if vd.empty:
+    st.subheader("Violations and Update (No Session State, Text File Approach)")
+    if violations_df.empty:
         st.info("No violations found.")
     else:
         # Step A: Filter
-        all_emps_v = sorted(vd["Employee"].dropna().unique())
+        all_emps_v = sorted(violations_df["Employee"].dropna().unique())
         all_types_v = ["Invalid value", "Working hours less than 40", "Start date change"]
-        with st.form("violations_filter_form"):
-            col1, col2 = st.columns([0.7, 0.3])
-            emp_sel_v = col1.multiselect("Select Employee(s)", options=all_emps_v)
-            sel_all_emp = col2.checkbox("Select All Employees")
-            col3, col4 = st.columns([0.7, 0.3])
-            type_sel_v = col3.multiselect("Select Violation Type(s)", options=all_types_v)
-            sel_all_type = col4.checkbox("Select All Types")
-            filter_btn = st.form_submit_button("Filter Violations")
 
-        if filter_btn:
+        with st.form("violations_filter_form"):
+            col1_v, col2_v = st.columns([0.7, 0.3])
+            emp_sel_v = col1_v.multiselect("Select Employee(s)", options=all_emps_v)
+            sel_all_emp = col2_v.checkbox("Select All Employees")
+            col3_v, col4_v = st.columns([0.7, 0.3])
+            type_sel_v = col3_v.multiselect("Select Violation Type(s)", options=all_types_v)
+            sel_all_type = col4_v.checkbox("Select All Types")
+            filter_btn_v = st.form_submit_button("Filter Violations")
+
+        if filter_btn_v:
             if sel_all_emp:
                 emp_sel_v = all_emps_v
             if sel_all_type:
                 type_sel_v = all_types_v
-            df_v = vd.copy()
+            df_v = violations_df.copy()
             if emp_sel_v:
                 df_v = df_v[df_v["Employee"].isin(emp_sel_v)]
             if type_sel_v:
                 df_v = df_v[df_v["Violation Type"].isin(type_sel_v)]
+
+            # Now create UniqueID for these violation rows, if not already present
+            # We'll base it on 'Location' if that references row number, or we can do something else
+            def extract_rownum(loc_str):
+                try:
+                    return loc_str.split("Row ")[-1]
+                except:
+                    return "??"
+            df_v["UniqueID"] = df_v.apply(lambda r: f"{r['Employee']}_{extract_rownum(r['Location'])}", axis=1)
+
             st.dataframe(df_v, use_container_width=True)
 
-            # Step B: Row Selection
+            # Step B: Select rows
             all_ids = sorted(df_v["UniqueID"].unique())
-            st.markdown("#### Select Rows to Update")
-            select_all_rows = st.checkbox("Select All Rows")
+            st.markdown("#### Select Rows to Update (by UniqueID)")
+            select_all_rows = st.checkbox("Select All Rows for Violations")
             if select_all_rows:
                 selected_ids = all_ids
             else:
-                selected_ids = st.multiselect("UniqueIDs", options=all_ids)
+                selected_ids = st.multiselect("Select UniqueIDs", options=all_ids)
 
             # Step C: Choose Automatic or Manual
             update_mode = st.radio("Update Mode", ["Automatic", "Manual"], index=0)
@@ -239,12 +251,7 @@ else:
                     st.error("No rows selected.")
                 else:
                     st.write(f"Rows selected: {selected_ids}")
-                    st.markdown("### Edit Each Row")
-
-                    # Build a map from UniqueID -> row in wd
-                    wd_map = {}
-                    for i, r in wd.iterrows():
-                        wd_map[r["UniqueID"]] = r
+                    st.markdown("### Edit Each Row Below")
 
                     updated_rows = {}
                     cat_fields = [
@@ -256,22 +263,21 @@ else:
                         "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)"
                     ]
 
+                    # Build a map from UniqueID -> row in working_details
+                    wd_map = {}
+                    for i, r in working_details.iterrows():
+                        wd_map[r["UniqueID"]] = r
+
                     def compute_auto_suggestions(row):
                         # group by same "Main project"
                         mp = row["Main project"]
-                        group = wd[wd["Main project"] == mp]
+                        group = working_details[working_details["Main project"] == mp]
                         auto_start = pd.to_datetime(group["Start Date"], errors="coerce").min()
                         auto_comp = None
                         if "Completion Date" in group.columns:
                             auto_comp = pd.to_datetime(group["Completion Date"], errors="coerce").max()
-                        if pd.notna(auto_start):
-                            auto_start_str = auto_start.strftime("%m-%d-%Y")
-                        else:
-                            auto_start_str = ""
-                        if auto_comp is not None and pd.notna(auto_comp):
-                            auto_comp_str = auto_comp.strftime("%m-%d-%Y")
-                        else:
-                            auto_comp_str = ""
+                        auto_start_str = auto_start.strftime("%m-%d-%Y") if pd.notna(auto_start) else ""
+                        auto_comp_str = auto_comp.strftime("%m-%d-%Y") if auto_comp is not None and pd.notna(auto_comp) else ""
                         cat_sugg = {}
                         for cf in cat_fields:
                             if cf in group.columns and not group[cf].dropna().empty:
@@ -283,22 +289,24 @@ else:
                     for uid in selected_ids:
                         row = wd_map.get(uid, None)
                         if row is None:
-                            st.warning(f"No row found for {uid} in working_details")
+                            st.warning(f"No row found in working_details for {uid}")
                             continue
                         with st.expander(f"Edit row: {uid}", expanded=True):
                             if update_mode == "Automatic":
-                                s_str, c_str, cat_map = compute_auto_suggestions(row)
-                                new_start = st.text_input("Start Date", value=s_str, key=f"{uid}_start")
-                                new_comp = st.text_input("Completion Date", value=c_str, key=f"{uid}_comp")
-                                new_cats = {}
+                                auto_start_str, auto_comp_str, cat_map = compute_auto_suggestions(row)
+                                new_start = st.text_input("Start Date", value=auto_start_str, key=f"{uid}_start")
+                                new_comp = ""
+                                if "Completion Date" in row and "Completion Date" in working_details.columns:
+                                    new_comp = st.text_input("Completion Date", value=auto_comp_str, key=f"{uid}_comp")
+                                cat_vals = {}
                                 for cf in cat_fields:
-                                    new_cats[cf] = st.text_input(cf, value=cat_map[cf], key=f"{uid}_{cf}")
+                                    cat_vals[cf] = st.text_input(cf, value=cat_map[cf], key=f"{uid}_{cf}")
                                 updated_rows[uid] = {
                                     "Employee": row["Employee"],
                                     "RowNumber": row["RowNumber"],
                                     "Start Date": new_start,
                                     "Completion Date": new_comp,
-                                    **new_cats
+                                    **cat_vals
                                 }
                             else:
                                 # Manual
@@ -306,16 +314,15 @@ else:
                                 comp_val = str(row.get("Completion Date",""))
                                 new_start = st.text_input("Start Date", value=start_val, key=f"{uid}_start")
                                 new_comp = st.text_input("Completion Date", value=comp_val, key=f"{uid}_comp")
-                                new_cats = {}
+                                cat_vals = {}
                                 for cf in cat_fields:
-                                    cur_val = str(row.get(cf,""))
-                                    new_cats[cf] = st.text_input(cf, value=cur_val, key=f"{uid}_{cf}")
+                                    cat_vals[cf] = st.text_input(cf, value=str(row.get(cf,"")), key=f"{uid}_{cf}")
                                 updated_rows[uid] = {
                                     "Employee": row["Employee"],
                                     "RowNumber": row["RowNumber"],
                                     "Start Date": new_start,
                                     "Completion Date": new_comp,
-                                    **new_cats
+                                    **cat_vals
                                 }
 
                     # Step D: Save to text file
@@ -339,7 +346,7 @@ else:
                                 st.error(f"Error reading from text file: {e}")
                                 st.stop()
 
-                            # Apply changes
+                            # Now apply changes
                             try:
                                 wb = load_workbook(FILE_PATH)
                             except Exception as e:
@@ -355,6 +362,9 @@ else:
                                 # Build header map
                                 headers = {cell.value: cell.column for cell in ws[1]}
                                 r_num = row_vals["RowNumber"]
+                                if r_num < 1:
+                                    st.warning(f"RowNumber is invalid: {r_num} for {uid}. Skipping.")
+                                    continue
                                 # If columns exist, update them
                                 if "Start Date" in headers and row_vals["Start Date"]:
                                     ws.cell(row=r_num, column=headers["Start Date"], value=row_vals["Start Date"])
@@ -370,4 +380,4 @@ else:
                             except Exception as e:
                                 st.error(f"Error saving workbook: {e}")
         else:
-            st.info("Use the form above to filter violations.")
+            st.info("Use the form above to filter violations first.")
