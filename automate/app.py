@@ -3,6 +3,8 @@ import pandas as pd
 from datetime import timedelta
 from io import BytesIO
 from openpyxl import load_workbook
+import json
+import os
 
 # ---------- CONFIGURATION ----------
 FILE_PATH = "input.xlsx"  # CHANGE this to your actual Excel file path
@@ -25,7 +27,6 @@ def process_excel_file(file_path):
       - working_details: row-level data for all employees
       - violations_df: flagged violations (Invalid value, Start date change, Weekly < 40, etc.)
     """
-    # Allowed values for validation
     allowed_values = {
         "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)": [
             "CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"
@@ -44,8 +45,6 @@ def process_excel_file(file_path):
             "Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"
         ]
     }
-
-    # Exceptions for start date check
     start_date_exceptions = [
         "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
         "External meetings", "External Meeting", "External meeting", "external meetings",
@@ -53,7 +52,6 @@ def process_excel_file(file_path):
         "Annual meeting", "annual meeting", "Traveling", "Develop/Dev training",
         "Internal Taining", "internal taining", "Interview"
     ]
-
     try:
         home_df = pd.read_excel(file_path, sheet_name="Home", header=None)
     except Exception as e:
@@ -84,7 +82,9 @@ def process_excel_file(file_path):
 
         df["Employee"] = emp
         df["RowNumber"] = df.index + 2  # Excel row number (header row = 1)
-        df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce")
+        df["Status Date (Every Friday)"] = pd.to_datetime(
+            df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce"
+        )
 
         # (1) Validate allowed values
         for col, a_list in allowed_values.items():
@@ -318,7 +318,6 @@ with tab3:
                 else:
                     st.session_state["selected_rows"] = selected_ids
                     st.markdown(f"**Rows selected for update:** {selected_ids}")
-
                     st.markdown("### Edit Each Selected Row Below")
                     updated_data = {}  # dictionary to collect updated row info
 
@@ -405,15 +404,30 @@ with tab3:
                                     "Completion Date": new_comp,
                                     **cat_vals
                                 }
-                    # Once editing is complete, update when button is clicked
+                    # --- Workaround: Save updated data to a temporary text file and then update Excel ---
                     if st.button("Update Excel"):
+                        # Write updated_data to a temporary file
+                        temp_file = "temp_updates.txt"
+                        try:
+                            with open(temp_file, "w") as f:
+                                json.dump(updated_data, f)
+                        except Exception as e:
+                            st.error(f"Error writing temporary file: {e}")
+                            st.stop()
+                        # Read from the temporary file
+                        try:
+                            with open(temp_file, "r") as f:
+                                temp_data = json.load(f)
+                        except Exception as e:
+                            st.error(f"Error reading temporary file: {e}")
+                            st.stop()
+                        # Update Excel file using the data from temp file
                         try:
                             wb = load_workbook(FILE_PATH)
                         except Exception as e:
                             st.error(f"Error opening workbook: {e}")
                             st.stop()
-
-                        for uid, row_vals in updated_data.items():
+                        for uid, row_vals in temp_data.items():
                             sheet_name = row_vals["Employee"]
                             if sheet_name not in wb.sheetnames:
                                 continue
@@ -430,16 +444,20 @@ with tab3:
                         try:
                             wb.save(FILE_PATH)
                             st.success("Excel file updated successfully.")
+                            # Optionally update the session state working_details in memory
+                            for uid, row_vals in temp_data.items():
+                                mask = st.session_state["working_details"]["UniqueID"] == uid
+                                if mask.any():
+                                    idx = st.session_state["working_details"].index[mask][0]
+                                    for col, new_val in row_vals.items():
+                                        st.session_state["working_details"].at[idx, col] = new_val
+                            st.success("Session data updated. Changes now appear in your dashboard.")
                         except Exception as e:
                             st.error(f"Error saving workbook: {e}")
-
-                        # --- Workaround: Update the session state working_details in memory ---
-                        for uid, row_vals in updated_data.items():
-                            mask = st.session_state["working_details"]["UniqueID"] == uid
-                            if mask.any():
-                                idx = st.session_state["working_details"].index[mask][0]
-                                for col, new_val in row_vals.items():
-                                    st.session_state["working_details"].at[idx, col] = new_val
-                        st.success("Session data updated. The changes will now appear in your dashboard.")
+                        # Remove the temporary file
+                        try:
+                            os.remove(temp_file)
+                        except Exception as e:
+                            st.error(f"Error removing temporary file: {e}")
         else:
             st.info("Please use the form above to filter violations.")
