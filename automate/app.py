@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 from io import BytesIO
-
 from openpyxl import load_workbook  # for preserving all original sheets
 
 # -------------- FIXED EXCEL FILE PATH --------------
@@ -27,7 +26,7 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
-# Exceptions for start date checks: if any of these appear in the Main project or Project name, skip validation.
+# Exceptions for start date validation: if any of these keywords appear in the Main project or Project name, skip validation.
 start_date_exceptions = [
     "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
     "External meetings", "External Meeting", "External meeting", "external meetings",
@@ -88,13 +87,13 @@ def process_excel_file(file_path):
             df["Completion Date"] = pd.to_datetime(df["Completion Date"], errors="coerce")
 
         df["Employee"] = emp
-        # RowNumber used for updating later
-        df["RowNumber"] = df.index + 2  # assume row 1 is header, data starts row 2
+        # RowNumber used for updating later (assumes row 1 is header; data starts at row 2)
+        df["RowNumber"] = df.index + 2
 
         # ---------- 1) ALLOWED VALUES VALIDATION ----------
         for col, allowed_list in allowed_values.items():
             if col not in df.columns:
-                continue  # skip if the column doesn't exist
+                continue
             for i, val in df[col].items():
                 if pd.isna(val):
                     continue
@@ -116,7 +115,7 @@ def process_excel_file(file_path):
             mp_val = str(row["Main project"]).strip() if pd.notna(row["Main project"]) else ""
             proj_val = str(proj).strip() if pd.notna(proj) else ""
 
-            # Updated check: if any exception keyword appears (case-insensitive) in either field, skip validation.
+            # Skip validation if any exception keyword appears (case-insensitive)
             if (any(exc.lower() in mp_val.lower() for exc in start_date_exceptions) or
                 any(exc.lower() in proj_val.lower() for exc in start_date_exceptions)):
                 continue
@@ -386,10 +385,7 @@ else:
     with tabs[3]:
         st.subheader("Data Update - Automatic Mode")
         st.info(
-            "In this mode, for each Main project within a month, the **Start Date** is set to the earliest date (min) "
-            "and the **Completion Date** to the latest date (max). For categorical fields, choose whether to update with "
-            "the first occurrence or the most frequent value. The updated Excel will contain **all original sheets**, "
-            "including 'Home', with employee sheets updated row-by-row."
+            "In this mode, for each Main project within a month, the **Start Date** is replaced with the first occurrence's date (based on the original row order), and the **Completion Date** (if present) with the last occurrence's date. For categorical fields, choose whether to update with the first occurrence or the most frequent value. The updated Excel will contain all original sheets (including 'Home') with employee sheets updated row-by-row."
         )
 
         # Filter update tab by Employee and Month
@@ -424,30 +420,31 @@ else:
             filtered_df = working_hours_details[mask].copy()
 
             def update_group(group):
+                # Sort the group by RowNumber to reflect the original order
+                group = group.sort_values("RowNumber")
+                # Update Start Date: use the first occurrence in the group
                 if "Start Date" in group.columns:
-                    group["Start Date"] = pd.to_datetime(group["Start Date"], errors="coerce")
-                    group["Start Date"] = group["Start Date"].min()
-
+                    first_date = group["Start Date"].iloc[0]
+                    group["Start Date"] = first_date
+                # Update Completion Date: use the last occurrence in the group
                 if "Completion Date" in group.columns:
-                    group["Completion Date"] = pd.to_datetime(group["Completion Date"], errors="coerce")
-                    group["Completion Date"] = group["Completion Date"].max()
-
+                    last_date = group["Completion Date"].iloc[-1]
+                    group["Completion Date"] = last_date
+                # Update categorical columns as per selected mode
                 for ccol, mode in cat_update_modes.items():
                     if ccol in group.columns:
                         non_null = group[ccol].dropna()
                         if mode == "first":
-                            new_val = non_null.iloc[0] if not non_null.empty else None
+                            new_val = group[ccol].iloc[0] if not group[ccol].empty else None
                         else:
                             mode_series = non_null.mode()
                             new_val = mode_series.iloc[0] if not mode_series.empty else None
                         group[ccol] = new_val
-
                 return group
 
             updated_filtered = filtered_df.groupby(
                 ["Employee", "Month", "Main project"], group_keys=False
             ).apply(update_group)
-
             updated_data.loc[mask, :] = updated_filtered
 
             # ==============================
@@ -485,7 +482,7 @@ else:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-    # -------------- DOWNLOAD FULL REPORT (Original Data) --------------
+    # -------------- TAB 4: DOWNLOAD FULL REPORT (Original Data) --------------
     st.markdown("---")
     st.subheader("Download Full Excel Report (Original Data)")
     if not working_hours_details.empty or not violations_df.empty:
