@@ -26,7 +26,7 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
-# Exceptions for start date validation: if any of these keywords appear in the Main project or Name of the Project, skip validation.
+# Exceptions for start date validation: if any of these keywords appear in either "Main project" or "Name of the Project", skip validation.
 start_date_exceptions = [
     "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
     "External meetings", "External Meeting", "External meeting", "external meetings",
@@ -66,7 +66,6 @@ def process_excel_file(file_path):
             st.warning(f"Sheet for employee '{emp}' not found; skipping.")
             continue
 
-        # Read the employee sheet
         df = pd.read_excel(file_path, sheet_name=emp)
         # Normalize headers: remove newline characters and extra spaces.
         df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
@@ -87,7 +86,7 @@ def process_excel_file(file_path):
             df["Completion Date"] = pd.to_datetime(df["Completion Date"], errors="coerce")
 
         df["Employee"] = emp
-        # RowNumber used for updating later (assumes header in row 1; data starts at row 2)
+        # Assign a RowNumber (assumes header in row 1; data begins row 2)
         df["RowNumber"] = df.index + 2
 
         # ---------- 1) ALLOWED VALUES VALIDATION ----------
@@ -115,7 +114,7 @@ def process_excel_file(file_path):
             mp_val = str(row["Main project"]).strip() if pd.notna(row["Main project"]) else ""
             proj_val = str(proj).strip() if pd.notna(proj) else ""
 
-            # Skip validation if any exception keyword appears (case-insensitive)
+            # Skip start date validation if any exception keyword is found in either field
             if (any(exc.lower() in mp_val.lower() for exc in start_date_exceptions) or
                 any(exc.lower() in proj_val.lower() for exc in start_date_exceptions)):
                 continue
@@ -137,9 +136,7 @@ def process_excel_file(file_path):
                         violations_list.append({
                             "Employee": emp,
                             "Violation Type": "Start date change",
-                            "Violation Details": (
-                                f"Expected {baseline_str}, found {current_str} for '{proj}' in {month_key}"
-                            ),
+                            "Violation Details": f"Expected {baseline_str}, found {current_str} for '{proj}' in {month_key}",
                             "Location": f"Sheet '{emp}', Row {row['RowNumber']}",
                             "Violation Date": violation_date
                         })
@@ -339,6 +336,8 @@ else:
         if violations_df.empty:
             st.info("No violations found.")
         else:
+            # Show total number of violation rows at the top
+            st.markdown(f"**Total Violations: {len(violations_df)}**")
             all_emps_v = sorted(violations_df["Employee"].dropna().unique())
             all_types_v = ["Invalid value", "Working hours less than 40", "Start date change"]
 
@@ -384,10 +383,11 @@ else:
     with tabs[3]:
         st.subheader("Data Update - Automatic Mode")
         st.info(
-            "In this mode, for each project (based on **Name of the Project**) within a month, the **Start Date** is replaced "
-            "with the first occurrence's date (based on the original row order), and the **Completion Date** (if present) with "
-            "the last occurrence's date. For categorical fields, choose whether to update with the first occurrence or the most frequent value. "
-            "The updated Excel will contain all original sheets (including 'Home') with employee sheets updated row-by-row."
+            "For each project (based on **Name of the Project**) within a month, the **Start Date** is replaced "
+            "with the first occurrence's date (based on original row order), and the **Completion Date** (if present) "
+            "with the last occurrence's date. Categorical fields are updated per your selected mode. "
+            "The updated Excel will contain all original sheets (including 'Home') with employee sheets updated row-by-row. "
+            "Note: Start date violations will not be triggered if any start date exception keyword appears in the 'Name of the Project'."
         )
 
         # Filter update tab by Employee and Month
@@ -422,17 +422,16 @@ else:
             filtered_df = working_hours_details[mask].copy()
 
             def update_group(group):
-                # Sort by RowNumber (reflecting the original order)
                 group = group.sort_values("RowNumber")
-                # Update Start Date: use the first occurrence's date in the group
+                # Update Start Date: use the first occurrence's date
                 if "Start Date" in group.columns:
                     first_date = group["Start Date"].iloc[0]
                     group["Start Date"] = first_date
-                # Update Completion Date: use the last occurrence's date in the group
+                # Update Completion Date: use the last occurrence's date (if present)
                 if "Completion Date" in group.columns:
                     last_date = group["Completion Date"].iloc[-1]
                     group["Completion Date"] = last_date
-                # Update each categorical column as per selected mode
+                # Update categorical columns as per selected mode
                 for ccol, mode in cat_update_modes.items():
                     if ccol in group.columns:
                         non_null = group[ccol].dropna()
@@ -444,14 +443,14 @@ else:
                         group[ccol] = new_val
                 return group
 
-            # IMPORTANT: Group by "Employee", "Month", and **Name of the Project** (not Main project)
+            # Group by Employee, Month, and Name of the Project
             updated_filtered = filtered_df.groupby(
                 ["Employee", "Month", "Name of the Project"], group_keys=False
             ).apply(update_group)
             updated_data.loc[mask, :] = updated_filtered
 
             # ==============================
-            # WRITE OUT A NEW EXCEL WITH ALL ORIGINAL SHEETS
+            # Write out a new Excel with all original sheets
             # ==============================
             home_df = pd.read_excel(FILE_PATH, sheet_name="Home", header=None)
             employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
