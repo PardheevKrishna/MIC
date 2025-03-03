@@ -25,15 +25,14 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
-# -------------- PROCESS FUNCTION --------------
 def process_excel_file(file_path):
     """
     Reads and processes each employee sheet from 'file_path'.
     Returns two DataFrames:
       - working_hours_details: row-level data with columns including:
           Employee, Status Date (Every Friday), Main project,
-          Name of the Project, Start Date, Weekly Time Spent(Hrs),
-          Work Hours, PTO Hours, Month (yyyy-mm), WeekFriday (mm-dd-yyyy)
+          Name of the Project, Start Date, Completion Date (if present),
+          Weekly Time Spent(Hrs), Work Hours, PTO Hours, Month (yyyy-mm), WeekFriday (mm-dd-yyyy)
       - violations_df: DataFrame of violations with columns:
           Employee, Violation Type, Violation Details, Location, Violation Date
         where Violation Type is one of:
@@ -61,7 +60,6 @@ def process_excel_file(file_path):
         "Internal Taining", "internal taining", "Interview"
     ]
 
-    # Process each employee sheet
     for emp in employee_names:
         if emp not in all_sheet_names:
             st.warning(f"Sheet for employee '{emp}' not found; skipping.")
@@ -80,18 +78,19 @@ def process_excel_file(file_path):
                 st.error(f"Column '{rc}' not found in sheet '{emp}'.")
                 return None, None
 
+        # Convert date columns to datetime
+        df["Status Date (Every Friday)"] = pd.to_datetime(df["Status Date (Every Friday)"], errors="coerce")
+        df["Start Date"] = pd.to_datetime(df["Start Date"], errors="coerce")
+        if "Completion Date" in df.columns:
+            df["Completion Date"] = pd.to_datetime(df["Completion Date"], errors="coerce")
+
         df["Employee"] = emp
         df["RowNumber"] = df.index + 2  # assume header is row 1
-
-        # Convert "Status Date (Every Friday)" to datetime (format: mm-dd-yyyy)
-        df["Status Date (Every Friday)"] = pd.to_datetime(
-            df["Status Date (Every Friday)"], format="%m-%d-%Y", errors="coerce"
-        )
 
         # ---------- 1) ALLOWED VALUES VALIDATION ----------
         for col, allowed_list in allowed_values.items():
             if col not in df.columns:
-                continue  # if the column doesn't exist, skip
+                continue  # skip if the column doesn't exist
             for i, val in df[col].items():
                 if pd.isna(val):
                     continue
@@ -119,23 +118,23 @@ def process_excel_file(file_path):
             if pd.notna(proj) and pd.notna(start_val) and pd.notna(row["Status Date (Every Friday)"]):
                 month_key = row["Status Date (Every Friday)"].strftime("%Y-%m")
                 key = (proj, month_key)
-                current_start = pd.to_datetime(start_val, format="%m-%d-%Y", errors="coerce")
                 if key not in project_month_info:
                     project_month_info[key] = {
-                        "start_date": current_start,
+                        "start_date": start_val,
                         "sheet": emp,
                         "row": row["RowNumber"]
                     }
                 else:
                     baseline = project_month_info[key]["start_date"]
-                    if current_start != baseline:
+                    if start_val != baseline:
                         violation_date = row["Status Date (Every Friday)"]
+                        baseline_str = baseline.strftime('%m-%d-%Y') if pd.notna(baseline) else 'NaT'
+                        current_str = start_val.strftime('%m-%d-%Y') if pd.notna(start_val) else 'NaT'
                         violations_list.append({
                             "Employee": emp,
                             "Violation Type": "Start date change",
                             "Violation Details": (
-                                f"Expected {baseline.strftime('%m-%d-%Y') if pd.notna(baseline) else 'NaT'}, "
-                                f"found {current_start.strftime('%m-%d-%Y') if pd.notna(current_start) else 'NaT'} "
+                                f"Expected {baseline_str}, found {current_str} "
                                 f"for '{proj}' in {month_key}"
                             ),
                             "Location": f"Sheet '{emp}', Row {row['RowNumber']}",
@@ -144,11 +143,14 @@ def process_excel_file(file_path):
 
         # ---------- 3) WEEKLY HOURS VALIDATION (>= 40) ----------
         df["Weekly Time Spent(Hrs)"] = pd.to_numeric(df["Weekly Time Spent(Hrs)"], errors="coerce").fillna(0)
+        # Filter rows where "Status Date (Every Friday)" is a valid Friday
         friday_rows = df[df["Status Date (Every Friday)"].dt.weekday == 4]
         unique_fridays = friday_rows["Status Date (Every Friday)"].dropna().unique()
         for friday in unique_fridays:
             week_start = friday - timedelta(days=4)
-            week_df = df[(df["Status Date (Every Friday)"] >= week_start) & (df["Status Date (Every Friday)"] <= friday)]
+            # Check all rows that fall between Monday and Friday of that week
+            week_df = df[(df["Status Date (Every Friday)"] >= week_start) &
+                         (df["Status Date (Every Friday)"] <= friday)]
             total_hrs = week_df["Weekly Time Spent(Hrs)"].sum()
             if total_hrs < 40:
                 row_nums = ", ".join(str(x) for x in week_df["RowNumber"].tolist())
@@ -169,12 +171,13 @@ def process_excel_file(file_path):
             lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" not in str(r["Main project"]) else 0,
             axis=1
         )
+
+        # Create "Month" and "WeekFriday" columns
         df["Month"] = df["Status Date (Every Friday)"].dt.to_period("M").astype(str)
         df["WeekFriday"] = df["Status Date (Every Friday)"].dt.strftime("%m-%d-%Y")
 
         working_hours_details_list.append(df)
 
-    # Combine all employee details
     if working_hours_details_list:
         working_hours_details = pd.concat(working_hours_details_list, ignore_index=True)
     else:
@@ -182,6 +185,7 @@ def process_excel_file(file_path):
 
     violations_df = pd.DataFrame(violations_list)
     return working_hours_details, violations_df
+
 
 # -------------- READ & PROCESS THE EXCEL --------------
 result = process_excel_file(FILE_PATH)
@@ -192,7 +196,6 @@ else:
     st.success("Reports generated successfully!")
 
     # ========== DASHBOARD TABS ==========
-    # Added a new tab "Update Data" for updating data (automatic mode for now)
     tabs = st.tabs(["Team Monthly Summary", "Working Hours Summary", "Violations", "Update Data"])
 
     # -------------- TAB 0: TEAM MONTHLY SUMMARY --------------
@@ -382,10 +385,9 @@ else:
     # -------------- TAB 3: UPDATE DATA (Automatic Mode) --------------
     with tabs[3]:
         st.subheader("Data Update - Automatic Mode")
-        st.info("This mode automatically updates data based on selected criteria. "
-                "For each main project within a month, the Start Date will be set to the first occurrence (minimum date) and "
-                "the Completion Date (if available) to the last occurrence (maximum date). "
-                "For categorical fields, choose whether to update with the first occurrence or the most frequent value.")
+        st.info("In this mode, for each Main project within a month, the Start Date is set to the earliest date (min) and "
+                "the Completion Date to the latest date (max). For categorical fields, choose whether to update with the "
+                "first occurrence or the most frequent value within that group.")
 
         # Filter update tab by Employee and Month
         all_employees = sorted(working_hours_details["Employee"].dropna().unique())
@@ -397,7 +399,6 @@ else:
             months_chosen = col_filter2.multiselect("Select Month(s)", options=all_months, default=all_months)
 
             st.markdown("### Categorical Fields Update Options")
-            # For each categorical column, allow selection of update mode.
             cat_update_modes = {}
             for col in allowed_values.keys():
                 mode_choice = st.radio(f"For column '{col}', choose update mode:",
@@ -409,37 +410,48 @@ else:
             update_btn = st.form_submit_button("Update Data Automatically")
 
         if update_btn:
-            # Create a mask for rows to update (filtered by employee and month)
-            mask = (working_hours_details["Employee"].isin(employees_chosen)) & (working_hours_details["Month"].isin(months_chosen))
-            # Make a copy of the full data and a copy of the filtered portion
+            # Make a mask for the rows we want to update
+            mask = (working_hours_details["Employee"].isin(employees_chosen)) & \
+                   (working_hours_details["Month"].isin(months_chosen))
+
             updated_data = working_hours_details.copy()
             filtered_df = working_hours_details[mask].copy()
 
-            # Function to update a group based on Employee, Month, and Main project
             def update_group(group):
-                # Update Start Date: set to the minimum (first occurrence)
-                group["Start Date"] = group["Start Date"].min()
-                # Update Completion Date if the column exists: set to maximum (last occurrence)
+                # Ensure columns are datetime
+                if "Start Date" in group.columns:
+                    group["Start Date"] = pd.to_datetime(group["Start Date"], errors="coerce")
+                    # Set min across valid Start Date
+                    group["Start Date"] = group["Start Date"].min()
+
                 if "Completion Date" in group.columns:
+                    group["Completion Date"] = pd.to_datetime(group["Completion Date"], errors="coerce")
+                    # Set max across valid Completion Date
                     group["Completion Date"] = group["Completion Date"].max()
-                # Update each categorical column as per the selected mode
-                for col, mode in cat_update_modes.items():
-                    if col in group.columns:
+
+                # Update each categorical column as per selected mode
+                for ccol, mode in cat_update_modes.items():
+                    if ccol in group.columns:
+                        non_null = group[ccol].dropna()
                         if mode == "first":
-                            # Use the first non-null occurrence
-                            new_val = group[col].dropna().iloc[0] if not group[col].dropna().empty else None
-                        else:  # "most"
-                            mode_series = group[col].mode()
+                            new_val = non_null.iloc[0] if not non_null.empty else None
+                        else:
+                            # "most" occurrence
+                            mode_series = non_null.mode()
                             new_val = mode_series.iloc[0] if not mode_series.empty else None
-                        group[col] = new_val
+                        group[ccol] = new_val
+
                 return group
 
-            # Group the filtered data by Employee, Month, and Main project and update each group
-            updated_filtered = filtered_df.groupby(["Employee", "Month", "Main project"], group_keys=False).apply(update_group)
-            # Update the corresponding rows in the full dataset
+            # Group the filtered data by (Employee, Month, Main project) and apply the update
+            updated_filtered = filtered_df.groupby(
+                ["Employee", "Month", "Main project"], group_keys=False
+            ).apply(update_group)
+
+            # Merge updated rows back into the full dataset
             updated_data.loc[mask, :] = updated_filtered
 
-            # Create a new Excel file with the updated data (include Violations sheet if available)
+            # Create a new Excel file with the updated data (include Violations sheet if desired)
             update_buffer = BytesIO()
             with pd.ExcelWriter(update_buffer, engine="openpyxl") as writer:
                 updated_data.to_excel(writer, sheet_name="Updated_Working_Hours", index=False)
