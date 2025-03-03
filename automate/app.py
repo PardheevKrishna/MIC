@@ -3,6 +3,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 from io import BytesIO
 
+from openpyxl import load_workbook  # for preserving all original sheets
+
 # -------------- FIXED EXCEL FILE PATH --------------
 FILE_PATH = "input.xlsx"  # <-- Change this to your actual file path
 
@@ -24,6 +26,7 @@ allowed_values = {
     "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)":
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
+
 
 def process_excel_file(file_path):
     """
@@ -65,6 +68,7 @@ def process_excel_file(file_path):
             st.warning(f"Sheet for employee '{emp}' not found; skipping.")
             continue
 
+        # Read the employee sheet
         df = pd.read_excel(file_path, sheet_name=emp)
         # Normalize headers: remove newline characters and extra spaces.
         df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
@@ -85,7 +89,8 @@ def process_excel_file(file_path):
             df["Completion Date"] = pd.to_datetime(df["Completion Date"], errors="coerce")
 
         df["Employee"] = emp
-        df["RowNumber"] = df.index + 2  # assume header is row 1
+        # RowNumber used for updating later
+        df["RowNumber"] = df.index + 2  # assume row 1 is header, data starts row 2
 
         # ---------- 1) ALLOWED VALUES VALIDATION ----------
         for col, allowed_list in allowed_values.items():
@@ -121,8 +126,7 @@ def process_excel_file(file_path):
                 if key not in project_month_info:
                     project_month_info[key] = {
                         "start_date": start_val,
-                        "sheet": emp,
-                        "row": row["RowNumber"]
+                        "sheet": emp
                     }
                 else:
                     baseline = project_month_info[key]["start_date"]
@@ -385,9 +389,12 @@ else:
     # -------------- TAB 3: UPDATE DATA (Automatic Mode) --------------
     with tabs[3]:
         st.subheader("Data Update - Automatic Mode")
-        st.info("In this mode, for each Main project within a month, the Start Date is set to the earliest date (min) and "
-                "the Completion Date to the latest date (max). For categorical fields, choose whether to update with the "
-                "first occurrence or the most frequent value within that group.")
+        st.info(
+            "In this mode, for each Main project within a month, the **Start Date** is set to the earliest date (min) "
+            "and the **Completion Date** to the latest date (max). For categorical fields, choose whether to update with "
+            "the first occurrence or the most frequent value. The updated Excel will contain **all original sheets**, "
+            "including 'Home', but each employee sheet will have the updated rows."
+        )
 
         # Filter update tab by Employee and Month
         all_employees = sorted(working_hours_details["Employee"].dropna().unique())
@@ -401,33 +408,35 @@ else:
             st.markdown("### Categorical Fields Update Options")
             cat_update_modes = {}
             for col in allowed_values.keys():
-                mode_choice = st.radio(f"For column '{col}', choose update mode:",
-                                       options=["First occurrence", "Most Occurrence"],
-                                       index=0,
-                                       key=col)
+                mode_choice = st.radio(
+                    f"For column '{col}', choose update mode:",
+                    options=["First occurrence", "Most Occurrence"],
+                    index=0,
+                    key=col
+                )
                 cat_update_modes[col] = "first" if mode_choice == "First occurrence" else "most"
 
             update_btn = st.form_submit_button("Update Data Automatically")
 
         if update_btn:
             # Make a mask for the rows we want to update
-            mask = (working_hours_details["Employee"].isin(employees_chosen)) & \
-                   (working_hours_details["Month"].isin(months_chosen))
+            mask = (
+                working_hours_details["Employee"].isin(employees_chosen)
+                & working_hours_details["Month"].isin(months_chosen)
+            )
 
             updated_data = working_hours_details.copy()
             filtered_df = working_hours_details[mask].copy()
 
             def update_group(group):
-                # Ensure columns are datetime
+                # Convert to datetime in case something changed
                 if "Start Date" in group.columns:
                     group["Start Date"] = pd.to_datetime(group["Start Date"], errors="coerce")
-                    # Set min across valid Start Date
-                    group["Start Date"] = group["Start Date"].min()
+                    group["Start Date"] = group["Start Date"].min()  # earliest
 
                 if "Completion Date" in group.columns:
                     group["Completion Date"] = pd.to_datetime(group["Completion Date"], errors="coerce")
-                    # Set max across valid Completion Date
-                    group["Completion Date"] = group["Completion Date"].max()
+                    group["Completion Date"] = group["Completion Date"].max()  # latest
 
                 # Update each categorical column as per selected mode
                 for ccol, mode in cat_update_modes.items():
@@ -436,7 +445,6 @@ else:
                         if mode == "first":
                             new_val = non_null.iloc[0] if not non_null.empty else None
                         else:
-                            # "most" occurrence
                             mode_series = non_null.mode()
                             new_val = mode_series.iloc[0] if not mode_series.empty else None
                         group[ccol] = new_val
@@ -448,29 +456,70 @@ else:
                 ["Employee", "Month", "Main project"], group_keys=False
             ).apply(update_group)
 
-            # Merge updated rows back into the full dataset
+            # Put updated rows back into the full dataset
             updated_data.loc[mask, :] = updated_filtered
 
-            # Create a new Excel file with the updated data (include Violations sheet if desired)
-            update_buffer = BytesIO()
-            with pd.ExcelWriter(update_buffer, engine="openpyxl") as writer:
-                updated_data.to_excel(writer, sheet_name="Updated_Working_Hours", index=False)
-                if not violations_df.empty:
-                    violations_df.to_excel(writer, sheet_name="Violations", index=False)
-            update_buffer.seek(0)
+            # ==============================
+            # WRITE OUT A NEW EXCEL WITH ALL ORIGINAL SHEETS
+            # ==============================
+            # We'll read the original workbook, and for each sheet:
+            #   - If it's an employee sheet, update row-by-row from updated_data
+            #   - Otherwise, keep as-is
 
-            st.success("Data updated successfully!")
-            st.dataframe(updated_data, use_container_width=True)
+            # 1) Figure out who the employees are (from "Home" sheet read earlier)
+            #    We already have them in 'employee_names' from the process function
+            #    But let's ensure we keep that in scope
+            home_df = pd.read_excel(FILE_PATH, sheet_name="Home", header=None)
+            employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
+
+            # 2) Prepare an ExcelWriter in memory
+            output_buffer = BytesIO()
+            with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
+                # read the original workbook to replicate each sheet
+                original_xls = pd.ExcelFile(FILE_PATH)
+                for sheet_name in original_xls.sheet_names:
+                    df_orig = pd.read_excel(FILE_PATH, sheet_name=sheet_name)
+
+                    if sheet_name in employee_names:
+                        # This sheet belongs to an employee, so we do row-by-row updates
+                        df_orig["RowNumber"] = df_orig.index + 2  # to match how we assigned in process_excel_file
+
+                        # Get the portion of updated_data for this employee
+                        df_emp_updated = updated_data[updated_data["Employee"] == sheet_name].copy()
+
+                        # We'll align rows using "RowNumber"
+                        for idx_emp, row_emp in df_emp_updated.iterrows():
+                            row_num = row_emp["RowNumber"]
+                            mask_row = df_orig["RowNumber"] == row_num
+
+                            # Update only columns that exist in df_orig
+                            for col in df_emp_updated.columns:
+                                if col in df_orig.columns:
+                                    df_orig.loc[mask_row, col] = row_emp[col]
+
+                        # drop RowNumber before saving
+                        df_orig.drop(columns=["RowNumber"], inplace=True, errors="ignore")
+
+                        # Write the updated employee sheet
+                        df_orig.to_excel(writer, sheet_name=sheet_name, index=False)
+                    else:
+                        # For non-employee sheets (e.g. "Home"), just write them as is
+                        df_orig.to_excel(writer, sheet_name=sheet_name, index=False)
+
+            output_buffer.seek(0)
+
+            st.success("Data updated successfully! All sheets (including 'Home') are preserved in the new Excel.")
+            st.info("You can now re-run your validation on this updated Excel if needed.")
             st.download_button(
-                "Download Updated Excel Report",
-                data=update_buffer,
+                "Download Updated Excel (All Sheets)",
+                data=output_buffer,
                 file_name="updated_report.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
     # -------------- DOWNLOAD FULL REPORT (Original) --------------
     st.markdown("---")
-    st.subheader("Download Full Excel Report")
+    st.subheader("Download Full Excel Report (Original Data)")
     if not working_hours_details.empty or not violations_df.empty:
         full_buffer = BytesIO()
         with pd.ExcelWriter(full_buffer, engine="openpyxl") as writer:
