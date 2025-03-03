@@ -26,25 +26,19 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
-# Exceptions for start date validation.
-# If any of these keywords appear (case-insensitively) in either "Main project" or "Name of the Project", skip validation.
+# Exceptions for start date validation (case-insensitive check).
 start_date_exceptions = [
-    "Internal meetings", "External meetings", "Sick leave", "Sick day",
-    "Annual meeting", "Traveling", "Develop/Dev training", "Internal Taining", "Interview"
+    "internal meeting", "external meeting", "sick leave", "sick day",
+    "annual meeting", "traveling", "develop/dev training",
+    "internal taining", "interview"
 ]
 
 def process_excel_file(file_path):
     """
     Reads and processes each employee sheet from 'file_path'.
     Returns two DataFrames:
-      - working_hours_details: row-level data with columns including:
-          Employee, Status Date (Every Friday), Main project,
-          Name of the Project, Start Date, Completion Date (if present),
-          Weekly Time Spent(Hrs), Work Hours, PTO Hours, Month (yyyy-mm), WeekFriday (mm-dd-yyyy)
-      - violations_df: DataFrame of violations with columns:
-          Employee, Violation Type, Violation Details, Location, Violation Date
-        where Violation Type is one of:
-          "Invalid value", "Working hours less than 40", "Start date change"
+      - working_hours_details: row-level data
+      - violations_df: DataFrame of violations
     """
     # Read "Home" sheet to get employee names from column F (starting row 3)
     home_df = pd.read_excel(file_path, sheet_name="Home", header=None)
@@ -56,7 +50,7 @@ def process_excel_file(file_path):
     working_hours_details_list = []
     violations_list = []
 
-    # For start date validation: track the first start date per (Main project, Name of the Project, month)
+    # Dictionary to track the first start date for each (normalized main project, normalized project name, month)
     project_month_info = {}
 
     for emp in employee_names:
@@ -65,7 +59,7 @@ def process_excel_file(file_path):
             continue
 
         df = pd.read_excel(file_path, sheet_name=emp)
-        # Normalize headers: remove newline characters and extra spaces.
+        # Normalize headers
         df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
 
         required_cols = [
@@ -84,8 +78,7 @@ def process_excel_file(file_path):
             df["Completion Date"] = pd.to_datetime(df["Completion Date"], errors="coerce")
 
         df["Employee"] = emp
-        # RowNumber for later update (assumes header in row 1; data starts row 2)
-        df["RowNumber"] = df.index + 2
+        df["RowNumber"] = df.index + 2  # row 1 is header, data starts row 2
 
         # ---------- 1) ALLOWED VALUES VALIDATION ----------
         for col, allowed_list in allowed_values.items():
@@ -105,26 +98,31 @@ def process_excel_file(file_path):
                         "Violation Date": violation_date
                     })
 
-        # ---------- 2) START DATE VALIDATION (per project per month) ----------
+        # ---------- 2) START DATE VALIDATION (per project+month) ----------
         for i, row in df.iterrows():
-            main_proj = str(row["Main project"]).strip() if pd.notna(row["Main project"]) else ""
-            proj = str(row["Name of the Project"]).strip() if pd.notna(row["Name of the Project"]) else ""
+            # Normalize "Main project" and "Name of the Project" (strip + lower)
+            raw_main = str(row["Main project"]) if pd.notna(row["Main project"]) else ""
+            raw_proj = str(row["Name of the Project"]) if pd.notna(row["Name of the Project"]) else ""
+            main_proj = raw_main.strip().lower()
+            proj_name = raw_proj.strip().lower()
+
             start_val = row["Start Date"]
-            # Prepare lowercase values for exception checking
-            main_proj_lower = main_proj.lower()
-            proj_lower = proj.lower()
-            # Skip validation if any exception keyword is found in either field
-            if any(exc.lower() in main_proj_lower for exc in start_date_exceptions) or \
-               any(exc.lower() in proj_lower for exc in start_date_exceptions):
+            if pd.isna(row["Status Date (Every Friday)"]):
                 continue
 
-            if proj and pd.notna(start_val) and pd.notna(row["Status Date (Every Friday)"]):
+            # Skip if any exception keyword is found in either
+            if any(exc in main_proj for exc in start_date_exceptions) or \
+               any(exc in proj_name for exc in start_date_exceptions):
+                continue
+
+            if proj_name and pd.notna(start_val):
                 month_key = row["Status Date (Every Friday)"].strftime("%Y-%m")
-                key = (main_proj, proj, month_key)
+                # Key uses normalized main_proj + proj_name + month
+                key = (main_proj, proj_name, month_key)
+
                 if key not in project_month_info:
                     project_month_info[key] = {
-                        "start_date": start_val,
-                        "sheet": emp
+                        "start_date": start_val
                     }
                 else:
                     baseline = project_month_info[key]["start_date"]
@@ -135,7 +133,10 @@ def process_excel_file(file_path):
                         violations_list.append({
                             "Employee": emp,
                             "Violation Type": "Start date change",
-                            "Violation Details": f"Expected {baseline_str}, found {current_str} for '{main_proj} | {proj}' in {month_key}",
+                            "Violation Details": (
+                                f"Expected {baseline_str}, found {current_str} "
+                                f"for '{raw_main}' / '{raw_proj}' in {month_key}"
+                            ),
                             "Location": f"Sheet '{emp}', Row {row['RowNumber']}",
                             "Violation Date": violation_date
                         })
@@ -335,7 +336,16 @@ else:
         if violations_df.empty:
             st.info("No violations found.")
         else:
-            st.markdown(f"**Total Violations: {len(violations_df)}**")
+            # Display total number of violations at the top
+            total_violations = len(violations_df)
+            st.markdown(f"**Total Violations: {total_violations}**")
+
+            # Show separate counts for each violation type
+            violation_counts = violations_df["Violation Type"].value_counts()
+            for vtype in ["Invalid value", "Working hours less than 40", "Start date change"]:
+                count = violation_counts.get(vtype, 0)
+                st.markdown(f"- **{vtype}**: {count}")
+
             all_emps_v = sorted(violations_df["Employee"].dropna().unique())
             all_types_v = ["Invalid value", "Working hours less than 40", "Start date change"]
 
@@ -381,10 +391,9 @@ else:
     with tabs[3]:
         st.subheader("Data Update - Automatic Mode")
         st.info(
-            "For each project (based on both **Main project** and **Name of the Project**) within a month, the **Start Date** is replaced "
-            "with the first occurrence's date (based on original row order), and the **Completion Date** (if present) with the last occurrence's date. "
-            "Categorical fields are updated per your selected mode. The updated Excel will contain all original sheets (including 'Home') with employee sheets updated row-by-row. "
-            "Note: Start date violations will not be triggered if any start date exception keyword appears in either 'Main project' or 'Name of the Project'."
+            "For each project (based on **Main project + Name of the Project**), we normalize them (strip + lower), and for each month, "
+            "the **Start Date** is replaced with the first occurrence's date, and the **Completion Date** (if present) with the last occurrence's date. "
+            "Categorical fields are updated as per your chosen mode. The updated Excel will contain all original sheets (including 'Home') with employee sheets updated row-by-row."
         )
 
         # Filter update tab by Employee and Month
@@ -410,25 +419,27 @@ else:
             update_btn = st.form_submit_button("Update Data Automatically")
 
         if update_btn:
+            # We'll update only rows matching the chosen employees & months
             mask = (
                 working_hours_details["Employee"].isin(employees_chosen)
                 & working_hours_details["Month"].isin(months_chosen)
             )
-
             updated_data = working_hours_details.copy()
             filtered_df = working_hours_details[mask].copy()
 
+            # We define a function that normalizes the main project + name of the project,
+            # then updates start date + completion date consistently
             def update_group(group):
                 group = group.sort_values("RowNumber")
-                # Update Start Date: use the first occurrence's date
+                # Replace Start Date with the first occurrence's date in the group
                 if "Start Date" in group.columns:
                     first_date = group["Start Date"].iloc[0]
                     group["Start Date"] = first_date
-                # Update Completion Date: use the last occurrence's date (if present)
+                # Replace Completion Date with the last occurrence's date
                 if "Completion Date" in group.columns:
                     last_date = group["Completion Date"].iloc[-1]
                     group["Completion Date"] = last_date
-                # Update categorical columns as per selected mode
+                # Update each categorical column as per chosen mode
                 for ccol, mode in cat_update_modes.items():
                     if ccol in group.columns:
                         non_null = group[ccol].dropna()
@@ -440,11 +451,19 @@ else:
                         group[ccol] = new_val
                 return group
 
-            # Group by Employee, Month, Main project, and Name of the Project
+            # Create normalized columns to group on
+            # We do the same normalization as in the violation logic
+            filtered_df["Normalized Main"] = filtered_df["Main project"].fillna("").apply(lambda x: x.strip().lower())
+            filtered_df["Normalized Proj"] = filtered_df["Name of the Project"].fillna("").apply(lambda x: x.strip().lower())
+
+            # Group by Employee, Month, Normalized Main, Normalized Proj
             updated_filtered = filtered_df.groupby(
-                ["Employee", "Month", "Main project", "Name of the Project"], group_keys=False
+                ["Employee", "Month", "Normalized Main", "Normalized Proj"],
+                group_keys=False
             ).apply(update_group)
-            updated_data.loc[mask, :] = updated_filtered
+
+            # Put updated rows back into the full dataset
+            updated_data.loc[mask, :] = updated_filtered.drop(columns=["Normalized Main", "Normalized Proj"], errors="ignore")
 
             # ==============================
             # Write out a new Excel with all original sheets
@@ -473,7 +492,7 @@ else:
             output_buffer.seek(0)
 
             st.success("Data updated successfully! All sheets (including 'Home') are preserved in the new Excel.")
-            st.info("You can now re-run your validation on this updated Excel if needed.")
+            st.info("Re-run the validation on this updated Excel if needed.")
             st.download_button(
                 "Download Updated Excel (All Sheets)",
                 data=output_buffer,
