@@ -5,11 +5,11 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from openpyxl import load_workbook
 
-# -------------- FIXED EXCEL FILE PATH --------------
-FILE_PATH = "input.xlsx"  # <-- Change this to your actual file path
+# -------------- FILE PATH --------------
+FILE_PATH = "input.xlsx"  # Change this to your actual file path (or later to the updated file)
 
 st.set_page_config(page_title="Team Report Dashboard", layout="wide")
-st.title("Team Report Dashboard (Skip Exceptions)")
+st.title("Team Report Dashboard")
 
 # -------------- GLOBAL ALLOWED VALUES --------------
 allowed_values = {
@@ -27,9 +27,8 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
-# -------------- START DATE EXCEPTION KEYWORDS --------------
-# Any row containing one of these in either "Main project" or "Name of the Project"
-# is fully skipped from start date validation.
+# -------------- EXCEPTION KEYWORDS --------------
+# Rows with these keywords in either "Main project" or "Name of the Project" will be skipped from start date validation.
 exception_keywords = [
     "internal meeting", "internal meetings",
     "external meeting", "external meetings",
@@ -44,8 +43,8 @@ exception_keywords = [
 
 def is_exception_row(main_str: str, proj_str: str) -> bool:
     """
-    Return True if any exception keyword is found in either main_str or proj_str.
-    Both are expected to be lowercased.
+    Return True if any exception keyword is found as a substring in either main_str or proj_str.
+    Both strings are assumed to be normalized (lowercased and stripped).
     """
     for kw in exception_keywords:
         if kw in main_str or kw in proj_str:
@@ -54,22 +53,21 @@ def is_exception_row(main_str: str, proj_str: str) -> bool:
 
 def process_excel_file(file_path):
     """
-    Reads each employee sheet, skipping start date validation if the row has any exception keyword.
-    Returns:
-      - working_hours_details: all rows from all employee sheets (with added columns).
-      - violations_df: list of all violations (invalid value, working hours < 40, or start date change).
+    Reads the input Excel file, processes each employee sheet, and returns:
+      - working_hours_details: Combined row-level DataFrame (with additional columns: Month, WeekFriday).
+      - violations_df: DataFrame of detected violations (Invalid value, Working hours < 40, and Start date change).
     """
-    # Read "Home" sheet to get employee names (column F from row 3 down)
+    # Get employee names from the "Home" sheet (assumed in column F, starting at row 3)
     home_df = pd.read_excel(file_path, sheet_name="Home", header=None)
     employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
-
+    
     xls = pd.ExcelFile(file_path)
     all_sheet_names = xls.sheet_names
 
     working_hours_details_list = []
     violations_list = []
 
-    # Dictionary to track the first start date per (normalized main project, normalized project name, month)
+    # Dictionary for baseline start date per group (key = (normalized main, normalized project, month))
     project_month_info = {}
 
     for emp in employee_names:
@@ -96,9 +94,9 @@ def process_excel_file(file_path):
             df["Completion Date"] = pd.to_datetime(df["Completion Date"], errors="coerce")
 
         df["Employee"] = emp
-        df["RowNumber"] = df.index + 2
+        df["RowNumber"] = df.index + 2  # assuming header is row 1
 
-        # --- 1) ALLOWED VALUES VALIDATION ---
+        # --- ALLOWED VALUES VALIDATION ---
         for col, allowed_list in allowed_values.items():
             if col not in df.columns:
                 continue
@@ -116,26 +114,24 @@ def process_excel_file(file_path):
                         "Violation Date": violation_date
                     })
 
-        # --- 2) START DATE VALIDATION ---
+        # --- START DATE VALIDATION ---
         for i, row in df.iterrows():
-            main_raw = str(row["Main project"]) if pd.notna(row["Main project"]) else ""
-            proj_raw = str(row["Name of the Project"]) if pd.notna(row["Name of the Project"]) else ""
-            main_norm = main_raw.strip().lower()
-            proj_norm = proj_raw.strip().lower()
+            raw_main = str(row["Main project"]) if pd.notna(row["Main project"]) else ""
+            raw_proj = str(row["Name of the Project"]) if pd.notna(row["Name of the Project"]) else ""
+            main_norm = raw_main.strip().lower()
+            proj_norm = raw_proj.strip().lower()
 
             start_val = row["Start Date"]
-            status_date = row["Status Date (Every Friday)"]
-            if pd.isna(status_date):
+            status_dt = row["Status Date (Every Friday)"]
+            if pd.isna(status_dt):
                 continue
 
-            # Skip if this row matches an exception keyword
+            # Skip the row if an exception keyword is found in either column.
             if is_exception_row(main_norm, proj_norm):
-                # We do not track or violate
                 continue
 
-            # Otherwise, proceed
             if proj_norm and pd.notna(start_val):
-                month_key = status_date.strftime("%Y-%m")
+                month_key = status_dt.strftime("%Y-%m")
                 key = (main_norm, proj_norm, month_key)
                 if key not in project_month_info:
                     project_month_info[key] = start_val
@@ -147,12 +143,12 @@ def process_excel_file(file_path):
                         violations_list.append({
                             "Employee": emp,
                             "Violation Type": "Start date change",
-                            "Violation Details": f"Expected {baseline_str}, found {current_str} for '{main_raw}' / '{proj_raw}' in {month_key}",
+                            "Violation Details": f"Expected {baseline_str}, found {current_str} for '{raw_main}' / '{raw_proj}' in {month_key}",
                             "Location": f"Sheet '{emp}', Row {row['RowNumber']}",
-                            "Violation Date": status_date
+                            "Violation Date": status_dt
                         })
 
-        # --- 3) WEEKLY HOURS VALIDATION ---
+        # --- WEEKLY HOURS VALIDATION ---
         df["Weekly Time Spent(Hrs)"] = pd.to_numeric(df["Weekly Time Spent(Hrs)"], errors="coerce").fillna(0)
         friday_rows = df[df["Status Date (Every Friday)"].dt.weekday == 4]
         unique_fridays = friday_rows["Status Date (Every Friday)"].dropna().unique()
@@ -171,15 +167,9 @@ def process_excel_file(file_path):
                     "Violation Date": friday
                 })
 
-        # --- 4) Extra columns ---
-        df["PTO Hours"] = df.apply(
-            lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" in str(r["Main project"]) else 0,
-            axis=1
-        )
-        df["Work Hours"] = df.apply(
-            lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" not in str(r["Main project"]) else 0,
-            axis=1
-        )
+        # --- ADDITIONAL COLUMNS ---
+        df["PTO Hours"] = df.apply(lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" in str(r["Main project"]) else 0, axis=1)
+        df["Work Hours"] = df.apply(lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" not in str(r["Main project"]) else 0, axis=1)
         df["Month"] = df["Status Date (Every Friday)"].dt.to_period("M").astype(str)
         df["WeekFriday"] = df["Status Date (Every Friday)"].dt.strftime("%m-%d-%Y")
 
@@ -193,8 +183,7 @@ def process_excel_file(file_path):
     violations_df = pd.DataFrame(violations_list)
     return working_hours_details, violations_df
 
-
-# -------------- READ & PROCESS --------------
+# -------------- READ & PROCESS THE EXCEL --------------
 result = process_excel_file(FILE_PATH)
 if result is None:
     st.error("Error processing the Excel file.")
@@ -203,7 +192,7 @@ else:
     st.success("Reports generated successfully!")
 
     # -------------- CREATE TABS --------------
-    tabs = st.tabs(["Team Monthly Summary", "Working Hours Summary", "Violations", "Update Data"])
+    tabs = st.tabs(["Team Monthly Summary", "Working Hours Summary", "Violations", "Update Data", "Download Full Excel Report"])
 
     # --- TAB 0: TEAM MONTHLY SUMMARY ---
     with tabs[0]:
@@ -214,16 +203,13 @@ else:
             all_employees = sorted(working_hours_details["Employee"].dropna().unique())
             all_months = sorted(working_hours_details["Month"].dropna().unique())
             all_weeks = sorted(working_hours_details["WeekFriday"].dropna().unique())
-
             with st.form("monthly_summary_form"):
                 col_emp, col_emp_select = st.columns([0.7, 0.3])
                 employees_chosen = col_emp.multiselect("Select Employee(s)", options=all_employees, default=[])
                 select_all_emp = col_emp_select.checkbox("Select All Employees", key="team_emp_all")
-
                 col_month, col_month_select = st.columns([0.7, 0.3])
                 months_chosen = col_month.multiselect("Select Month(s)", options=all_months, default=[])
                 select_all_months = col_month_select.checkbox("Select All Months", key="team_month_all")
-
                 if months_chosen:
                     subset_weeks = working_hours_details[working_hours_details["Month"].isin(months_chosen)]
                     possible_weeks = sorted(subset_weeks["WeekFriday"].dropna().unique())
@@ -232,9 +218,7 @@ else:
                 col_week, col_week_select = st.columns([0.7, 0.3])
                 weeks_chosen = col_week.multiselect("Select Week(s) (Friday date)", options=possible_weeks, default=[])
                 select_all_weeks = col_week_select.checkbox("Select All Weeks", key="team_week_all")
-
                 filter_btn = st.form_submit_button("Filter Data")
-
             if filter_btn:
                 if select_all_emp:
                     employees_chosen = all_employees
@@ -242,7 +226,6 @@ else:
                     months_chosen = all_months
                 if select_all_weeks:
                     weeks_chosen = possible_weeks
-
                 filtered_df = working_hours_details.copy()
                 if employees_chosen:
                     filtered_df = filtered_df[filtered_df["Employee"].isin(employees_chosen)]
@@ -250,32 +233,22 @@ else:
                     filtered_df = filtered_df[filtered_df["Month"].isin(months_chosen)]
                 if weeks_chosen:
                     filtered_df = filtered_df[filtered_df["WeekFriday"].isin(weeks_chosen)]
-
                 if months_chosen:
-                    summary = (
-                        filtered_df.groupby(["Employee", "Month", "WeekFriday"], dropna=False)
-                        .agg({"Work Hours": "sum", "PTO Hours": "sum"})
-                        .reset_index()
-                    )
+                    summary = (filtered_df.groupby(["Employee", "Month", "WeekFriday"], dropna=False)
+                                           .agg({"Work Hours": "sum", "PTO Hours": "sum"})
+                                           .reset_index())
                 else:
-                    summary = (
-                        filtered_df.groupby(["Employee", "Month"], dropna=False)
-                        .agg({"Work Hours": "sum", "PTO Hours": "sum"})
-                        .reset_index()
-                    )
-
+                    summary = (filtered_df.groupby(["Employee", "Month"], dropna=False)
+                                           .agg({"Work Hours": "sum", "PTO Hours": "sum"})
+                                           .reset_index())
                 st.dataframe(summary, use_container_width=True)
-
                 team_buffer = BytesIO()
                 with pd.ExcelWriter(team_buffer, engine="openpyxl") as writer:
                     summary.to_excel(writer, sheet_name="Filtered_Team_Monthly", index=False)
                 team_buffer.seek(0)
-                st.download_button(
-                    "Download Filtered Team Monthly",
-                    data=team_buffer,
-                    file_name="filtered_team_monthly.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                st.download_button("Download Filtered Team Monthly", data=team_buffer,
+                                   file_name="filtered_team_monthly.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.info("Select filters and click 'Filter Data' to view results.")
 
@@ -288,28 +261,22 @@ else:
             all_emps_wh = sorted(working_hours_details["Employee"].dropna().unique())
             all_months_wh = sorted(working_hours_details["Month"].dropna().unique())
             all_weeks_wh = sorted(working_hours_details["WeekFriday"].dropna().unique())
-
             with st.form("working_hours_form"):
                 col1, col2 = st.columns([0.7, 0.3])
                 emp_chosen_wh = col1.multiselect("Select Employee(s)", options=all_emps_wh, default=[])
                 select_all_emp_wh = col2.checkbox("Select All Employees", key="wh_emp_all")
-
                 col3, col4 = st.columns([0.7, 0.3])
                 months_chosen_wh = col3.multiselect("Select Month(s)", options=all_months_wh, default=[])
                 select_all_months_wh = col4.checkbox("Select All Months", key="wh_month_all")
-
                 if months_chosen_wh:
                     subset_weeks_wh = working_hours_details[working_hours_details["Month"].isin(months_chosen_wh)]
                     possible_weeks_wh = sorted(subset_weeks_wh["WeekFriday"].dropna().unique())
                 else:
                     possible_weeks_wh = all_weeks_wh
-
                 col5, col6 = st.columns([0.7, 0.3])
                 weeks_chosen_wh = col5.multiselect("Select Week(s) (Friday date)", options=possible_weeks_wh, default=[])
                 select_all_weeks_wh = col6.checkbox("Select All Weeks", key="wh_week_all")
-
                 filter_btn_wh = st.form_submit_button("Filter Data")
-
             if filter_btn_wh:
                 if select_all_emp_wh:
                     emp_chosen_wh = all_emps_wh
@@ -317,7 +284,6 @@ else:
                     months_chosen_wh = all_months_wh
                 if select_all_weeks_wh:
                     weeks_chosen_wh = possible_weeks_wh
-
                 filtered_wh = working_hours_details.copy()
                 if emp_chosen_wh:
                     filtered_wh = filtered_wh[filtered_wh["Employee"].isin(emp_chosen_wh)]
@@ -325,19 +291,14 @@ else:
                     filtered_wh = filtered_wh[filtered_wh["Month"].isin(months_chosen_wh)]
                 if weeks_chosen_wh:
                     filtered_wh = filtered_wh[filtered_wh["WeekFriday"].isin(weeks_chosen_wh)]
-
                 st.dataframe(filtered_wh, use_container_width=True)
-
                 wh_buffer = BytesIO()
                 with pd.ExcelWriter(wh_buffer, engine="openpyxl") as writer:
                     filtered_wh.to_excel(writer, sheet_name="Filtered_Working_Hours", index=False)
                 wh_buffer.seek(0)
-                st.download_button(
-                    "Download Filtered Working Hours",
-                    data=wh_buffer,
-                    file_name="filtered_working_hours.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                st.download_button("Download Filtered Working Hours", data=wh_buffer,
+                                   file_name="filtered_working_hours.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.info("Select filters and click 'Filter Data' to view results.")
 
@@ -349,58 +310,140 @@ else:
         else:
             total_violations = len(violations_df)
             st.markdown(f"**Total Violations: {total_violations}**")
-
             v_counts = violations_df["Violation Type"].value_counts()
             for vtype in ["Invalid value", "Working hours less than 40", "Start date change"]:
                 st.markdown(f"- **{vtype}**: {v_counts.get(vtype, 0)}")
-
             all_emps_v = sorted(violations_df["Employee"].dropna().unique())
             all_types_v = ["Invalid value", "Working hours less than 40", "Start date change"]
-
             with st.form("violations_form"):
                 col1_v, col2_v = st.columns([0.7, 0.3])
                 emp_chosen_v = col1_v.multiselect("Select Employee(s)", options=all_emps_v, default=[])
                 select_all_emp_v = col2_v.checkbox("Select All Employees", key="v_emp_all")
-
                 col3_v, col4_v = st.columns([0.7, 0.3])
                 types_chosen_v = col3_v.multiselect("Select Violation Type(s)", options=all_types_v, default=[])
                 select_all_types_v = col4_v.checkbox("Select All Types", key="v_type_all")
-
                 filter_btn_v = st.form_submit_button("Filter Data")
-
             if filter_btn_v:
                 if select_all_emp_v:
                     emp_chosen_v = all_emps_v
                 if select_all_types_v:
                     types_chosen_v = all_types_v
-
                 filtered_v = violations_df.copy()
                 if emp_chosen_v:
                     filtered_v = filtered_v[filtered_v["Employee"].isin(emp_chosen_v)]
                 if types_chosen_v:
                     filtered_v = filtered_v[filtered_v["Violation Type"].isin(types_chosen_v)]
-
                 st.dataframe(filtered_v, use_container_width=True)
-
                 v_buffer = BytesIO()
                 with pd.ExcelWriter(v_buffer, engine="openpyxl") as writer:
                     filtered_v.to_excel(writer, sheet_name="Filtered_Violations", index=False)
                 v_buffer.seek(0)
-                st.download_button(
-                    "Download Filtered Violations",
-                    data=v_buffer,
-                    file_name="filtered_violations.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                st.download_button("Download Filtered Violations", data=v_buffer,
+                                   file_name="filtered_violations.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.info("Select filters and click 'Filter Data' to view results.")
 
     # --- TAB 3: UPDATE DATA (Automatic Mode) ---
     with tabs[3]:
-        st.subheader("Data Update - Automatic Mode")
+        st.subheader("Update Data - Automatic Mode")
         st.info(
-            "Here you can implement your logic to update Start Date, Completion Date, etc. "
-            "Rows that match any exception keyword should be fully skipped, just like in the violation check."
+            "For each project (based on both 'Main project' and 'Name of the Project', normalized) within a month, "
+            "the Start Date is updated to the first occurrence's date and the Completion Date (if present) is updated to the last occurrence's date. "
+            "Rows that contain any exception keyword (in either field) are skipped (left unchanged). "
+            "Categorical fields are updated per your chosen mode. "
+            "After updating, download the new Excel and re-run the app with the new file as input."
         )
-        st.write("Implement your update logic here, grouping by the same (normalized) keys. "
-                 "After updating, download the new Excel and re-run the code with the new file as input.")
+        with st.form("update_data_automatic_form"):
+            col_filter1, col_filter2 = st.columns(2)
+            employees_chosen = col_filter1.multiselect("Select Employee(s)", options=all_emps_v, default=all_emps_v)
+            months_chosen = col_filter2.multiselect("Select Month(s)", options=all_months, default=all_months)
+            st.markdown("### Categorical Fields Update Options")
+            cat_update_modes = {}
+            for col in allowed_values.keys():
+                mode_choice = st.radio(
+                    f"For column '{col}', choose update mode:",
+                    options=["First occurrence", "Most Occurrence"],
+                    index=0,
+                    key=col
+                )
+                cat_update_modes[col] = "first" if mode_choice == "First occurrence" else "most"
+            update_btn = st.form_submit_button("Update Data Automatically")
+        if update_btn:
+            mask = (
+                working_hours_details["Employee"].isin(employees_chosen)
+                & working_hours_details["Month"].isin(months_chosen)
+            )
+            updated_data = working_hours_details.copy()
+            filtered_df = working_hours_details[mask].copy()
+            # Create temporary normalized columns for grouping
+            filtered_df["Normalized Main"] = filtered_df["Main project"].fillna("").apply(lambda x: x.strip().lower())
+            filtered_df["Normalized Proj"] = filtered_df["Name of the Project"].fillna("").apply(lambda x: x.strip().lower())
+            def update_group(group):
+                group = group.sort_values("RowNumber")
+                # If group is an exception, leave it unchanged.
+                if is_exception_row(group["Normalized Main"].iloc[0], group["Normalized Proj"].iloc[0]):
+                    return group
+                if "Start Date" in group.columns:
+                    first_date = group["Start Date"].iloc[0]
+                    group["Start Date"] = first_date
+                if "Completion Date" in group.columns:
+                    last_date = group["Completion Date"].iloc[-1]
+                    group["Completion Date"] = last_date
+                for ccol, mode in cat_update_modes.items():
+                    if ccol in group.columns:
+                        non_null = group[ccol].dropna()
+                        if mode == "first":
+                            new_val = group[ccol].iloc[0] if not group[ccol].empty else None
+                        else:
+                            mode_series = non_null.mode()
+                            new_val = mode_series.iloc[0] if not mode_series.empty else None
+                        group[ccol] = new_val
+                return group
+            updated_filtered = filtered_df.groupby(
+                ["Employee", "Month", "Normalized Main", "Normalized Proj"], group_keys=False
+            ).apply(update_group)
+            updated_filtered = updated_filtered.drop(columns=["Normalized Main", "Normalized Proj"], errors="ignore")
+            updated_data.loc[mask, :] = updated_filtered
+            # Write out new Excel preserving all original sheets.
+            home_df = pd.read_excel(FILE_PATH, sheet_name="Home", header=None)
+            employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
+            output_buffer = BytesIO()
+            with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
+                original_xls = pd.ExcelFile(FILE_PATH)
+                for sheet_name in original_xls.sheet_names:
+                    df_orig = pd.read_excel(FILE_PATH, sheet_name=sheet_name)
+                    if sheet_name in employee_names:
+                        df_orig["RowNumber"] = df_orig.index + 2
+                        df_emp_updated = updated_data[updated_data["Employee"] == sheet_name].copy()
+                        for idx_emp, row_emp in df_emp_updated.iterrows():
+                            row_num = row_emp["RowNumber"]
+                            mask_row = df_orig["RowNumber"] == row_num
+                            for col in df_emp_updated.columns:
+                                if col in df_orig.columns:
+                                    df_orig.loc[mask_row, col] = row_emp[col]
+                        df_orig.drop(columns=["RowNumber"], inplace=True, errors="ignore")
+                        df_orig.to_excel(writer, sheet_name=sheet_name, index=False)
+                    else:
+                        df_orig.to_excel(writer, sheet_name=sheet_name, index=False)
+            output_buffer.seek(0)
+            st.success("Data updated successfully! All original sheets (including 'Home') are preserved in the new Excel.")
+            st.info("Re-run the app with the new file as input to validate the updates.")
+            st.download_button("Download Updated Excel (All Sheets)", data=output_buffer,
+                               file_name="updated_report.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    
+    # --- TAB 4: DOWNLOAD FULL EXCEL REPORT (Original Data) ---
+    with tabs[4]:
+        st.subheader("Download Full Excel Report (Original Data)")
+        if working_hours_details.empty or violations_df.empty:
+            st.info("No data available.")
+        else:
+            full_buffer = BytesIO()
+            with pd.ExcelWriter(full_buffer, engine="openpyxl") as writer:
+                working_hours_details.to_excel(writer, sheet_name="Working_Hours_Details", index=False)
+                violations_df.to_excel(writer, sheet_name="Violations", index=False)
+            full_buffer.seek(0)
+            st.download_button("Download Full Excel Report", data=full_buffer,
+                               file_name="full_report.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
