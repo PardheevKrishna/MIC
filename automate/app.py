@@ -26,7 +26,7 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
-# Exceptions for start date validation: if any of these keywords appear in the Main project or Project name, skip validation.
+# Exceptions for start date validation: if any of these keywords appear in the Main project or Name of the Project, skip validation.
 start_date_exceptions = [
     "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
     "External meetings", "External Meeting", "External meeting", "external meetings",
@@ -87,7 +87,7 @@ def process_excel_file(file_path):
             df["Completion Date"] = pd.to_datetime(df["Completion Date"], errors="coerce")
 
         df["Employee"] = emp
-        # RowNumber used for updating later (assumes row 1 is header; data starts at row 2)
+        # RowNumber used for updating later (assumes header in row 1; data starts at row 2)
         df["RowNumber"] = df.index + 2
 
         # ---------- 1) ALLOWED VALUES VALIDATION ----------
@@ -185,7 +185,6 @@ def process_excel_file(file_path):
 
     violations_df = pd.DataFrame(violations_list)
     return working_hours_details, violations_df
-
 
 # -------------- READ & PROCESS THE EXCEL --------------
 result = process_excel_file(FILE_PATH)
@@ -385,7 +384,10 @@ else:
     with tabs[3]:
         st.subheader("Data Update - Automatic Mode")
         st.info(
-            "In this mode, for each Main project within a month, the **Start Date** is replaced with the first occurrence's date (based on the original row order), and the **Completion Date** (if present) with the last occurrence's date. For categorical fields, choose whether to update with the first occurrence or the most frequent value. The updated Excel will contain all original sheets (including 'Home') with employee sheets updated row-by-row."
+            "In this mode, for each project (based on **Name of the Project**) within a month, the **Start Date** is replaced "
+            "with the first occurrence's date (based on the original row order), and the **Completion Date** (if present) with "
+            "the last occurrence's date. For categorical fields, choose whether to update with the first occurrence or the most frequent value. "
+            "The updated Excel will contain all original sheets (including 'Home') with employee sheets updated row-by-row."
         )
 
         # Filter update tab by Employee and Month
@@ -420,17 +422,17 @@ else:
             filtered_df = working_hours_details[mask].copy()
 
             def update_group(group):
-                # Sort the group by RowNumber to reflect the original order
+                # Sort by RowNumber (reflecting the original order)
                 group = group.sort_values("RowNumber")
-                # Update Start Date: use the first occurrence in the group
+                # Update Start Date: use the first occurrence's date in the group
                 if "Start Date" in group.columns:
                     first_date = group["Start Date"].iloc[0]
                     group["Start Date"] = first_date
-                # Update Completion Date: use the last occurrence in the group
+                # Update Completion Date: use the last occurrence's date in the group
                 if "Completion Date" in group.columns:
                     last_date = group["Completion Date"].iloc[-1]
                     group["Completion Date"] = last_date
-                # Update categorical columns as per selected mode
+                # Update each categorical column as per selected mode
                 for ccol, mode in cat_update_modes.items():
                     if ccol in group.columns:
                         non_null = group[ccol].dropna()
@@ -442,8 +444,9 @@ else:
                         group[ccol] = new_val
                 return group
 
+            # IMPORTANT: Group by "Employee", "Month", and **Name of the Project** (not Main project)
             updated_filtered = filtered_df.groupby(
-                ["Employee", "Month", "Main project"], group_keys=False
+                ["Employee", "Month", "Name of the Project"], group_keys=False
             ).apply(update_group)
             updated_data.loc[mask, :] = updated_filtered
 
