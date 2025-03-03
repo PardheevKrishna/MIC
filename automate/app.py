@@ -26,7 +26,8 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
-# Exceptions for start date validation: if any of these keywords appear in either "Main project" or "Name of the Project", skip validation.
+# Exceptions for start date validation.
+# If any of these keywords appear (case-insensitively) in either "Main project" or "Name of the Project", skip start date validation.
 start_date_exceptions = [
     "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
     "External meetings", "External Meeting", "External meeting", "external meetings",
@@ -86,7 +87,7 @@ def process_excel_file(file_path):
             df["Completion Date"] = pd.to_datetime(df["Completion Date"], errors="coerce")
 
         df["Employee"] = emp
-        # Assign a RowNumber (assumes header in row 1; data begins row 2)
+        # Assign RowNumber (assumes header in row 1; data starts at row 2)
         df["RowNumber"] = df.index + 2
 
         # ---------- 1) ALLOWED VALUES VALIDATION ----------
@@ -111,12 +112,12 @@ def process_excel_file(file_path):
         for i, row in df.iterrows():
             proj = row["Name of the Project"]
             start_val = row["Start Date"]
-            mp_val = str(row["Main project"]).strip() if pd.notna(row["Main project"]) else ""
-            proj_val = str(proj).strip() if pd.notna(proj) else ""
-
-            # Skip start date validation if any exception keyword is found in either field
-            if (any(exc.lower() in mp_val.lower() for exc in start_date_exceptions) or
-                any(exc.lower() in proj_val.lower() for exc in start_date_exceptions)):
+            # Convert both fields to lowercase strings for robust matching
+            mp_val = str(row["Main project"]).lower() if pd.notna(row["Main project"]) else ""
+            proj_val = str(proj).lower() if pd.notna(proj) else ""
+            # Skip validation if any exception keyword is found in either field
+            if (any(exc.lower() in mp_val for exc in start_date_exceptions) or
+                any(exc.lower() in proj_val for exc in start_date_exceptions)):
                 continue
 
             if pd.notna(proj) and pd.notna(start_val) and pd.notna(row["Status Date (Every Friday)"]):
@@ -336,7 +337,7 @@ else:
         if violations_df.empty:
             st.info("No violations found.")
         else:
-            # Show total number of violation rows at the top
+            # Display total number of violations at the top
             st.markdown(f"**Total Violations: {len(violations_df)}**")
             all_emps_v = sorted(violations_df["Employee"].dropna().unique())
             all_types_v = ["Invalid value", "Working hours less than 40", "Start date change"]
