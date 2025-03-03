@@ -27,13 +27,10 @@ allowed_values = {
 }
 
 # Exceptions for start date validation.
-# If any of these keywords appear (case-insensitively) in either "Main project" or "Name of the Project", skip start date validation.
+# If any of these keywords appear (case-insensitively) in either "Main project" or "Name of the Project", skip validation.
 start_date_exceptions = [
-    "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
-    "External meetings", "External Meeting", "External meeting", "external meetings",
-    "Sick leave", "Sick Leave", "Sick day",
-    "Annual meeting", "annual meeting", "Traveling", "Develop/Dev training",
-    "Internal Taining", "internal taining", "Interview"
+    "Internal meetings", "External meetings", "Sick leave", "Sick day",
+    "Annual meeting", "Traveling", "Develop/Dev training", "Internal Taining", "Interview"
 ]
 
 def process_excel_file(file_path):
@@ -59,7 +56,7 @@ def process_excel_file(file_path):
     working_hours_details_list = []
     violations_list = []
 
-    # For start date validation: track the first start date per (project, month)
+    # For start date validation: track the first start date per (Main project, Name of the Project, month)
     project_month_info = {}
 
     for emp in employee_names:
@@ -87,7 +84,7 @@ def process_excel_file(file_path):
             df["Completion Date"] = pd.to_datetime(df["Completion Date"], errors="coerce")
 
         df["Employee"] = emp
-        # Assign RowNumber (assumes header in row 1; data starts at row 2)
+        # RowNumber for later update (assumes header in row 1; data starts row 2)
         df["RowNumber"] = df.index + 2
 
         # ---------- 1) ALLOWED VALUES VALIDATION ----------
@@ -110,19 +107,20 @@ def process_excel_file(file_path):
 
         # ---------- 2) START DATE VALIDATION (per project per month) ----------
         for i, row in df.iterrows():
-            proj = row["Name of the Project"]
+            main_proj = str(row["Main project"]).strip() if pd.notna(row["Main project"]) else ""
+            proj = str(row["Name of the Project"]).strip() if pd.notna(row["Name of the Project"]) else ""
             start_val = row["Start Date"]
-            # Convert both fields to lowercase strings for robust matching
-            mp_val = str(row["Main project"]).lower() if pd.notna(row["Main project"]) else ""
-            proj_val = str(proj).lower() if pd.notna(proj) else ""
+            # Prepare lowercase values for exception checking
+            main_proj_lower = main_proj.lower()
+            proj_lower = proj.lower()
             # Skip validation if any exception keyword is found in either field
-            if (any(exc.lower() in mp_val for exc in start_date_exceptions) or
-                any(exc.lower() in proj_val for exc in start_date_exceptions)):
+            if any(exc.lower() in main_proj_lower for exc in start_date_exceptions) or \
+               any(exc.lower() in proj_lower for exc in start_date_exceptions):
                 continue
 
-            if pd.notna(proj) and pd.notna(start_val) and pd.notna(row["Status Date (Every Friday)"]):
+            if proj and pd.notna(start_val) and pd.notna(row["Status Date (Every Friday)"]):
                 month_key = row["Status Date (Every Friday)"].strftime("%Y-%m")
-                key = (proj, month_key)
+                key = (main_proj, proj, month_key)
                 if key not in project_month_info:
                     project_month_info[key] = {
                         "start_date": start_val,
@@ -137,7 +135,7 @@ def process_excel_file(file_path):
                         violations_list.append({
                             "Employee": emp,
                             "Violation Type": "Start date change",
-                            "Violation Details": f"Expected {baseline_str}, found {current_str} for '{proj}' in {month_key}",
+                            "Violation Details": f"Expected {baseline_str}, found {current_str} for '{main_proj} | {proj}' in {month_key}",
                             "Location": f"Sheet '{emp}', Row {row['RowNumber']}",
                             "Violation Date": violation_date
                         })
@@ -337,7 +335,6 @@ else:
         if violations_df.empty:
             st.info("No violations found.")
         else:
-            # Display total number of violations at the top
             st.markdown(f"**Total Violations: {len(violations_df)}**")
             all_emps_v = sorted(violations_df["Employee"].dropna().unique())
             all_types_v = ["Invalid value", "Working hours less than 40", "Start date change"]
@@ -384,11 +381,10 @@ else:
     with tabs[3]:
         st.subheader("Data Update - Automatic Mode")
         st.info(
-            "For each project (based on **Name of the Project**) within a month, the **Start Date** is replaced "
-            "with the first occurrence's date (based on original row order), and the **Completion Date** (if present) "
-            "with the last occurrence's date. Categorical fields are updated per your selected mode. "
-            "The updated Excel will contain all original sheets (including 'Home') with employee sheets updated row-by-row. "
-            "Note: Start date violations will not be triggered if any start date exception keyword appears in the 'Name of the Project'."
+            "For each project (based on both **Main project** and **Name of the Project**) within a month, the **Start Date** is replaced "
+            "with the first occurrence's date (based on original row order), and the **Completion Date** (if present) with the last occurrence's date. "
+            "Categorical fields are updated per your selected mode. The updated Excel will contain all original sheets (including 'Home') with employee sheets updated row-by-row. "
+            "Note: Start date violations will not be triggered if any start date exception keyword appears in either 'Main project' or 'Name of the Project'."
         )
 
         # Filter update tab by Employee and Month
@@ -444,9 +440,9 @@ else:
                         group[ccol] = new_val
                 return group
 
-            # Group by Employee, Month, and Name of the Project
+            # Group by Employee, Month, Main project, and Name of the Project
             updated_filtered = filtered_df.groupby(
-                ["Employee", "Month", "Name of the Project"], group_keys=False
+                ["Employee", "Month", "Main project", "Name of the Project"], group_keys=False
             ).apply(update_group)
             updated_data.loc[mask, :] = updated_filtered
 
