@@ -27,6 +27,14 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
+# Exceptions for start date checks: if any of these appear in the Main project or Project name, skip validation.
+start_date_exceptions = [
+    "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
+    "External meetings", "External Meeting", "External meeting", "external meetings",
+    "Sick leave", "Sick Leave", "Sick day",
+    "Annual meeting", "annual meeting", "Traveling", "Develop/Dev training",
+    "Internal Taining", "internal taining", "Interview"
+]
 
 def process_excel_file(file_path):
     """
@@ -53,15 +61,6 @@ def process_excel_file(file_path):
 
     # For start date validation: track the first start date per (project, month)
     project_month_info = {}
-
-    # Exceptions for start date checks
-    start_date_exceptions = [
-        "Internal meetings", "Internal Meetings", "Internal meeting", "internal meeting",
-        "External meetings", "External Meeting", "External meeting", "external meetings",
-        "Sick leave", "Sick Leave", "Sick day",
-        "Annual meeting", "annual meeting", "Traveling", "Develop/Dev training",
-        "Internal Taining", "internal taining", "Interview"
-    ]
 
     for emp in employee_names:
         if emp not in all_sheet_names:
@@ -117,7 +116,9 @@ def process_excel_file(file_path):
             mp_val = str(row["Main project"]).strip() if pd.notna(row["Main project"]) else ""
             proj_val = str(proj).strip() if pd.notna(proj) else ""
 
-            if mp_val in start_date_exceptions or proj_val in start_date_exceptions:
+            # Updated check: if any exception keyword appears (case-insensitive) in either field, skip validation.
+            if (any(exc.lower() in mp_val.lower() for exc in start_date_exceptions) or
+                any(exc.lower() in proj_val.lower() for exc in start_date_exceptions)):
                 continue
 
             if pd.notna(proj) and pd.notna(start_val) and pd.notna(row["Status Date (Every Friday)"]):
@@ -138,8 +139,7 @@ def process_excel_file(file_path):
                             "Employee": emp,
                             "Violation Type": "Start date change",
                             "Violation Details": (
-                                f"Expected {baseline_str}, found {current_str} "
-                                f"for '{proj}' in {month_key}"
+                                f"Expected {baseline_str}, found {current_str} for '{proj}' in {month_key}"
                             ),
                             "Location": f"Sheet '{emp}', Row {row['RowNumber']}",
                             "Violation Date": violation_date
@@ -147,12 +147,10 @@ def process_excel_file(file_path):
 
         # ---------- 3) WEEKLY HOURS VALIDATION (>= 40) ----------
         df["Weekly Time Spent(Hrs)"] = pd.to_numeric(df["Weekly Time Spent(Hrs)"], errors="coerce").fillna(0)
-        # Filter rows where "Status Date (Every Friday)" is a valid Friday
         friday_rows = df[df["Status Date (Every Friday)"].dt.weekday == 4]
         unique_fridays = friday_rows["Status Date (Every Friday)"].dropna().unique()
         for friday in unique_fridays:
             week_start = friday - timedelta(days=4)
-            # Check all rows that fall between Monday and Friday of that week
             week_df = df[(df["Status Date (Every Friday)"] >= week_start) &
                          (df["Status Date (Every Friday)"] <= friday)]
             total_hrs = week_df["Weekly Time Spent(Hrs)"].sum()
@@ -176,7 +174,6 @@ def process_excel_file(file_path):
             axis=1
         )
 
-        # Create "Month" and "WeekFriday" columns
         df["Month"] = df["Status Date (Every Friday)"].dt.to_period("M").astype(str)
         df["WeekFriday"] = df["Status Date (Every Friday)"].dt.strftime("%m-%d-%Y")
 
@@ -248,7 +245,6 @@ else:
                 if weeks_chosen:
                     filtered_df = filtered_df[filtered_df["WeekFriday"].isin(weeks_chosen)]
 
-                # If any month is selected, break down by week; else aggregate monthly.
                 if months_chosen:
                     summary = (
                         filtered_df.groupby(["Employee", "Month", "WeekFriday"], dropna=False)
@@ -393,7 +389,7 @@ else:
             "In this mode, for each Main project within a month, the **Start Date** is set to the earliest date (min) "
             "and the **Completion Date** to the latest date (max). For categorical fields, choose whether to update with "
             "the first occurrence or the most frequent value. The updated Excel will contain **all original sheets**, "
-            "including 'Home', but each employee sheet will have the updated rows."
+            "including 'Home', with employee sheets updated row-by-row."
         )
 
         # Filter update tab by Employee and Month
@@ -419,7 +415,6 @@ else:
             update_btn = st.form_submit_button("Update Data Automatically")
 
         if update_btn:
-            # Make a mask for the rows we want to update
             mask = (
                 working_hours_details["Employee"].isin(employees_chosen)
                 & working_hours_details["Month"].isin(months_chosen)
@@ -429,16 +424,14 @@ else:
             filtered_df = working_hours_details[mask].copy()
 
             def update_group(group):
-                # Convert to datetime in case something changed
                 if "Start Date" in group.columns:
                     group["Start Date"] = pd.to_datetime(group["Start Date"], errors="coerce")
-                    group["Start Date"] = group["Start Date"].min()  # earliest
+                    group["Start Date"] = group["Start Date"].min()
 
                 if "Completion Date" in group.columns:
                     group["Completion Date"] = pd.to_datetime(group["Completion Date"], errors="coerce")
-                    group["Completion Date"] = group["Completion Date"].max()  # latest
+                    group["Completion Date"] = group["Completion Date"].max()
 
-                # Update each categorical column as per selected mode
                 for ccol, mode in cat_update_modes.items():
                     if ccol in group.columns:
                         non_null = group[ccol].dropna()
@@ -451,61 +444,36 @@ else:
 
                 return group
 
-            # Group the filtered data by (Employee, Month, Main project) and apply the update
             updated_filtered = filtered_df.groupby(
                 ["Employee", "Month", "Main project"], group_keys=False
             ).apply(update_group)
 
-            # Put updated rows back into the full dataset
             updated_data.loc[mask, :] = updated_filtered
 
             # ==============================
             # WRITE OUT A NEW EXCEL WITH ALL ORIGINAL SHEETS
             # ==============================
-            # We'll read the original workbook, and for each sheet:
-            #   - If it's an employee sheet, update row-by-row from updated_data
-            #   - Otherwise, keep as-is
-
-            # 1) Figure out who the employees are (from "Home" sheet read earlier)
-            #    We already have them in 'employee_names' from the process function
-            #    But let's ensure we keep that in scope
             home_df = pd.read_excel(FILE_PATH, sheet_name="Home", header=None)
             employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
 
-            # 2) Prepare an ExcelWriter in memory
             output_buffer = BytesIO()
             with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
-                # read the original workbook to replicate each sheet
                 original_xls = pd.ExcelFile(FILE_PATH)
                 for sheet_name in original_xls.sheet_names:
                     df_orig = pd.read_excel(FILE_PATH, sheet_name=sheet_name)
-
                     if sheet_name in employee_names:
-                        # This sheet belongs to an employee, so we do row-by-row updates
-                        df_orig["RowNumber"] = df_orig.index + 2  # to match how we assigned in process_excel_file
-
-                        # Get the portion of updated_data for this employee
+                        df_orig["RowNumber"] = df_orig.index + 2
                         df_emp_updated = updated_data[updated_data["Employee"] == sheet_name].copy()
-
-                        # We'll align rows using "RowNumber"
                         for idx_emp, row_emp in df_emp_updated.iterrows():
                             row_num = row_emp["RowNumber"]
                             mask_row = df_orig["RowNumber"] == row_num
-
-                            # Update only columns that exist in df_orig
                             for col in df_emp_updated.columns:
                                 if col in df_orig.columns:
                                     df_orig.loc[mask_row, col] = row_emp[col]
-
-                        # drop RowNumber before saving
                         df_orig.drop(columns=["RowNumber"], inplace=True, errors="ignore")
-
-                        # Write the updated employee sheet
                         df_orig.to_excel(writer, sheet_name=sheet_name, index=False)
                     else:
-                        # For non-employee sheets (e.g. "Home"), just write them as is
                         df_orig.to_excel(writer, sheet_name=sheet_name, index=False)
-
             output_buffer.seek(0)
 
             st.success("Data updated successfully! All sheets (including 'Home') are preserved in the new Excel.")
@@ -517,7 +485,7 @@ else:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-    # -------------- DOWNLOAD FULL REPORT (Original) --------------
+    # -------------- DOWNLOAD FULL REPORT (Original Data) --------------
     st.markdown("---")
     st.subheader("Download Full Excel Report (Original Data)")
     if not working_hours_details.empty or not violations_df.empty:
