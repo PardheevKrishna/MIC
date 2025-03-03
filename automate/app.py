@@ -6,12 +6,12 @@ from io import BytesIO
 from openpyxl import load_workbook
 
 # -------------- FIXED EXCEL FILE PATH --------------
-FILE_PATH = "input.xlsx"  # <-- Change this to your actual file path or updated_report.xlsx
+FILE_PATH = "input.xlsx"  # <-- Change this to your actual file path
 
 st.set_page_config(page_title="Team Report Dashboard", layout="wide")
-st.title("Team Report Dashboard (Fixed Excel File)")
+st.title("Team Report Dashboard (Skip Exceptions)")
 
-# -------------- GLOBAL ALLOWED VALUES (for categorical columns) --------------
+# -------------- GLOBAL ALLOWED VALUES --------------
 allowed_values = {
     "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)":
         ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"],
@@ -27,9 +27,9 @@ allowed_values = {
         ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
 }
 
-# ---------------- EXCEPTION KEYWORDS ----------------
-# Any row that contains one of these keywords in either "Main project" or "Name of the Project"
-# is completely skipped for start date validation.
+# -------------- START DATE EXCEPTION KEYWORDS --------------
+# Any row containing one of these in either "Main project" or "Name of the Project"
+# is fully skipped from start date validation.
 exception_keywords = [
     "internal meeting", "internal meetings",
     "external meeting", "external meetings",
@@ -44,8 +44,8 @@ exception_keywords = [
 
 def is_exception_row(main_str: str, proj_str: str) -> bool:
     """
-    Return True if any of the exception_keywords is found as a substring
-    in either main_str or proj_str. Both should be normalized to lowercase.
+    Return True if any exception keyword is found in either main_str or proj_str.
+    Both are expected to be lowercased.
     """
     for kw in exception_keywords:
         if kw in main_str or kw in proj_str:
@@ -54,10 +54,12 @@ def is_exception_row(main_str: str, proj_str: str) -> bool:
 
 def process_excel_file(file_path):
     """
-    Reads each employee sheet, returns:
-      - working_hours_details: combined row-level data
-      - violations_df: all violations found
+    Reads each employee sheet, skipping start date validation if the row has any exception keyword.
+    Returns:
+      - working_hours_details: all rows from all employee sheets (with added columns).
+      - violations_df: list of all violations (invalid value, working hours < 40, or start date change).
     """
+    # Read "Home" sheet to get employee names (column F from row 3 down)
     home_df = pd.read_excel(file_path, sheet_name="Home", header=None)
     employee_names = home_df.iloc[2:, 5].dropna().astype(str).tolist()
 
@@ -67,7 +69,7 @@ def process_excel_file(file_path):
     working_hours_details_list = []
     violations_list = []
 
-    # This dictionary is built fresh every time. No old data carried over.
+    # Dictionary to track the first start date per (normalized main project, normalized project name, month)
     project_month_info = {}
 
     for emp in employee_names:
@@ -76,7 +78,6 @@ def process_excel_file(file_path):
             continue
 
         df = pd.read_excel(file_path, sheet_name=emp)
-        # Normalize headers
         df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
 
         required_cols = [
@@ -97,7 +98,7 @@ def process_excel_file(file_path):
         df["Employee"] = emp
         df["RowNumber"] = df.index + 2
 
-        # 1) ALLOWED VALUES VALIDATION
+        # --- 1) ALLOWED VALUES VALIDATION ---
         for col, allowed_list in allowed_values.items():
             if col not in df.columns:
                 continue
@@ -115,38 +116,32 @@ def process_excel_file(file_path):
                         "Violation Date": violation_date
                     })
 
-        # 2) START DATE VALIDATION
+        # --- 2) START DATE VALIDATION ---
         for i, row in df.iterrows():
             main_raw = str(row["Main project"]) if pd.notna(row["Main project"]) else ""
             proj_raw = str(row["Name of the Project"]) if pd.notna(row["Name of the Project"]) else ""
-
             main_norm = main_raw.strip().lower()
             proj_norm = proj_raw.strip().lower()
 
             start_val = row["Start Date"]
             status_date = row["Status Date (Every Friday)"]
-
             if pd.isna(status_date):
                 continue
 
-            # Hard skip if the row is an exception
+            # Skip if this row matches an exception keyword
             if is_exception_row(main_norm, proj_norm):
-                # Uncomment if you want to debug which rows are skipped:
-                # print(f"SKIPPING row {row['RowNumber']} in sheet {emp}: '{main_norm}' or '{proj_norm}' is an exception.")
+                # We do not track or violate
                 continue
 
-            # If not exception, then do the normal start date logic
+            # Otherwise, proceed
             if proj_norm and pd.notna(start_val):
                 month_key = status_date.strftime("%Y-%m")
-                # Key is (main_norm, proj_norm, month_key)
                 key = (main_norm, proj_norm, month_key)
-
                 if key not in project_month_info:
                     project_month_info[key] = start_val
                 else:
                     baseline = project_month_info[key]
                     if start_val != baseline:
-                        # We have a mismatch
                         baseline_str = baseline.strftime('%m-%d-%Y') if pd.notna(baseline) else 'NaT'
                         current_str = start_val.strftime('%m-%d-%Y') if pd.notna(start_val) else 'NaT'
                         violations_list.append({
@@ -157,7 +152,7 @@ def process_excel_file(file_path):
                             "Violation Date": status_date
                         })
 
-        # 3) WEEKLY HOURS VALIDATION
+        # --- 3) WEEKLY HOURS VALIDATION ---
         df["Weekly Time Spent(Hrs)"] = pd.to_numeric(df["Weekly Time Spent(Hrs)"], errors="coerce").fillna(0)
         friday_rows = df[df["Status Date (Every Friday)"].dt.weekday == 4]
         unique_fridays = friday_rows["Status Date (Every Friday)"].dropna().unique()
@@ -176,7 +171,7 @@ def process_excel_file(file_path):
                     "Violation Date": friday
                 })
 
-        # 4) Extra columns
+        # --- 4) Extra columns ---
         df["PTO Hours"] = df.apply(
             lambda r: r["Weekly Time Spent(Hrs)"] if "PTO" in str(r["Main project"]) else 0,
             axis=1
@@ -199,7 +194,7 @@ def process_excel_file(file_path):
     return working_hours_details, violations_df
 
 
-# -------------- MAIN --------------
+# -------------- READ & PROCESS --------------
 result = process_excel_file(FILE_PATH)
 if result is None:
     st.error("Error processing the Excel file.")
@@ -207,7 +202,7 @@ else:
     working_hours_details, violations_df = result
     st.success("Reports generated successfully!")
 
-    # Create the 4 main tabs
+    # -------------- CREATE TABS --------------
     tabs = st.tabs(["Team Monthly Summary", "Working Hours Summary", "Violations", "Update Data"])
 
     # --- TAB 0: TEAM MONTHLY SUMMARY ---
@@ -223,11 +218,11 @@ else:
             with st.form("monthly_summary_form"):
                 col_emp, col_emp_select = st.columns([0.7, 0.3])
                 employees_chosen = col_emp.multiselect("Select Employee(s)", options=all_employees, default=[])
-                select_all_emp = col_emp_select.checkbox("Select All Employees")
+                select_all_emp = col_emp_select.checkbox("Select All Employees", key="team_emp_all")
 
                 col_month, col_month_select = st.columns([0.7, 0.3])
                 months_chosen = col_month.multiselect("Select Month(s)", options=all_months, default=[])
-                select_all_months = col_month_select.checkbox("Select All Months")
+                select_all_months = col_month_select.checkbox("Select All Months", key="team_month_all")
 
                 if months_chosen:
                     subset_weeks = working_hours_details[working_hours_details["Month"].isin(months_chosen)]
@@ -236,7 +231,7 @@ else:
                     possible_weeks = all_weeks
                 col_week, col_week_select = st.columns([0.7, 0.3])
                 weeks_chosen = col_week.multiselect("Select Week(s) (Friday date)", options=possible_weeks, default=[])
-                select_all_weeks = col_week_select.checkbox("Select All Weeks")
+                select_all_weeks = col_week_select.checkbox("Select All Weeks", key="team_week_all")
 
                 filter_btn = st.form_submit_button("Filter Data")
 
@@ -297,11 +292,11 @@ else:
             with st.form("working_hours_form"):
                 col1, col2 = st.columns([0.7, 0.3])
                 emp_chosen_wh = col1.multiselect("Select Employee(s)", options=all_emps_wh, default=[])
-                select_all_emp_wh = col2.checkbox("Select All Employees")
+                select_all_emp_wh = col2.checkbox("Select All Employees", key="wh_emp_all")
 
                 col3, col4 = st.columns([0.7, 0.3])
                 months_chosen_wh = col3.multiselect("Select Month(s)", options=all_months_wh, default=[])
-                select_all_months_wh = col4.checkbox("Select All Months")
+                select_all_months_wh = col4.checkbox("Select All Months", key="wh_month_all")
 
                 if months_chosen_wh:
                     subset_weeks_wh = working_hours_details[working_hours_details["Month"].isin(months_chosen_wh)]
@@ -311,7 +306,7 @@ else:
 
                 col5, col6 = st.columns([0.7, 0.3])
                 weeks_chosen_wh = col5.multiselect("Select Week(s) (Friday date)", options=possible_weeks_wh, default=[])
-                select_all_weeks_wh = col6.checkbox("Select All Weeks")
+                select_all_weeks_wh = col6.checkbox("Select All Weeks", key="wh_week_all")
 
                 filter_btn_wh = st.form_submit_button("Filter Data")
 
@@ -365,11 +360,11 @@ else:
             with st.form("violations_form"):
                 col1_v, col2_v = st.columns([0.7, 0.3])
                 emp_chosen_v = col1_v.multiselect("Select Employee(s)", options=all_emps_v, default=[])
-                select_all_emp_v = col2_v.checkbox("Select All Employees")
+                select_all_emp_v = col2_v.checkbox("Select All Employees", key="v_emp_all")
 
                 col3_v, col4_v = st.columns([0.7, 0.3])
                 types_chosen_v = col3_v.multiselect("Select Violation Type(s)", options=all_types_v, default=[])
-                select_all_types_v = col4_v.checkbox("Select All Types")
+                select_all_types_v = col4_v.checkbox("Select All Types", key="v_type_all")
 
                 filter_btn_v = st.form_submit_button("Filter Data")
 
@@ -404,13 +399,8 @@ else:
     with tabs[3]:
         st.subheader("Data Update - Automatic Mode")
         st.info(
-            "Rows containing any of the exception keywords in either 'Main project' or 'Name of the Project' are fully skipped. "
-            "Other rows for the same project+month get consistent Start Date & Completion Date. "
-            "After updating, download the new Excel and re-run the entire code with that new file as input."
+            "Here you can implement your logic to update Start Date, Completion Date, etc. "
+            "Rows that match any exception keyword should be fully skipped, just like in the violation check."
         )
-
-        # We won't repeat the entire update logic here for brevity,
-        # but you can replicate the same approach from your existing code
-        # ensuring that the grouping is consistent with the violation logic,
-        # i.e. grouping by (main_norm, proj_norm, month).
-        st.write("Implement your update logic here, ensuring you skip exception rows exactly like in the violation logic.")
+        st.write("Implement your update logic here, grouping by the same (normalized) keys. "
+                 "After updating, download the new Excel and re-run the code with the new file as input.")
