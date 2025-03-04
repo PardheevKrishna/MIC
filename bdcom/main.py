@@ -1,165 +1,156 @@
 import pandas as pd
-from openpyxl import load_workbook
+import datetime
+from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment
-from dateutil.relativedelta import relativedelta
-from datetime import datetime
 
-# --- Parameters ---
-input_file = 'input.xlsx'           # your input Excel file
-output_file = 'output_with_summary.xlsx'  # output file with Summary sheet
+# --- Step 1. Read the Data ---
+# Read the 'Data' sheet from the Excel file.
+df_data = pd.read_excel("input.xlsx", sheet_name="Data")
 
-# --- Read data from Excel ---
-data_df = pd.read_excel(input_file, sheet_name='Data')
-# We also have a Control sheet but it is not used in the summary per instructions:
-# control_df = pd.read_excel(input_file, sheet_name='Control')
+# Convert filemonth_dt to datetime (assuming format mm/dd/yyyy)
+df_data['filemonth_dt'] = pd.to_datetime(df_data['filemonth_dt'], format='%m/%d/%Y')
 
-# Convert filemonth_dt to datetime
-data_df['filemonth_dt'] = pd.to_datetime(data_df['filemonth_dt'], format='%m/%d/%Y', errors='coerce')
+# (Control sheet is not used in our summary calculations per instructions.)
+# df_control = pd.read_excel("input.xlsx", sheet_name="Control")
 
-# --- Define the two dates ---
-# We set the primary date as Jan 1, 2024 and the second as one month before.
-date1 = pd.Timestamp('2024-01-01')
-# Subtract one month – this yields December 1, 2023
-date2 = date1 - pd.DateOffset(months=1)
+# --- Step 2. Define Dates and Get Unique Field Names ---
+# Define the two dates: Jan 1, 2024 and one month before (Dec 1, 2023)
+date1 = datetime.datetime(2024, 1, 1)
+date2 = datetime.datetime(2023, 12, 1)
 
-# --- Compute Missing Values counts for analysis_type 'value_dist' ---
-missing_date1 = (
-    data_df[(data_df['analysis_type'] == 'value_dist') &
-            (data_df['filemonth_dt'] == date1) &
-            (data_df['value_label'].str.contains('Missing', na=False))]
-    .groupby('field_name')
-    .size()
-)
-missing_date2 = (
-    data_df[(data_df['analysis_type'] == 'value_dist') &
-            (data_df['filemonth_dt'] == date2) &
-            (data_df['value_label'].str.contains('Missing', na=False))]
-    .groupby('field_name')
-    .size()
-)
+# Get the sorted list of unique field names from the Data sheet
+fields = sorted(df_data['field_name'].unique())
 
-# --- Compute Month-to-Month Value Differences sums for analysis_type 'pop_comp' ---
-# The rows to be summed should have value_label containing any one of three phrases.
+# --- Step 3. Compute Aggregated Sums for Each Field ---
+summary_data = []
+# For month-to-month differences, define the three phrases to check
 phrases = [
-    "1)   F6CF Loan - Both Pop, Diff Values",
-    "2)   CF Loan - Prior Null, Current Pop",
+    "1)   F6CF Loan - Both Pop, Diff Values", 
+    "2)   CF Loan - Prior Null, Current Pop", 
     "3)   CF Loan - Prior Pop, Current Null"
 ]
-pattern = '|'.join(phrases)
 
-popcomp_date1 = (
-    data_df[(data_df['analysis_type'] == 'pop_comp') &
-            (data_df['filemonth_dt'] == date1) &
-            (data_df['value_label'].str.contains(pattern, na=False))]
-    .groupby('field_name')['value_records']
-    .sum()
-)
-popcomp_date2 = (
-    data_df[(data_df['analysis_type'] == 'pop_comp') &
-            (data_df['filemonth_dt'] == date2) &
-            (data_df['value_label'].str.contains(pattern, na=False))]
-    .groupby('field_name')['value_records']
-    .sum()
-)
-
-# --- Get sorted unique field names ---
-fields = sorted(data_df['field_name'].dropna().unique())
-
-# --- Prepare summary data ---
-# Each row will include:
-#   Field Name, Missing count for date1, Missing count for date2,
-#   Pop_Comp sum for date1, Pop_Comp sum for date2, and blank Approval Comments.
-summary_rows = []
 for field in fields:
-    summary_rows.append({
-        "Field Name": field,
-        "Missing_2024_01_01": int(missing_date1.get(field, 0)),
-        "Missing_2023_12_01": int(missing_date2.get(field, 0)),
-        "PopComp_2024_01_01": float(popcomp_date1.get(field, 0)),
-        "PopComp_2023_12_01": float(popcomp_date2.get(field, 0)),
-        "Approval Comments": ""
-    })
+    # Missing Values: analysis_type 'value_dist' and value_label contains "Missing"
+    mask_missing_date1 = (
+        (df_data['analysis_type'] == 'value_dist') &
+        (df_data['field_name'] == field) &
+        (df_data['filemonth_dt'] == date1) &
+        (df_data['value_label'].str.contains("Missing", case=False, na=False))
+    )
+    missing_sum_date1 = df_data.loc[mask_missing_date1, 'value_records'].sum()
+    
+    mask_missing_date2 = (
+        (df_data['analysis_type'] == 'value_dist') &
+        (df_data['field_name'] == field) &
+        (df_data['filemonth_dt'] == date2) &
+        (df_data['value_label'].str.contains("Missing", case=False, na=False))
+    )
+    missing_sum_date2 = df_data.loc[mask_missing_date2, 'value_records'].sum()
+    
+    # Month-to-Month Value Differences: analysis_type 'pop_comp' and value_label contains any of the three phrases.
+    mask_m2m_date1 = (
+        (df_data['analysis_type'] == 'pop_comp') &
+        (df_data['field_name'] == field) &
+        (df_data['filemonth_dt'] == date1) &
+        (df_data['value_label'].apply(lambda x: any(phrase in x for phrase in phrases)))
+    )
+    m2m_sum_date1 = df_data.loc[mask_m2m_date1, 'value_records'].sum()
+    
+    mask_m2m_date2 = (
+        (df_data['analysis_type'] == 'pop_comp') &
+        (df_data['field_name'] == field) &
+        (df_data['filemonth_dt'] == date2) &
+        (df_data['value_label'].apply(lambda x: any(phrase in x for phrase in phrases)))
+    )
+    m2m_sum_date2 = df_data.loc[mask_m2m_date2, 'value_records'].sum()
+    
+    # Append the computed values for the current field.
+    # The list order is: field, missing_sum_date1, missing_sum_date2, m2m_sum_date1, m2m_sum_date2
+    summary_data.append([field, missing_sum_date1, missing_sum_date2, m2m_sum_date1, m2m_sum_date2])
 
-# --- Write Summary sheet using openpyxl ---
-# Load the workbook
-wb = load_workbook(input_file)
-# Remove existing 'Summary' sheet if it exists
-if 'Summary' in wb.sheetnames:
-    del wb['Summary']
-ws = wb.create_sheet('Summary')
+# --- Step 4. Create the Summary Sheet with openpyxl ---
+# Create a new workbook and select the active sheet, renaming it to "Summary".
+wb = Workbook()
+ws = wb.active
+ws.title = "Summary"
 
-# Define header fill and font (using a blue color and white text)
+# Define header formatting: a blue fill with white bold text.
 header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
 header_font = Font(color="FFFFFF", bold=True)
-center_align = Alignment(horizontal="center", vertical="center")
+center_alignment = Alignment(horizontal="center", vertical="center")
 
-# --- Create the Title Row ---
-ws.merge_cells('A1:I1')
-ws['A1'] = "BDCOMM FRY14M Field Analysis Summary"
-ws['A1'].fill = header_fill
-ws['A1'].font = header_font
-ws['A1'].alignment = center_align
+# Row 1: Merge A1:I1 and set title.
+ws.merge_cells("A1:I1")
+ws["A1"] = "BDCOMM FRY14M Field Analysis Summary"
+ws["A1"].fill = header_fill
+ws["A1"].font = header_font
+ws["A1"].alignment = center_alignment
 
-# --- Setup the Multi-level Headers ---
-# Column A: "Filed Name" spanning A2:A3
-ws.merge_cells('A2:A3')
-ws['A2'] = "Filed Name"
-ws['A2'].fill = header_fill
-ws['A2'].font = header_font
-ws['A2'].alignment = center_align
+# Row 2 and 3 Headers:
+# Merge A2:A3 for "Filed Name"
+ws.merge_cells("A2:A3")
+ws["A2"] = "Filed Name"
+ws["A2"].fill = header_fill
+ws["A2"].font = header_font
+ws["A2"].alignment = center_alignment
 
-# Columns C-D: "Missing Values" header spanning C2:D2
-ws.merge_cells('C2:D2')
-ws['C2'] = "Missing Values"
-ws['C2'].fill = header_fill
-ws['C2'].font = header_font
-ws['C2'].alignment = center_align
-# Set the sub-headers with dates (formatted as mm/dd/yyyy)
-ws['C3'] = date1.strftime("%m/%d/%Y")
-ws['D3'] = date2.strftime("%m/%d/%Y")
-for cell in ['C3', 'D3']:
-    ws[cell].fill = header_fill
-    ws[cell].font = header_font
-    ws[cell].alignment = center_align
+# Merge C2:D2 for "Missing Values"
+ws.merge_cells("C2:D2")
+ws["C2"] = "Missing Values"
+ws["C2"].fill = header_fill
+ws["C2"].font = header_font
+ws["C2"].alignment = center_alignment
 
-# Columns F-G: "Month to Month Value Differences" header spanning F2:G2
-ws.merge_cells('F2:G2')
-ws['F2'] = "Month to Month Value Differences"
-ws['F2'].fill = header_fill
-ws['F2'].font = header_font
-ws['F2'].alignment = center_align
-ws['F3'] = date1.strftime("%m/%d/%Y")
-ws['G3'] = date2.strftime("%m/%d/%Y")
-for cell in ['F3', 'G3']:
-    ws[cell].fill = header_fill
-    ws[cell].font = header_font
-    ws[cell].alignment = center_align
+# In row 3, place the dates under Missing Values.
+ws["C3"] = date1
+ws["C3"].number_format = "mm/dd/yyyy"
+ws["C3"].alignment = center_alignment
 
-# Column I: "Approval Comments" header spanning I2:I3
-ws.merge_cells('I2:I3')
-ws['I2'] = "Approval Comments"
-ws['I2'].fill = header_fill
-ws['I2'].font = header_font
-ws['I2'].alignment = center_align
+ws["D3"] = date2
+ws["D3"].number_format = "mm/dd/yyyy"
+ws["D3"].alignment = center_alignment
 
-# --- Write the data rows ---
-# We'll start writing the field names and computed values from row 4 downward.
-current_row = 4
-for row in summary_rows:
-    # Column A: Field Name
-    ws.cell(row=current_row, column=1, value=row["Field Name"])
-    # Column C: Missing count for date1
-    ws.cell(row=current_row, column=3, value=row["Missing_2024_01_01"])
-    # Column D: Missing count for date2
-    ws.cell(row=current_row, column=4, value=row["Missing_2023_12_01"])
-    # Column F: PopComp sum for date1
-    ws.cell(row=current_row, column=6, value=row["PopComp_2024_01_01"])
-    # Column G: PopComp sum for date2
-    ws.cell(row=current_row, column=7, value=row["PopComp_2023_12_01"])
-    # Column I: Approval Comments (left blank)
-    ws.cell(row=current_row, column=9, value=row["Approval Comments"])
-    current_row += 1
+# Merge F2:G2 for "Month to Month Value Differences"
+ws.merge_cells("F2:G2")
+ws["F2"] = "Month to Month Value Differences"
+ws["F2"].fill = header_fill
+ws["F2"].font = header_font
+ws["F2"].alignment = center_alignment
 
-# --- Save the workbook with the new Summary sheet ---
-wb.save(output_file)
-print(f"Summary sheet created and saved in {output_file}")
+# In row 3, place the dates under Month to Month Value Differences.
+ws["F3"] = date1
+ws["F3"].number_format = "mm/dd/yyyy"
+ws["F3"].alignment = center_alignment
+
+ws["G3"] = date2
+ws["G3"].number_format = "mm/dd/yyyy"
+ws["G3"].alignment = center_alignment
+
+# Merge I2:I3 for "Approval Comments"
+ws.merge_cells("I2:I3")
+ws["I2"] = "Approval Comments"
+ws["I2"].fill = header_fill
+ws["I2"].font = header_font
+ws["I2"].alignment = center_alignment
+
+# --- Step 5. Write the Computed Data ---
+# Start writing the data from row 4.
+start_row = 4
+for idx, row_data in enumerate(summary_data, start=start_row):
+    # Write the field name in column A.
+    ws.cell(row=idx, column=1, value=row_data[0])
+    # Write Missing Values sums: date1 goes in column C, date2 in column D.
+    ws.cell(row=idx, column=3, value=row_data[1])
+    ws.cell(row=idx, column=4, value=row_data[2])
+    # Write Month-to-Month Value Differences: date1 in column F, date2 in column G.
+    ws.cell(row=idx, column=6, value=row_data[3])
+    ws.cell(row=idx, column=7, value=row_data[4])
+    # Columns B, E, H, and I (Approval Comments) are left blank.
+
+# Optionally adjust column widths for a better view.
+for col in ['A','B','C','D','E','F','G','H','I']:
+    ws.column_dimensions[col].width = 20
+
+# --- Step 6. Save the Output Workbook ---
+wb.save("output.xlsx")
