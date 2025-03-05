@@ -122,36 +122,36 @@ def main():
         layout="centered",
         initial_sidebar_state="expanded"
     )
-    
+
     st.sidebar.title("File & Date Selection")
-    
+
     predefined_mapping = {
         "BDCOM": ["bdcom_report.xlsx", "bdcom_data.xlsb"],
         "wifinsa": ["wifinsa_report.xlsx", "wifinsa_data.xlsb"]
     }
-    
+
     category = st.sidebar.selectbox("Select Category", ["BDCOM", "wifinsa"])
-    
+
     folder_files = os.listdir('.')
     available_files = [f for f in predefined_mapping.get(category, []) if f in folder_files]
-    
+
     if not available_files:
         st.sidebar.error(f"No Excel files for {category} found in the current folder as per mapping.")
         return
-    
+
     selected_file = st.sidebar.selectbox("Select an Excel File", available_files)
-    
+
     selected_date = st.sidebar.date_input("Select Date for Date1", datetime.date(2025, 1, 1))
     date1 = datetime.datetime.combine(selected_date, datetime.datetime.min.time())
     date2 = date1 - relativedelta(months=1)
-    
+
     if st.sidebar.button("Generate Report"):
         generate_report(selected_file, date1, date2)
 
 
 def generate_report(file_path, date1, date2):
     st.title("Official FRY14M Field Analysis Summary Report")
-    
+
     if not file_path.lower().endswith('.xlsx'):
         engine = get_excel_engine(file_path)
         if engine:
@@ -165,24 +165,26 @@ def generate_report(file_path, date1, date2):
         df_data = pd.read_excel(temp, sheet_name="Data", engine='openpyxl')
     else:
         df_data = pd.read_excel(file_path, sheet_name="Data")
-    
+
     required_cols = {"analysis_type", "filemonth_dt", "field_name", "value_label", "value_records"}
     if not required_cols.issubset(df_data.columns):
         st.error(f"'Data' sheet must contain columns: {required_cols}. Found: {list(df_data.columns)}")
         return
-    
+
     try:
         df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
     except Exception as e:
         st.error(f"Error parsing 'filemonth_dt': {e}")
         return
-    
+
     st.write(f"**Selected File:** {file_path}")
     st.write(f"**Date1:** {date1.strftime('%Y-%m-%d')} | **Date2:** {date2.strftime('%Y-%m-%d')}")
-    
+
     summary_df = generate_summary_df(df_data, date1, date2)
-    
-    summary_grid = summary_df.copy()
+
+    if "summary_grid_data" not in st.session_state:
+        st.session_state["summary_grid_data"] = summary_df.copy()
+    summary_grid = st.session_state["summary_grid_data"].copy()
     summary_grid["Comments"] = ""
     gb_summary = GridOptionsBuilder.from_dataframe(summary_grid)
     gb_summary.configure_default_column(editable=True)
@@ -192,11 +194,16 @@ def generate_report(file_path, date1, date2):
         summary_grid,
         gridOptions=gridOptions_summary,
         update_mode=GridUpdateMode.VALUE_CHANGED,
-        data_return_mode=DataReturnMode.FILTERED_AND_SORTED
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        key="summary_grid"
     )
-    
+    st.session_state["summary_grid_data"] = pd.DataFrame(summary_response["data"])
+
     value_dist_df = generate_distribution_df(df_data, "value_dist", date1)
     value_dist_flat = flatten_dataframe(value_dist_df.copy())
+    if "value_dist_data" not in st.session_state:
+        st.session_state["value_dist_data"] = value_dist_flat.copy()
+    value_dist_flat = st.session_state["value_dist_data"].copy()
     value_dist_flat["Comments"] = ""
     gb_value = GridOptionsBuilder.from_dataframe(value_dist_flat)
     gb_value.configure_default_column(editable=True)
@@ -206,11 +213,16 @@ def generate_report(file_path, date1, date2):
         value_dist_flat,
         gridOptions=gridOptions_value,
         update_mode=GridUpdateMode.VALUE_CHANGED,
-        data_return_mode=DataReturnMode.FILTERED_AND_SORTED
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        key="value_dist_grid"
     )
-    
+    st.session_state["value_dist_data"] = pd.DataFrame(value_response["data"])
+
     pop_comp_df = generate_distribution_df(df_data, "pop_comp", date1)
     pop_comp_flat = flatten_dataframe(pop_comp_df.copy())
+    if "pop_comp_data" not in st.session_state:
+        st.session_state["pop_comp_data"] = pop_comp_flat.copy()
+    pop_comp_flat = st.session_state["pop_comp_data"].copy()
     pop_comp_flat["Comments"] = ""
     gb_pop = GridOptionsBuilder.from_dataframe(pop_comp_flat)
     gb_pop.configure_default_column(editable=True)
@@ -220,20 +232,22 @@ def generate_report(file_path, date1, date2):
         pop_comp_flat,
         gridOptions=gridOptions_pop,
         update_mode=GridUpdateMode.VALUE_CHANGED,
-        data_return_mode=DataReturnMode.FILTERED_AND_SORTED
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        key="pop_comp_grid"
     )
-    
-    summary_updated = pd.DataFrame(summary_response["data"])
-    value_updated = pd.DataFrame(value_response["data"])
-    pop_updated = pd.DataFrame(pop_response["data"])
-    
+    st.session_state["pop_comp_data"] = pd.DataFrame(pop_response["data"])
+
+    summary_updated = st.session_state["summary_grid_data"]
+    value_updated = st.session_state["value_dist_data"]
+    pop_updated = st.session_state["pop_comp_data"]
+
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         summary_updated.to_excel(writer, index=False, sheet_name="Summary")
         value_updated.to_excel(writer, index=False, sheet_name="Value Distribution")
         pop_updated.to_excel(writer, index=False, sheet_name="Population Comparison")
     processed_data = output.getvalue()
-    
+
     st.download_button(
         label="Download Report as Excel",
         data=processed_data,
