@@ -14,7 +14,7 @@ def get_excel_engine(file_path):
     return None
 
 # -----------------------------------------------------------
-# Generate the Summary DataFrame (as before)
+# Generate the Summary DataFrame
 def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     summary_data = []
@@ -110,7 +110,7 @@ def generate_distribution_df(df, analysis_type, date1):
             data[(m_str, "Sum")] = sub_df[m]
             data[(m_str, "Percent")] = percent_df[m]
         temp_df = pd.DataFrame(data)
-        # Append a row for Current period total for the field
+        # Append a row for "Current period total" for the field
         total_row = {}
         for m in months:
             m_str = m.strftime('%Y-%m')
@@ -125,7 +125,7 @@ def generate_distribution_df(df, analysis_type, date1):
     return final_df
 
 # -----------------------------------------------------------
-# Main Streamlit app
+# Main Streamlit App
 def main():
     st.set_page_config(
         page_title="Official FRY14M Field Analysis Summary",
@@ -134,20 +134,27 @@ def main():
     )
     
     st.sidebar.title("File & Date Selection")
-    # 1. Category drop down: BDCOM or wifinsa
+    
+    # --- Pre-defined file mapping for categories ---
+    predefined_mapping = {
+        "BDCOM": ["bdcom_report.xlsx", "bdcom_data.xlsb"],
+        "wifinsa": ["wifinsa_report.xlsx", "wifinsa_data.xlsb"]
+    }
+    
+    # Category drop down
     category = st.sidebar.selectbox("Select Category", ["BDCOM", "wifinsa"])
     
-    # 2. List files (supporting .xlsx and .xlsb) that contain the chosen category (case-insensitive)
-    all_files = [f for f in os.listdir('.') if f.lower().endswith(('.xlsx', '.xlsb'))]
-    filtered_files = [f for f in all_files if category.lower() in f.lower()]
+    # Check which files (from the mapping) actually exist in the folder
+    folder_files = os.listdir('.')
+    available_files = [f for f in predefined_mapping.get(category, []) if f in folder_files]
     
-    if not filtered_files:
-        st.sidebar.error(f"No Excel files for category {category} found in the current folder.")
+    if not available_files:
+        st.sidebar.error(f"No Excel files for {category} found in the current folder as per mapping.")
         return
     
-    selected_file = st.sidebar.selectbox("Select an Excel File", filtered_files)
+    selected_file = st.sidebar.selectbox("Select an Excel File", available_files)
     
-    # 3. Date selection for Date1 (default Jan 1, 2025); Date2 is one month prior
+    # Date selection for Date1 (default Jan 1, 2025); Date2 is one month prior
     selected_date = st.sidebar.date_input("Select Date for Date1", datetime.date(2025, 1, 1))
     date1 = datetime.datetime.combine(selected_date, datetime.datetime.min.time())
     date2 = date1 - relativedelta(months=1)
@@ -156,7 +163,7 @@ def main():
         generate_report(selected_file, date1, date2)
 
 # -----------------------------------------------------------
-# Generate the Report: read the data, compute tables, display and enable download
+# Generate the Report: Read data, compute tables, display and enable download
 def generate_report(file_path, date1, date2):
     st.title("Official FRY14M Field Analysis Summary Report")
     
@@ -185,7 +192,7 @@ def generate_report(file_path, date1, date2):
     st.write(f"**Selected File:** {file_path}")
     st.write(f"**Date1:** {date1.strftime('%Y-%m-%d')} | **Date2:** {date2.strftime('%Y-%m-%d')}")
     
-    # 1. Summary results (as computed earlier)
+    # 1. Summary results
     summary_df = generate_summary_df(df_data, date1, date2)
     st.subheader("Summary Results")
     st.dataframe(summary_df, use_container_width=True)
