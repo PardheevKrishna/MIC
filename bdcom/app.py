@@ -5,179 +5,216 @@ import datetime
 import re
 from io import BytesIO
 from dateutil.relativedelta import relativedelta
-from openpyxl import Workbook
-from openpyxl.styles import Font
-from openpyxl.utils.dataframe import dataframe_to_rows
 
-# --------------------------------------------------------------------
-# Function to build a detailed sheet (for a given analysis_type)
-# --------------------------------------------------------------------
-def generate_detailed_sheet(ws, analysis_type, df_data, period_list):
-    """
-    Writes a detailed monthly breakdown into the given worksheet.
+# -----------------------------------------------------------
+# Helper: determine Excel engine (supports .xlsb via pyxlsb)
+def get_excel_engine(file_path):
+    if file_path.lower().endswith('.xlsb'):
+        return 'pyxlsb'
+    return None
+
+# -----------------------------------------------------------
+# Generate the Summary DataFrame (as before)
+def generate_summary_df(df_data, date1, date2):
+    fields = sorted(df_data["field_name"].unique())
+    summary_data = []
+    for field in fields:
+        # For analysis_type 'value_dist': sum value_records where value_label contains "Missing"
+        mask_missing_date1 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
+        missing_sum_d1 = df_data.loc[mask_missing_date1, 'value_records'].sum()
+        mask_missing_date2 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
+        missing_sum_d2 = df_data.loc[mask_missing_date2, 'value_records'].sum()
+
+        # For analysis_type 'pop_comp': sum value_records where value_label matches one of the phrases
+        phrases = [
+            "1\\)   F6CF Loan - Both Pop, Diff Values",
+            "2\\)   CF Loan - Prior Null, Current Pop",
+            "3\\)   CF Loan - Prior Pop, Current Null"
+        ]
+        def contains_phrase(x):
+            for pat in phrases:
+                if re.search(pat, x):
+                    return True
+            return False
+
+        mask_m2m_date1 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].apply(lambda x: contains_phrase(x)))
+        )
+        m2m_sum_d1 = df_data.loc[mask_m2m_date1, 'value_records'].sum()
+        mask_m2m_date2 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].apply(lambda x: contains_phrase(x)))
+        )
+        m2m_sum_d2 = df_data.loc[mask_m2m_date2, 'value_records'].sum()
+
+        summary_data.append([
+            field,
+            missing_sum_d1,
+            missing_sum_d2,
+            m2m_sum_d1,
+            m2m_sum_d2
+        ])
+    summary_df = pd.DataFrame(
+        summary_data,
+        columns=[
+            "Field Name",
+            f"Missing Values ({date1.strftime('%Y-%m-%d')})",
+            f"Missing Values ({date2.strftime('%Y-%m-%d')})",
+            f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})",
+            f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
+        ]
+    )
+    return summary_df
+
+# -----------------------------------------------------------
+# Generate the Distribution Table (for either 'value_dist' or 'pop_comp')
+def generate_distribution_df(df, analysis_type, date1):
+    # Define the months from Date1 back 12 months (using the 1st day of each month)
+    months = [ (date1 - relativedelta(months=i)).replace(day=1) for i in range(0, 12) ]
+    months = sorted(months, reverse=True)  # latest month (Date1) first
+    # Filter for the given analysis type and months of interest
+    df_filtered = df[df['analysis_type'] == analysis_type].copy()
+    df_filtered['month'] = df_filtered['filemonth_dt'].apply(lambda d: d.replace(day=1))
+    df_filtered = df_filtered[df_filtered['month'].isin(months)]
+    # Group by field_name, value_label, and month to sum value_records
+    grouped = df_filtered.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
+    # Pivot so that index = (field_name, value_label) and columns = month
+    pivot = grouped.pivot_table(index=['field_name', 'value_label'], columns='month', values='value_records', fill_value=0)
+    pivot = pivot.reindex(columns=months, fill_value=0)
     
-    For the given analysis_type (either "value_dist" or "pop_comp"), the sheet
-    groups rows by field_name. Under each field, it lists every distinct value_label.
-    For each month (from Date1 back 12 months), it writes:
-      - The sum of value_records for that value_label, and 
-      - The percentage of that value_label relative to the total for the field in that month.
-    
-    Finally, a row "Current period total" is added for each field.
-    """
-    # Set the sheet title
-    title = "Value Distribution" if analysis_type == "value_dist" else "Population Comparison"
-    ws.title = title
+    # For each field, build a table with two sub-columns per month: Sum and Percent
+    result_frames = []
+    for field, sub_df in pivot.groupby(level=0):
+        sub_df = sub_df.droplevel(0)  # now index = value_label only
+        total = sub_df.sum(axis=0)
+        percent_df = sub_df.div(total, axis=1).multiply(100).round(2).fillna(0)
+        # Build a new DataFrame with MultiIndex columns: for each month, two columns ("Sum" and "Percent")
+        data = {}
+        for m in months:
+            m_str = m.strftime('%Y-%m')
+            data[(m_str, "Sum")] = sub_df[m]
+            data[(m_str, "Percent")] = percent_df[m]
+        temp_df = pd.DataFrame(data)
+        # Append a row for Current period total for the field
+        total_row = {}
+        for m in months:
+            m_str = m.strftime('%Y-%m')
+            total_row[(m_str, "Sum")] = total[m]
+            total_row[(m_str, "Percent")] = ""  # leave percentage blank
+        temp_df.loc["Current period total"] = total_row
+        # Add a hierarchical index: Field Name then Value Label
+        temp_df.index = pd.MultiIndex.from_product([[field], temp_df.index], names=["Field Name", "Value Label"])
+        result_frames.append(temp_df)
+    final_df = pd.concat(result_frames)
+    final_df.columns = pd.MultiIndex.from_tuples(final_df.columns)
+    return final_df
 
-    # Build header row
-    header = ["Field Name", "Value Label"]
-    for dt in period_list:
-        month_label = dt.strftime('%Y-%m')
-        header.append(f"Sum ({month_label})")
-        header.append(f"Percentage ({month_label})")
-    ws.append(header)
-    # Bold header row
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-
-    # Filter data for the given analysis_type
-    df_subset = df_data[df_data['analysis_type'] == analysis_type].copy()
-    # Create a new column 'period' as a year‐month string (e.g., "2025-01")
-    df_subset['period'] = df_subset['filemonth_dt'].dt.to_period('M').astype(str)
-
-    # Process each field name in sorted order
-    field_names = sorted(df_subset['field_name'].unique())
-    for field in field_names:
-        # Write a header row for the field
-        num_cols = len(header)
-        ws.append([f"Field Name: {field}"] + [""] * (num_cols - 1))
-        
-        # Subset for this field
-        df_field = df_subset[df_subset['field_name'] == field]
-        # Get all distinct value_labels for this field
-        value_labels = sorted(df_field['value_label'].unique())
-        for val in value_labels:
-            row = ["", val]
-            for dt in period_list:
-                period_str = dt.strftime('%Y-%m')
-                # Sum for this value_label for the given month
-                df_temp = df_field[(df_field['value_label'] == val) & (df_field['period'] == period_str)]
-                sum_val = df_temp['value_records'].sum()
-                # Total for the entire field for the month
-                total_field = df_field[df_field['period'] == period_str]['value_records'].sum()
-                perc = (sum_val / total_field * 100) if total_field != 0 else 0
-                row.append(sum_val)
-                row.append(round(perc, 2))
-            ws.append(row)
-        # Add a row for the "Current period total" for this field
-        total_row = ["", "Current period total"]
-        for dt in period_list:
-            period_str = dt.strftime('%Y-%m')
-            total_val = df_field[df_field['period'] == period_str]['value_records'].sum()
-            total_row.append(total_val)
-            total_row.append("")  # No percentage for the total row
-        ws.append(total_row)
-        # Add an empty row for spacing between fields
-        ws.append([""] * len(header))
-
-# --------------------------------------------------------------------
+# -----------------------------------------------------------
 # Main Streamlit app
-# --------------------------------------------------------------------
 def main():
     st.set_page_config(
-        page_title="Official FRY14M Field Analysis Report",
-        layout="wide"
+        page_title="Official FRY14M Field Analysis Summary",
+        layout="centered",
+        initial_sidebar_state="expanded"
     )
+    
     st.sidebar.title("File & Date Selection")
-
-    # List all Excel (.xlsx) files in the current folder for selection
-    xlsx_files = [f for f in os.listdir('.') if f.endswith('.xlsx')]
-    if not xlsx_files:
-        st.sidebar.error("No Excel files (.xlsx) found in the folder.")
-        st.stop()
-    selected_file = st.sidebar.selectbox("Select an Excel file", xlsx_files)
-
-    # Date picker for Date1 (default: January 1, 2025)
+    # 1. Category drop down: BDCOM or wifinsa
+    category = st.sidebar.selectbox("Select Category", ["BDCOM", "wifinsa"])
+    
+    # 2. List files (supporting .xlsx and .xlsb) that contain the chosen category (case-insensitive)
+    all_files = [f for f in os.listdir('.') if f.lower().endswith(('.xlsx', '.xlsb'))]
+    filtered_files = [f for f in all_files if category.lower() in f.lower()]
+    
+    if not filtered_files:
+        st.sidebar.error(f"No Excel files for category {category} found in the current folder.")
+        return
+    
+    selected_file = st.sidebar.selectbox("Select an Excel File", filtered_files)
+    
+    # 3. Date selection for Date1 (default Jan 1, 2025); Date2 is one month prior
     selected_date = st.sidebar.date_input("Select Date for Date1", datetime.date(2025, 1, 1))
     date1 = datetime.datetime.combine(selected_date, datetime.datetime.min.time())
-    # Date2 is one month before Date1 (used in the summary sheet)
     date2 = date1 - relativedelta(months=1)
-
-    # Create a list of 12 months from Date1 going back one year (chronological order)
-    period_list = [date1 - relativedelta(months=i) for i in range(12)]
-    period_list = sorted(period_list)
-
+    
     if st.sidebar.button("Generate Report"):
-        try:
-            # Read the "Data" sheet from the selected Excel file
-            df_data = pd.read_excel(selected_file, sheet_name="Data")
-        except Exception as e:
-            st.error(f"Error reading 'Data' sheet from {selected_file}: {e}")
-            st.stop()
+        generate_report(selected_file, date1, date2)
 
-        # Convert filemonth_dt to datetime
-        try:
-            df_data['filemonth_dt'] = pd.to_datetime(df_data['filemonth_dt'])
-        except Exception as e:
-            st.error("Error converting 'filemonth_dt' to datetime. Check the date format in your file.")
-            st.stop()
-
-        # ----------------------------------------------------------------
-        # Create the Summary sheet (using earlier code for a brief overview)
-        # ----------------------------------------------------------------
-        fields = sorted(df_data['field_name'].unique())
-        summary_list = []
-        for field in fields:
-            mask_d1 = (df_data['field_name'] == field) & (df_data['filemonth_dt'] == date1)
-            mask_d2 = (df_data['field_name'] == field) & (df_data['filemonth_dt'] == date2)
-            total_d1 = df_data.loc[mask_d1, 'value_records'].sum()
-            total_d2 = df_data.loc[mask_d2, 'value_records'].sum()
-            summary_list.append([field, total_d1, total_d2])
-        summary_df = pd.DataFrame(
-            summary_list, 
-            columns=["Field Name", f"Total ({date1.strftime('%Y-%m-%d')})", f"Total ({date2.strftime('%Y-%m-%d')})"]
-        )
-
-        # ----------------------------------------------------------------
-        # Create the Excel workbook with three sheets:
-        # 1. Summary
-        # 2. Value Distribution (analysis_type = "value_dist")
-        # 3. Population Comparison (analysis_type = "pop_comp")
-        # ----------------------------------------------------------------
-        wb = Workbook()
-        # --- Summary sheet ---
-        ws_summary = wb.active
-        ws_summary.title = "Summary"
-        # Write the summary dataframe to the Summary sheet
-        for r_idx, row in enumerate(dataframe_to_rows(summary_df, index=False, header=True), start=1):
-            ws_summary.append(row)
-            if r_idx == 1:  # Bold header row
-                for cell in ws_summary[r_idx]:
-                    cell.font = Font(bold=True)
-        
-        # --- Value Distribution sheet ---
-        ws_valdist = wb.create_sheet("Value Distribution")
-        generate_detailed_sheet(ws_valdist, "value_dist", df_data, period_list)
-        
-        # --- Population Comparison sheet ---
-        ws_popcomp = wb.create_sheet("Population Comparison")
-        generate_detailed_sheet(ws_popcomp, "pop_comp", df_data, period_list)
-
-        # Save the workbook to a BytesIO stream for download
-        output = BytesIO()
-        wb.save(output)
-        processed_file = output.getvalue()
-
-        st.success("Report generated successfully.")
-        st.download_button(
-            label="Download Report Excel File",
-            data=processed_file,
-            file_name="FRY14M_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        # Also display a preview of the Summary sheet in the app
-        st.subheader("Summary Preview")
-        st.dataframe(summary_df, use_container_width=True)
+# -----------------------------------------------------------
+# Generate the Report: read the data, compute tables, display and enable download
+def generate_report(file_path, date1, date2):
+    st.title("Official FRY14M Field Analysis Summary Report")
+    
+    # Read the Excel file's 'Data' sheet (using appropriate engine)
+    engine = get_excel_engine(file_path)
+    try:
+        if engine:
+            df_data = pd.read_excel(file_path, sheet_name="Data", engine=engine)
+        else:
+            df_data = pd.read_excel(file_path, sheet_name="Data")
+    except Exception as e:
+        st.error(f"Error reading 'Data' sheet from {file_path}: {e}")
+        return
+    
+    required_cols = {"analysis_type", "filemonth_dt", "field_name", "value_label", "value_records"}
+    if not required_cols.issubset(df_data.columns):
+        st.error(f"'Data' sheet must contain columns: {required_cols}. Found: {list(df_data.columns)}")
+        return
+    
+    try:
+        df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
+    except Exception as e:
+        st.error(f"Error parsing 'filemonth_dt': {e}")
+        return
+    
+    st.write(f"**Selected File:** {file_path}")
+    st.write(f"**Date1:** {date1.strftime('%Y-%m-%d')} | **Date2:** {date2.strftime('%Y-%m-%d')}")
+    
+    # 1. Summary results (as computed earlier)
+    summary_df = generate_summary_df(df_data, date1, date2)
+    st.subheader("Summary Results")
+    st.dataframe(summary_df, use_container_width=True)
+    
+    # 2. Value Distribution table for analysis_type "value_dist"
+    st.subheader("Value Distribution")
+    value_dist_df = generate_distribution_df(df_data, "value_dist", date1)
+    st.dataframe(value_dist_df, use_container_width=True)
+    
+    # 3. Population Comparison table for analysis_type "pop_comp"
+    st.subheader("Population Comparison")
+    pop_comp_df = generate_distribution_df(df_data, "pop_comp", date1)
+    st.dataframe(pop_comp_df, use_container_width=True)
+    
+    # Build an Excel file in memory with three sheets
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        summary_df.to_excel(writer, index=False, sheet_name="Summary")
+        value_dist_df.to_excel(writer, sheet_name="Value Distribution")
+        pop_comp_df.to_excel(writer, sheet_name="Population Comparison")
+        writer.save()
+    processed_data = output.getvalue()
+    
+    st.download_button(
+        label="Download Report as Excel",
+        data=processed_data,
+        file_name="FRY14M_Field_Analysis_Report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 if __name__ == "__main__":
     main()
