@@ -5,6 +5,7 @@ import datetime
 import re
 from io import BytesIO
 from dateutil.relativedelta import relativedelta
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
 
 def get_excel_engine(file_path):
@@ -24,7 +25,6 @@ def generate_summary_df(df_data, date1, date2):
             (df_data['value_label'].str.contains("Missing", case=False, na=False))
         )
         missing_sum_d1 = df_data.loc[mask_missing_date1, 'value_records'].sum()
-        
         mask_missing_date2 = (
             (df_data['analysis_type'] == 'value_dist') &
             (df_data['field_name'] == field) &
@@ -32,19 +32,16 @@ def generate_summary_df(df_data, date1, date2):
             (df_data['value_label'].str.contains("Missing", case=False, na=False))
         )
         missing_sum_d2 = df_data.loc[mask_missing_date2, 'value_records'].sum()
-        
         phrases = [
             "1\\)   F6CF Loan - Both Pop, Diff Values",
             "2\\)   CF Loan - Prior Null, Current Pop",
             "3\\)   CF Loan - Prior Pop, Current Null"
         ]
-        
         def contains_phrase(x):
             for pat in phrases:
                 if re.search(pat, x):
                     return True
             return False
-        
         mask_m2m_date1 = (
             (df_data['analysis_type'] == 'pop_comp') &
             (df_data['field_name'] == field) &
@@ -52,7 +49,6 @@ def generate_summary_df(df_data, date1, date2):
             (df_data['value_label'].apply(lambda x: contains_phrase(x)))
         )
         m2m_sum_d1 = df_data.loc[mask_m2m_date1, 'value_records'].sum()
-        
         mask_m2m_date2 = (
             (df_data['analysis_type'] == 'pop_comp') &
             (df_data['field_name'] == field) &
@@ -60,7 +56,6 @@ def generate_summary_df(df_data, date1, date2):
             (df_data['value_label'].apply(lambda x: contains_phrase(x)))
         )
         m2m_sum_d2 = df_data.loc[mask_m2m_date2, 'value_records'].sum()
-        
         summary_data.append([
             field,
             missing_sum_d1,
@@ -68,7 +63,6 @@ def generate_summary_df(df_data, date1, date2):
             m2m_sum_d1,
             m2m_sum_d2
         ])
-    
     summary_df = pd.DataFrame(
         summary_data,
         columns=[
@@ -79,50 +73,47 @@ def generate_summary_df(df_data, date1, date2):
             f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
         ]
     )
-    
     return summary_df
 
 
 def generate_distribution_df(df, analysis_type, date1):
     months = [(date1 - relativedelta(months=i)).replace(day=1) for i in range(0, 12)]
     months = sorted(months, reverse=True)
-    
     df_filtered = df[df['analysis_type'] == analysis_type].copy()
     df_filtered['month'] = df_filtered['filemonth_dt'].apply(lambda d: d.replace(day=1))
     df_filtered = df_filtered[df_filtered['month'].isin(months)]
-    
     grouped = df_filtered.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     pivot = grouped.pivot_table(index=['field_name', 'value_label'], columns='month', values='value_records', fill_value=0)
     pivot = pivot.reindex(columns=months, fill_value=0)
-    
     result_frames = []
     for field, sub_df in pivot.groupby(level=0):
         sub_df = sub_df.droplevel(0)
         total = sub_df.sum(axis=0)
         percent_df = sub_df.div(total, axis=1).multiply(100).round(2).fillna(0)
-        
         data = {}
         for m in months:
             m_str = m.strftime('%Y-%m')
             data[(m_str, "Sum")] = sub_df[m]
             data[(m_str, "Percent")] = percent_df[m]
-        
         temp_df = pd.DataFrame(data)
-        
         total_row = {}
         for m in months:
             m_str = m.strftime('%Y-%m')
             total_row[(m_str, "Sum")] = total[m]
             total_row[(m_str, "Percent")] = ""
         temp_df.loc["Current period total"] = total_row
-        
         temp_df.index = pd.MultiIndex.from_product([[field], temp_df.index], names=["Field Name", "Value Label"])
         result_frames.append(temp_df)
-    
     final_df = pd.concat(result_frames)
     final_df.columns = pd.MultiIndex.from_tuples(final_df.columns)
-    
     return final_df
+
+
+def flatten_dataframe(df):
+    if isinstance(df.columns, pd.MultiIndex):
+        df = df.reset_index()
+        df.columns = [' '.join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
+    return df
 
 
 def main():
@@ -167,7 +158,6 @@ def generate_report(file_path, date1, date2):
             df_data = pd.read_excel(file_path, sheet_name="Data", engine=engine)
         else:
             df_data = pd.read_excel(file_path, sheet_name="Data")
-        
         temp = BytesIO()
         with pd.ExcelWriter(temp, engine='openpyxl') as writer:
             df_data.to_excel(writer, index=False, sheet_name="Data")
@@ -191,22 +181,57 @@ def generate_report(file_path, date1, date2):
     st.write(f"**Date1:** {date1.strftime('%Y-%m-%d')} | **Date2:** {date2.strftime('%Y-%m-%d')}")
     
     summary_df = generate_summary_df(df_data, date1, date2)
+    
+    summary_grid = summary_df.copy()
+    summary_grid["Comments"] = ""
+    gb_summary = GridOptionsBuilder.from_dataframe(summary_grid)
+    gb_summary.configure_default_column(editable=True)
+    gridOptions_summary = gb_summary.build()
     st.subheader("Summary Results")
-    st.dataframe(summary_df, use_container_width=True)
+    summary_response = AgGrid(
+        summary_grid,
+        gridOptions=gridOptions_summary,
+        update_mode=GridUpdateMode.VALUE_CHANGED,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED
+    )
     
-    st.subheader("Value Distribution")
     value_dist_df = generate_distribution_df(df_data, "value_dist", date1)
-    st.dataframe(value_dist_df, use_container_width=True)
+    value_dist_flat = flatten_dataframe(value_dist_df.copy())
+    value_dist_flat["Comments"] = ""
+    gb_value = GridOptionsBuilder.from_dataframe(value_dist_flat)
+    gb_value.configure_default_column(editable=True)
+    gridOptions_value = gb_value.build()
+    st.subheader("Value Distribution")
+    value_response = AgGrid(
+        value_dist_flat,
+        gridOptions=gridOptions_value,
+        update_mode=GridUpdateMode.VALUE_CHANGED,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED
+    )
     
-    st.subheader("Population Comparison")
     pop_comp_df = generate_distribution_df(df_data, "pop_comp", date1)
-    st.dataframe(pop_comp_df, use_container_width=True)
+    pop_comp_flat = flatten_dataframe(pop_comp_df.copy())
+    pop_comp_flat["Comments"] = ""
+    gb_pop = GridOptionsBuilder.from_dataframe(pop_comp_flat)
+    gb_pop.configure_default_column(editable=True)
+    gridOptions_pop = gb_pop.build()
+    st.subheader("Population Comparison")
+    pop_response = AgGrid(
+        pop_comp_flat,
+        gridOptions=gridOptions_pop,
+        update_mode=GridUpdateMode.VALUE_CHANGED,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED
+    )
+    
+    summary_updated = pd.DataFrame(summary_response["data"])
+    value_updated = pd.DataFrame(value_response["data"])
+    pop_updated = pd.DataFrame(pop_response["data"])
     
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        summary_df.to_excel(writer, index=False, sheet_name="Summary")
-        value_dist_df.to_excel(writer, sheet_name="Value Distribution")
-        pop_comp_df.to_excel(writer, sheet_name="Population Comparison")
+        summary_updated.to_excel(writer, index=False, sheet_name="Summary")
+        value_updated.to_excel(writer, index=False, sheet_name="Value Distribution")
+        pop_updated.to_excel(writer, index=False, sheet_name="Population Comparison")
     processed_data = output.getvalue()
     
     st.download_button(
