@@ -143,19 +143,15 @@ def main():
     st.sidebar.title("File & Date Selection")
     
     folder = st.sidebar.selectbox("Select Folder", ["BDCOM", "WFHMSA"])
-    
     folder_path = os.path.join(os.getcwd(), folder)
     st.sidebar.write(f"Folder path: {folder_path}")
-    
     if not os.path.exists(folder_path):
         st.sidebar.error(f"Folder '{folder}' not found in the working directory.")
         return
-    
     all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx', '.xlsb'))]
     if not all_files:
         st.sidebar.error(f"No Excel files found in folder '{folder}'.")
         return
-    
     selected_file = st.sidebar.selectbox("Select an Excel File", all_files)
     
     selected_date = st.sidebar.date_input("Select Date for Date1", datetime.date(2025, 1, 1))
@@ -180,12 +176,10 @@ def main():
         st.write(f"**Selected File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
-        # --- Summary Grid with Comments (stored in a separate CSV) ---
+        # Summary Grid with Comments
         summary_grid = st.session_state.summary_df.copy()
         if "Comments" not in summary_grid.columns:
             summary_grid["Comments"] = ""
-        summary_grid = summary_grid  # Here you could load external comments if needed
-        
         gb_summary = GridOptionsBuilder.from_dataframe(summary_grid)
         gb_summary.configure_default_column(editable=True, singleClickEdit=True)
         gridOptions_summary = gb_summary.build()
@@ -199,41 +193,63 @@ def main():
         )
         st.session_state.summary_df = pd.DataFrame(summary_response["data"])
         
-        # --- Value Distribution Grid with Comments ---
-        value_dist_grid = st.session_state.value_dist_df.copy()
-        if "Comments" not in value_dist_grid.columns:
-            value_dist_grid["Comments"] = ""
-        gb_value = GridOptionsBuilder.from_dataframe(value_dist_grid)
+        # Value Distribution Grid: Navigate fields
+        if "current_field_value" not in st.session_state:
+            st.session_state.current_field_value = 0
+        unique_fields_value = st.session_state.value_dist_df["Field Name"].unique().tolist()
+        col1, col2, col3 = st.columns([1,1,3])
+        if col1.button("←", key="prev_value"):
+            st.session_state.current_field_value = (st.session_state.current_field_value - 1) % len(unique_fields_value)
+        if col2.button("→", key="next_value"):
+            st.session_state.current_field_value = (st.session_state.current_field_value + 1) % len(unique_fields_value)
+        selected_field_value = st.selectbox("Search Field (Value Distribution)", unique_fields_value, index=st.session_state.current_field_value, key="select_value")
+        st.session_state.current_field_value = unique_fields_value.index(selected_field_value)
+        filtered_value_dist = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_field_value]
+        if "Comments" not in filtered_value_dist.columns:
+            filtered_value_dist["Comments"] = ""
+        gb_value = GridOptionsBuilder.from_dataframe(filtered_value_dist)
         gb_value.configure_default_column(editable=True, singleClickEdit=True)
         gridOptions_value = gb_value.build()
         st.subheader("Value Distribution")
         value_response = AgGrid(
-            value_dist_grid,
+            filtered_value_dist,
             gridOptions=gridOptions_value,
             update_mode=GridUpdateMode.VALUE_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="value_dist_grid"
         )
-        st.session_state.value_dist_df = pd.DataFrame(value_response["data"])
+        temp_value = pd.DataFrame(value_response["data"])
+        st.session_state.value_dist_df.update(temp_value)
         
-        # --- Population Comparison Grid with Comments ---
-        pop_comp_grid = st.session_state.pop_comp_df.copy()
-        if "Comments" not in pop_comp_grid.columns:
-            pop_comp_grid["Comments"] = ""
-        gb_pop = GridOptionsBuilder.from_dataframe(pop_comp_grid)
+        # Population Comparison Grid: Navigate fields
+        if "current_field_pop" not in st.session_state:
+            st.session_state.current_field_pop = 0
+        unique_fields_pop = st.session_state.pop_comp_df["Field Name"].unique().tolist()
+        col4, col5, col6 = st.columns([1,1,3])
+        if col4.button("←", key="prev_pop"):
+            st.session_state.current_field_pop = (st.session_state.current_field_pop - 1) % len(unique_fields_pop)
+        if col5.button("→", key="next_pop"):
+            st.session_state.current_field_pop = (st.session_state.current_field_pop + 1) % len(unique_fields_pop)
+        selected_field_pop = st.selectbox("Search Field (Population Comparison)", unique_fields_pop, index=st.session_state.current_field_pop, key="select_pop")
+        st.session_state.current_field_pop = unique_fields_pop.index(selected_field_pop)
+        filtered_pop_comp = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_field_pop]
+        if "Comments" not in filtered_pop_comp.columns:
+            filtered_pop_comp["Comments"] = ""
+        gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop_comp)
         gb_pop.configure_default_column(editable=True, singleClickEdit=True)
         gridOptions_pop = gb_pop.build()
         st.subheader("Population Comparison")
         pop_response = AgGrid(
-            pop_comp_grid,
+            filtered_pop_comp,
             gridOptions=gridOptions_pop,
             update_mode=GridUpdateMode.VALUE_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="pop_comp_grid"
         )
-        st.session_state.pop_comp_df = pd.DataFrame(pop_response["data"])
+        temp_pop = pd.DataFrame(pop_response["data"])
+        st.session_state.pop_comp_df.update(temp_pop)
         
-        # --- Prepare Excel download ---
+        # Prepare Excel download using updated data
         summary_updated = st.session_state.summary_df
         value_updated = st.session_state.value_dist_df
         pop_updated = st.session_state.pop_comp_df
