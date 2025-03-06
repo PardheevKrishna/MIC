@@ -114,17 +114,9 @@ def flatten_dataframe(df):
     return df
 
 def load_report_data(file_path, date1, date2):
-    if not file_path.lower().endswith('.xlsx'):
-        engine = get_excel_engine(file_path)
-        if engine:
-            df_data = pd.read_excel(file_path, sheet_name="Data", engine=engine)
-        else:
-            df_data = pd.read_excel(file_path, sheet_name="Data")
-        temp = BytesIO()
-        with pd.ExcelWriter(temp, engine='openpyxl') as writer:
-            df_data.to_excel(writer, index=False, sheet_name="Data")
-        temp.seek(0)
-        df_data = pd.read_excel(temp, sheet_name="Data", engine='openpyxl')
+    if file_path.lower().endswith('.xlsb'):
+        # Read xlsb files directly using pyxlsb
+        df_data = pd.read_excel(file_path, sheet_name="Data", engine='pyxlsb')
     else:
         df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
@@ -172,7 +164,7 @@ def main():
         st.write(f"**Selected File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
-        # --- Summary Grid ---
+        # --- Summary Grid with Comments ---
         summary_grid = st.session_state.summary_df.copy()
         if "Comments" not in summary_grid.columns:
             summary_grid["Comments"] = ""
@@ -194,10 +186,10 @@ def main():
         unique_fields_value = st.session_state.value_dist_df["Field Name"].unique().tolist()
         if "current_field_value" not in st.session_state:
             st.session_state.current_field_value = 0
-        col1, col2, col3 = st.columns([1,1,4])
-        if col1.button("←", key="prev_value"):
+        cols = st.columns(3)
+        if cols[0].button("←", key="prev_value"):
             st.session_state.current_field_value = (st.session_state.current_field_value - 1) % len(unique_fields_value)
-        if col2.button("→", key="next_value"):
+        if cols[2].button("→", key="next_value"):
             st.session_state.current_field_value = (st.session_state.current_field_value + 1) % len(unique_fields_value)
         selected_field_value = st.selectbox("Select Field", unique_fields_value, index=st.session_state.current_field_value, key="select_value")
         st.session_state.current_field_value = unique_fields_value.index(selected_field_value)
@@ -222,10 +214,10 @@ def main():
         unique_fields_pop = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         if "current_field_pop" not in st.session_state:
             st.session_state.current_field_pop = 0
-        col4, col5, col6 = st.columns([1,1,4])
-        if col4.button("←", key="prev_pop"):
+        cols_pop = st.columns(3)
+        if cols_pop[0].button("←", key="prev_pop"):
             st.session_state.current_field_pop = (st.session_state.current_field_pop - 1) % len(unique_fields_pop)
-        if col5.button("→", key="next_pop"):
+        if cols_pop[2].button("→", key="next_pop"):
             st.session_state.current_field_pop = (st.session_state.current_field_pop + 1) % len(unique_fields_pop)
         selected_field_pop = st.selectbox("Select Field", unique_fields_pop, index=st.session_state.current_field_pop, key="select_pop")
         st.session_state.current_field_pop = unique_fields_pop.index(selected_field_pop)
