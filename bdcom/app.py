@@ -18,22 +18,61 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     summary_data = []
     for field in fields:
-        mask_missing_date1 = ((df_data['analysis_type'] == 'value_dist') & (df_data['field_name'] == field) & (df_data['filemonth_dt'] == date1) & (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_missing_date1 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_sum_d1 = df_data.loc[mask_missing_date1, 'value_records'].sum()
-        mask_missing_date2 = ((df_data['analysis_type'] == 'value_dist') & (df_data['field_name'] == field) & (df_data['filemonth_dt'] == date2) & (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_missing_date2 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_sum_d2 = df_data.loc[mask_missing_date2, 'value_records'].sum()
-        phrases = ["1\\)   CF Loan - Both Pop, Diff Values", "2\\)   CF Loan - Prior Null, Current Pop", "3\\)   CF Loan - Prior Pop, Current Null"]
+        phrases = [
+            "1\\)   CF Loan - Both Pop, Diff Values",
+            "2\\)   CF Loan - Prior Null, Current Pop",
+            "3\\)   CF Loan - Prior Pop, Current Null"
+        ]
         def contains_phrase(x):
             for pat in phrases:
                 if re.search(pat, x):
                     return True
             return False
-        mask_m2m_date1 = ((df_data['analysis_type'] == 'pop_comp') & (df_data['field_name'] == field) & (df_data['filemonth_dt'] == date1) & (df_data['value_label'].apply(lambda x: contains_phrase(x))))
+        mask_m2m_date1 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].apply(lambda x: contains_phrase(x)))
+        )
         m2m_sum_d1 = df_data.loc[mask_m2m_date1, 'value_records'].sum()
-        mask_m2m_date2 = ((df_data['analysis_type'] == 'pop_comp') & (df_data['field_name'] == field) & (df_data['filemonth_dt'] == date2) & (df_data['value_label'].apply(lambda x: contains_phrase(x))))
+        mask_m2m_date2 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].apply(lambda x: contains_phrase(x)))
+        )
         m2m_sum_d2 = df_data.loc[mask_m2m_date2, 'value_records'].sum()
-        summary_data.append([field, missing_sum_d1, missing_sum_d2, m2m_sum_d1, m2m_sum_d2])
-    summary_df = pd.DataFrame(summary_data, columns=["Field Name", f"Missing Values ({date1.strftime('%Y-%m-%d')})", f"Missing Values ({date2.strftime('%Y-%m-%d')})", f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})", f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"])
+        summary_data.append([
+            field,
+            missing_sum_d1,
+            missing_sum_d2,
+            m2m_sum_d1,
+            m2m_sum_d2
+        ])
+    summary_df = pd.DataFrame(
+        summary_data,
+        columns=[
+            "Field Name",
+            f"Missing Values ({date1.strftime('%Y-%m-%d')})",
+            f"Missing Values ({date2.strftime('%Y-%m-%d')})",
+            f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})",
+            f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
+        ]
+    )
     return summary_df
 
 def generate_distribution_df(df, analysis_type, date1):
@@ -138,7 +177,7 @@ def main():
         summary_response = AgGrid(
             summary_grid,
             gridOptions=gridOptions_summary,
-            update_mode=GridUpdateMode.VALUE_CHANGED,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="summary_grid"
         )
@@ -158,7 +197,7 @@ def main():
         unique_fields_value = st.session_state.value_dist_df["Field Name"].unique().tolist()
         if "current_field_value" not in st.session_state:
             st.session_state.current_field_value = 0
-        cols_value = st.columns([1,1])
+        cols_value = st.columns(2)
         if cols_value[0].button("←", key="prev_value"):
             st.session_state.current_field_value = (st.session_state.current_field_value - 1) % len(unique_fields_value)
         if cols_value[1].button("→", key="next_value"):
@@ -175,7 +214,7 @@ def main():
         value_response = AgGrid(
             filtered_value_dist,
             gridOptions=gridOptions_value,
-            update_mode=GridUpdateMode.VALUE_CHANGED,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="value_dist_grid"
         )
@@ -193,7 +232,7 @@ def main():
         unique_fields_pop = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         if "current_field_pop" not in st.session_state:
             st.session_state.current_field_pop = 0
-        cols_pop = st.columns([1,1])
+        cols_pop = st.columns(2)
         if cols_pop[0].button("←", key="prev_pop"):
             st.session_state.current_field_pop = (st.session_state.current_field_pop - 1) % len(unique_fields_pop)
         if cols_pop[1].button("→", key="next_pop"):
@@ -210,7 +249,7 @@ def main():
         pop_response = AgGrid(
             filtered_pop_comp,
             gridOptions=gridOptions_pop,
-            update_mode=GridUpdateMode.VALUE_CHANGED,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="pop_comp_grid"
         )
@@ -235,7 +274,12 @@ def main():
             value_updated.to_excel(writer, index=False, sheet_name="Value Distribution")
             pop_updated.to_excel(writer, index=False, sheet_name="Population Comparison")
         processed_data = output.getvalue()
-        st.download_button(label="Download Report as Excel", data=processed_data, file_name="FRY14M_Field_Analysis_Report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            label="Download Report as Excel",
+            data=processed_data,
+            file_name="FRY14M_Field_Analysis_Report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 if __name__ == "__main__":
     main()
