@@ -159,24 +159,26 @@ def main():
         st.session_state.summary_df = summary_df
         st.session_state.value_dist_df = flatten_dataframe(value_dist_df.copy())
         st.session_state.pop_comp_df = flatten_dataframe(pop_comp_df.copy())
+    
     if st.session_state.get("report_generated", False):
         st.title("Official FRY14M Field Analysis Summary Report")
         st.write(f"**Folder:** {st.session_state.folder}")
         st.write(f"**Selected File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
-        # --- Summary Grid with Link Checkbox ---
+        # --- Summary Grid with a single Link checkbox (left-most) ---
         summary_grid = st.session_state.summary_df.copy()
         if "Comments" not in summary_grid.columns:
             summary_grid["Comments"] = ""
         if "Link" not in summary_grid.columns:
             summary_grid["Link"] = False
         gb_summary = GridOptionsBuilder.from_dataframe(summary_grid)
-        gb_summary.configure_default_column(editable=False)  # make non-checkbox columns read-only
+        gb_summary.configure_default_column(editable=False)
+        # Make Link column editable and display as a small checkbox; force single selection via rowSelection property.
         gb_summary.configure_column("Link", editable=True, cellRenderer="agCheckboxCellRenderer", width=40)
         gb_summary.configure_column("Comments", editable=True)
-        gb_summary.configure_selection('single', use_checkbox=False)
         gridOptions_summary = gb_summary.build()
+        gridOptions_summary["rowSelection"] = "single"
         st.subheader("Summary Results")
         summary_response = AgGrid(
             summary_grid,
@@ -186,7 +188,6 @@ def main():
             key="summary_grid"
         )
         st.session_state.summary_df = pd.DataFrame(summary_response["data"])
-        # If any row in Summary has Link checked, update linking
         linked_rows = st.session_state.summary_df[st.session_state.summary_df["Link"] == True]
         if not linked_rows.empty:
             field_link = linked_rows.iloc[0]["Field Name"]
@@ -197,7 +198,7 @@ def main():
             if field_link in unique_fields_pop:
                 st.session_state.current_field_pop = unique_fields_pop.index(field_link)
         
-        # --- Value Distribution Grid with Linking ---
+        # --- Value Distribution Grid with single selection via linking checkboxes ---
         st.subheader("Value Distribution")
         unique_fields_value = st.session_state.value_dist_df["Field Name"].unique().tolist()
         if "current_field_value" not in st.session_state:
@@ -215,8 +216,9 @@ def main():
         gb_value = GridOptionsBuilder.from_dataframe(filtered_value_dist)
         gb_value.configure_default_column(editable=False)
         gb_value.configure_column("Comments", editable=True)
-        gb_value.configure_selection('single', use_checkbox=False)
+        gb_value.configure_selection('single', use_checkbox=True)
         gridOptions_value = gb_value.build()
+        gridOptions_value["rowSelection"] = "single"
         value_response = AgGrid(
             filtered_value_dist,
             gridOptions=gridOptions_value,
@@ -233,7 +235,7 @@ def main():
             if field_sel in unique_fields_pop:
                 st.session_state.current_field_pop = unique_fields_pop.index(field_sel)
         
-        # --- Population Comparison Grid with Linking and SQL Logic Checkbox ---
+        # --- Population Comparison Grid with single selection and SQL logic check box ---
         st.subheader("Population Comparison")
         unique_fields_pop = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         if "current_field_pop" not in st.session_state:
@@ -254,8 +256,9 @@ def main():
         gb_pop.configure_default_column(editable=False)
         gb_pop.configure_column("Comments", editable=True)
         gb_pop.configure_column("Show SQL", editable=True, cellRenderer="agCheckboxCellRenderer", width=40)
-        gb_pop.configure_selection('single', use_checkbox=False)
+        gb_pop.configure_selection('single', use_checkbox=True)
         gridOptions_pop = gb_pop.build()
+        gridOptions_pop["rowSelection"] = "single"
         pop_response = AgGrid(
             filtered_pop_comp,
             gridOptions=gridOptions_pop,
@@ -272,7 +275,10 @@ def main():
             show_sql = selected_pop[0].get("Show SQL")
             if show_sql and value_label != "Current period total":
                 df_data = st.session_state.df_data
-                sql_logic_vals = df_data[(df_data["field_name"] == field_sel) & (df_data["value_label"] == value_label)]["value_sql_logic"].unique()
+                # Filter for analysis_type "pop_comp", matching field and value label
+                sql_logic_vals = df_data[(df_data["analysis_type"] == "pop_comp") &
+                                         (df_data["field_name"] == field_sel) &
+                                         (df_data["value_label"] == value_label)]["value_sql_logic"].unique()
                 st.text_area("Value SQL Logic", value="\n".join(sql_logic_vals) if sql_logic_vals.size > 0 else "No SQL Logic found", height=100)
         
         # --- Excel Download ---
