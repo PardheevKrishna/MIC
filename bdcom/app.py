@@ -82,6 +82,9 @@ def generate_distribution_df(df, analysis_type, date1):
     df_filtered['month'] = df_filtered['filemonth_dt'].apply(lambda d: d.replace(day=1))
     df_filtered = df_filtered[df_filtered['month'].isin(months)]
     grouped = df_filtered.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
+    if grouped.empty:
+        st.warning(f"No data found for analysis type: {analysis_type}")
+        return pd.DataFrame()
     pivot = grouped.pivot_table(index=['field_name', 'value_label'], columns='month', values='value_records', fill_value=0)
     pivot = pivot.reindex(columns=months, fill_value=0)
     result_frames = []
@@ -103,6 +106,9 @@ def generate_distribution_df(df, analysis_type, date1):
         temp_df.loc["Current period total"] = total_row
         temp_df.index = pd.MultiIndex.from_product([[field], temp_df.index], names=["Field Name", "Value Label"])
         result_frames.append(temp_df)
+    if not result_frames:
+        st.warning(f"No distribution data available for analysis type: {analysis_type}")
+        return pd.DataFrame()
     final_df = pd.concat(result_frames)
     final_df.columns = pd.MultiIndex.from_tuples(final_df.columns)
     return final_df
@@ -115,7 +121,6 @@ def flatten_dataframe(df):
 
 def load_report_data(file_path, date1, date2):
     if file_path.lower().endswith('.xlsb'):
-        # Read xlsb files directly using pyxlsb
         df_data = pd.read_excel(file_path, sheet_name="Data", engine='pyxlsb')
     else:
         df_data = pd.read_excel(file_path, sheet_name="Data")
@@ -186,10 +191,11 @@ def main():
         unique_fields_value = st.session_state.value_dist_df["Field Name"].unique().tolist()
         if "current_field_value" not in st.session_state:
             st.session_state.current_field_value = 0
-        cols = st.columns(3)
-        if cols[0].button("←", key="prev_value"):
+        # Place left and right arrow buttons next to each other
+        cols_value = st.columns(2)
+        if cols_value[0].button("←", key="prev_value"):
             st.session_state.current_field_value = (st.session_state.current_field_value - 1) % len(unique_fields_value)
-        if cols[2].button("→", key="next_value"):
+        if cols_value[1].button("→", key="next_value"):
             st.session_state.current_field_value = (st.session_state.current_field_value + 1) % len(unique_fields_value)
         selected_field_value = st.selectbox("Select Field", unique_fields_value, index=st.session_state.current_field_value, key="select_value")
         st.session_state.current_field_value = unique_fields_value.index(selected_field_value)
@@ -214,10 +220,10 @@ def main():
         unique_fields_pop = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         if "current_field_pop" not in st.session_state:
             st.session_state.current_field_pop = 0
-        cols_pop = st.columns(3)
+        cols_pop = st.columns(2)
         if cols_pop[0].button("←", key="prev_pop"):
             st.session_state.current_field_pop = (st.session_state.current_field_pop - 1) % len(unique_fields_pop)
-        if cols_pop[2].button("→", key="next_pop"):
+        if cols_pop[1].button("→", key="next_pop"):
             st.session_state.current_field_pop = (st.session_state.current_field_pop + 1) % len(unique_fields_pop)
         selected_field_pop = st.selectbox("Select Field", unique_fields_pop, index=st.session_state.current_field_pop, key="select_pop")
         st.session_state.current_field_pop = unique_fields_pop.index(selected_field_pop)
