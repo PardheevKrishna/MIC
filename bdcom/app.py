@@ -9,12 +9,10 @@ from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
-
 def get_excel_engine(file_path):
     if file_path.lower().endswith('.xlsb'):
         return 'pyxlsb'
     return None
-
 
 def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
@@ -77,7 +75,6 @@ def generate_summary_df(df_data, date1, date2):
     )
     return summary_df
 
-
 def generate_distribution_df(df, analysis_type, date1):
     months = [(date1 - relativedelta(months=i)).replace(day=1) for i in range(0, 12)]
     months = sorted(months, reverse=True)
@@ -110,13 +107,11 @@ def generate_distribution_df(df, analysis_type, date1):
     final_df.columns = pd.MultiIndex.from_tuples(final_df.columns)
     return final_df
 
-
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
         df.columns = [' '.join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
     return df
-
 
 def load_report_data(file_path, date1, date2):
     if not file_path.lower().endswith('.xlsx'):
@@ -137,7 +132,6 @@ def load_report_data(file_path, date1, date2):
     value_dist_df = generate_distribution_df(df_data, "value_dist", date1)
     pop_comp_df = generate_distribution_df(df_data, "pop_comp", date1)
     return df_data, summary_df, value_dist_df, pop_comp_df
-
 
 st.write("Working Directory:", os.getcwd())
 
@@ -197,16 +191,15 @@ def main():
         
         # --- Value Distribution Grid ---
         st.subheader("Value Distribution")
-        # Below title, create a row with left arrow, search box, right arrow
         unique_fields_value = st.session_state.value_dist_df["Field Name"].unique().tolist()
         if "current_field_value" not in st.session_state:
             st.session_state.current_field_value = 0
-        col1, col2, col3 = st.columns([1, 4, 1])
+        col1, col2, col3 = st.columns([1,1,4])
         if col1.button("←", key="prev_value"):
             st.session_state.current_field_value = (st.session_state.current_field_value - 1) % len(unique_fields_value)
-        selected_field_value = col2.selectbox("Select Field", unique_fields_value, index=st.session_state.current_field_value, key="select_value")
-        if col3.button("→", key="next_value"):
+        if col2.button("→", key="next_value"):
             st.session_state.current_field_value = (st.session_state.current_field_value + 1) % len(unique_fields_value)
+        selected_field_value = st.selectbox("Select Field", unique_fields_value, index=st.session_state.current_field_value, key="select_value")
         st.session_state.current_field_value = unique_fields_value.index(selected_field_value)
         filtered_value_dist = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_field_value]
         if "Comments" not in filtered_value_dist.columns:
@@ -226,15 +219,15 @@ def main():
         
         # --- Population Comparison Grid ---
         st.subheader("Population Comparison")
+        unique_fields_pop = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         if "current_field_pop" not in st.session_state:
             st.session_state.current_field_pop = 0
-        unique_fields_pop = st.session_state.pop_comp_df["Field Name"].unique().tolist()
-        col4, col5, col6 = st.columns([1, 4, 1])
+        col4, col5, col6 = st.columns([1,1,4])
         if col4.button("←", key="prev_pop"):
             st.session_state.current_field_pop = (st.session_state.current_field_pop - 1) % len(unique_fields_pop)
-        selected_field_pop = col5.selectbox("Select Field", unique_fields_pop, index=st.session_state.current_field_pop, key="select_pop")
-        if col6.button("→", key="next_pop"):
+        if col5.button("→", key="next_pop"):
             st.session_state.current_field_pop = (st.session_state.current_field_pop + 1) % len(unique_fields_pop)
+        selected_field_pop = st.selectbox("Select Field", unique_fields_pop, index=st.session_state.current_field_pop, key="select_pop")
         st.session_state.current_field_pop = unique_fields_pop.index(selected_field_pop)
         filtered_pop_comp = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_field_pop]
         if "Comments" not in filtered_pop_comp.columns:
