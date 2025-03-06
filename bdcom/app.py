@@ -18,61 +18,22 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     summary_data = []
     for field in fields:
-        mask_missing_date1 = (
-            (df_data['analysis_type'] == 'value_dist') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date1) &
-            (df_data['value_label'].str.contains("Missing", case=False, na=False))
-        )
+        mask_missing_date1 = ((df_data['analysis_type'] == 'value_dist') & (df_data['field_name'] == field) & (df_data['filemonth_dt'] == date1) & (df_data['value_label'].str.contains("Missing", case=False, na=False)))
         missing_sum_d1 = df_data.loc[mask_missing_date1, 'value_records'].sum()
-        mask_missing_date2 = (
-            (df_data['analysis_type'] == 'value_dist') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date2) &
-            (df_data['value_label'].str.contains("Missing", case=False, na=False))
-        )
+        mask_missing_date2 = ((df_data['analysis_type'] == 'value_dist') & (df_data['field_name'] == field) & (df_data['filemonth_dt'] == date2) & (df_data['value_label'].str.contains("Missing", case=False, na=False)))
         missing_sum_d2 = df_data.loc[mask_missing_date2, 'value_records'].sum()
-        phrases = [
-            "1\\)   CF Loan - Both Pop, Diff Values",
-            "2\\)   CF Loan - Prior Null, Current Pop",
-            "3\\)   CF Loan - Prior Pop, Current Null"
-        ]
+        phrases = ["1\\)   CF Loan - Both Pop, Diff Values", "2\\)   CF Loan - Prior Null, Current Pop", "3\\)   CF Loan - Prior Pop, Current Null"]
         def contains_phrase(x):
             for pat in phrases:
                 if re.search(pat, x):
                     return True
             return False
-        mask_m2m_date1 = (
-            (df_data['analysis_type'] == 'pop_comp') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date1) &
-            (df_data['value_label'].apply(lambda x: contains_phrase(x)))
-        )
+        mask_m2m_date1 = ((df_data['analysis_type'] == 'pop_comp') & (df_data['field_name'] == field) & (df_data['filemonth_dt'] == date1) & (df_data['value_label'].apply(lambda x: contains_phrase(x))))
         m2m_sum_d1 = df_data.loc[mask_m2m_date1, 'value_records'].sum()
-        mask_m2m_date2 = (
-            (df_data['analysis_type'] == 'pop_comp') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date2) &
-            (df_data['value_label'].apply(lambda x: contains_phrase(x)))
-        )
+        mask_m2m_date2 = ((df_data['analysis_type'] == 'pop_comp') & (df_data['field_name'] == field) & (df_data['filemonth_dt'] == date2) & (df_data['value_label'].apply(lambda x: contains_phrase(x))))
         m2m_sum_d2 = df_data.loc[mask_m2m_date2, 'value_records'].sum()
-        summary_data.append([
-            field,
-            missing_sum_d1,
-            missing_sum_d2,
-            m2m_sum_d1,
-            m2m_sum_d2
-        ])
-    summary_df = pd.DataFrame(
-        summary_data,
-        columns=[
-            "Field Name",
-            f"Missing Values ({date1.strftime('%Y-%m-%d')})",
-            f"Missing Values ({date2.strftime('%Y-%m-%d')})",
-            f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})",
-            f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
-        ]
-    )
+        summary_data.append([field, missing_sum_d1, missing_sum_d2, m2m_sum_d1, m2m_sum_d2])
+    summary_df = pd.DataFrame(summary_data, columns=["Field Name", f"Missing Values ({date1.strftime('%Y-%m-%d')})", f"Missing Values ({date2.strftime('%Y-%m-%d')})", f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})", f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"])
     return summary_df
 
 def generate_distribution_df(df, analysis_type, date1):
@@ -134,7 +95,6 @@ st.write("Working Directory:", os.getcwd())
 
 def main():
     st.sidebar.title("File & Date Selection")
-    
     folder = st.sidebar.selectbox("Select Folder", ["BDCOM", "WFHMSA"])
     folder_path = os.path.join(os.getcwd(), folder)
     st.sidebar.write(f"Folder path: {folder_path}")
@@ -146,11 +106,9 @@ def main():
         st.sidebar.error(f"No Excel files found in folder '{folder}'.")
         return
     selected_file = st.sidebar.selectbox("Select an Excel File", all_files)
-    
     selected_date = st.sidebar.date_input("Select Date for Date1", datetime.date(2025, 1, 1))
     date1 = datetime.datetime.combine(selected_date, datetime.datetime.min.time())
     date2 = date1 - relativedelta(months=1)
-    
     if st.sidebar.button("Generate Report"):
         df_data, summary_df, value_dist_df, pop_comp_df = load_report_data(os.path.join(folder_path, selected_file), date1, date2)
         st.session_state.report_generated = True
@@ -162,19 +120,19 @@ def main():
         st.session_state.summary_df = summary_df
         st.session_state.value_dist_df = flatten_dataframe(value_dist_df.copy())
         st.session_state.pop_comp_df = flatten_dataframe(pop_comp_df.copy())
-    
     if st.session_state.get("report_generated", False):
         st.title("Official FRY14M Field Analysis Summary Report")
         st.write(f"**Folder:** {st.session_state.folder}")
         st.write(f"**Selected File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
-        # --- Summary Grid with Comments ---
+        # --- Summary Grid with Linking ---
         summary_grid = st.session_state.summary_df.copy()
         if "Comments" not in summary_grid.columns:
             summary_grid["Comments"] = ""
         gb_summary = GridOptionsBuilder.from_dataframe(summary_grid)
         gb_summary.configure_default_column(editable=True, singleClickEdit=True)
+        gb_summary.configure_selection('single', use_checkbox=False)
         gridOptions_summary = gb_summary.build()
         st.subheader("Summary Results")
         summary_response = AgGrid(
@@ -185,14 +143,22 @@ def main():
             key="summary_grid"
         )
         st.session_state.summary_df = pd.DataFrame(summary_response["data"])
+        selected_summary = summary_response.get("selectedRows", [])
+        if selected_summary:
+            field_link = selected_summary[0].get("Field Name")
+            unique_fields_value = st.session_state.value_dist_df["Field Name"].unique().tolist()
+            unique_fields_pop = st.session_state.pop_comp_df["Field Name"].unique().tolist()
+            if field_link in unique_fields_value:
+                st.session_state.current_field_value = unique_fields_value.index(field_link)
+            if field_link in unique_fields_pop:
+                st.session_state.current_field_pop = unique_fields_pop.index(field_link)
         
-        # --- Value Distribution Grid ---
+        # --- Value Distribution Grid with Linking ---
         st.subheader("Value Distribution")
         unique_fields_value = st.session_state.value_dist_df["Field Name"].unique().tolist()
         if "current_field_value" not in st.session_state:
             st.session_state.current_field_value = 0
-        # Place left and right arrow buttons next to each other
-        cols_value = st.columns(2)
+        cols_value = st.columns([1,1])
         if cols_value[0].button("←", key="prev_value"):
             st.session_state.current_field_value = (st.session_state.current_field_value - 1) % len(unique_fields_value)
         if cols_value[1].button("→", key="next_value"):
@@ -204,6 +170,7 @@ def main():
             filtered_value_dist["Comments"] = ""
         gb_value = GridOptionsBuilder.from_dataframe(filtered_value_dist)
         gb_value.configure_default_column(editable=True, singleClickEdit=True)
+        gb_value.configure_selection('single', use_checkbox=False)
         gridOptions_value = gb_value.build()
         value_response = AgGrid(
             filtered_value_dist,
@@ -214,13 +181,19 @@ def main():
         )
         temp_value = pd.DataFrame(value_response["data"])
         st.session_state.value_dist_df.update(temp_value)
+        selected_value = value_response.get("selectedRows", [])
+        if selected_value:
+            field_sel = selected_value[0].get("Field Name")
+            unique_fields_pop = st.session_state.pop_comp_df["Field Name"].unique().tolist()
+            if field_sel in unique_fields_pop:
+                st.session_state.current_field_pop = unique_fields_pop.index(field_sel)
         
-        # --- Population Comparison Grid ---
+        # --- Population Comparison Grid with Linking and SQL Logic Display ---
         st.subheader("Population Comparison")
         unique_fields_pop = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         if "current_field_pop" not in st.session_state:
             st.session_state.current_field_pop = 0
-        cols_pop = st.columns(2)
+        cols_pop = st.columns([1,1])
         if cols_pop[0].button("←", key="prev_pop"):
             st.session_state.current_field_pop = (st.session_state.current_field_pop - 1) % len(unique_fields_pop)
         if cols_pop[1].button("→", key="next_pop"):
@@ -232,6 +205,7 @@ def main():
             filtered_pop_comp["Comments"] = ""
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop_comp)
         gb_pop.configure_default_column(editable=True, singleClickEdit=True)
+        gb_pop.configure_selection('single', use_checkbox=False)
         gridOptions_pop = gb_pop.build()
         pop_response = AgGrid(
             filtered_pop_comp,
@@ -242,6 +216,14 @@ def main():
         )
         temp_pop = pd.DataFrame(pop_response["data"])
         st.session_state.pop_comp_df.update(temp_pop)
+        selected_pop = pop_response.get("selectedRows", [])
+        if selected_pop:
+            field_sel = selected_pop[0].get("Field Name")
+            value_label = selected_pop[0].get("Value Label")
+            if value_label != "Current period total":
+                df_data = st.session_state.df_data
+                sql_logic_vals = df_data[(df_data["field_name"] == field_sel) & (df_data["value_label"] == value_label)]["value_sql_logic"].unique()
+                st.text_area("Value SQL Logic", value="\n".join(sql_logic_vals) if sql_logic_vals.size > 0 else "No SQL Logic found")
         
         # --- Excel Download ---
         summary_updated = st.session_state.summary_df
@@ -253,13 +235,7 @@ def main():
             value_updated.to_excel(writer, index=False, sheet_name="Value Distribution")
             pop_updated.to_excel(writer, index=False, sheet_name="Population Comparison")
         processed_data = output.getvalue()
-        
-        st.download_button(
-            label="Download Report as Excel",
-            data=processed_data,
-            file_name="FRY14M_Field_Analysis_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button(label="Download Report as Excel", data=processed_data, file_name="FRY14M_Field_Analysis_Report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 if __name__ == "__main__":
     main()
