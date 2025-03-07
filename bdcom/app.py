@@ -9,7 +9,7 @@ from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
-# Custom CSS to force header wrapping and full container width
+# Custom CSS to force header wrapping and full container usage
 st.markdown("""
     <style>
         .ag-header-cell-label {
@@ -28,7 +28,7 @@ def compute_grid_height(df, row_height=30, header_height=35):
     n = len(df)
     if n == 0:
         return header_height + 20
-    return min(n, 30)*row_height + header_height
+    return min(n, 30) * row_height + header_height
 
 def get_excel_engine(file_path):
     if file_path.lower().endswith('.xlsb'):
@@ -39,19 +39,15 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     rows = []
     for field in fields:
-        mask_miss_d1 = (
-            (df_data['analysis_type'] == 'value_dist') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date1) &
-            (df_data['value_label'].str.contains("Missing", case=False, na=False))
-        )
+        mask_miss_d1 = ((df_data['analysis_type'] == 'value_dist') &
+                        (df_data['field_name'] == field) &
+                        (df_data['filemonth_dt'] == date1) &
+                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
         missing_d1 = df_data.loc[mask_miss_d1, 'value_records'].sum()
-        mask_miss_d2 = (
-            (df_data['analysis_type'] == 'value_dist') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date2) &
-            (df_data['value_label'].str.contains("Missing", case=False, na=False))
-        )
+        mask_miss_d2 = ((df_data['analysis_type'] == 'value_dist') &
+                        (df_data['field_name'] == field) &
+                        (df_data['filemonth_dt'] == date2) &
+                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
         missing_d2 = df_data.loc[mask_miss_d2, 'value_records'].sum()
         phrases = [
             "1\\)   CF Loan - Both Pop, Diff Values",
@@ -63,19 +59,15 @@ def generate_summary_df(df_data, date1, date2):
                 if pd.notna(x) and re.search(pat, x):
                     return True
             return False
-        mask_pop_d1 = (
-            (df_data['analysis_type'] == 'pop_comp') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date1) &
-            (df_data['value_label'].apply(contains_phrase))
-        )
+        mask_pop_d1 = ((df_data['analysis_type'] == 'pop_comp') &
+                       (df_data['field_name'] == field) &
+                       (df_data['filemonth_dt'] == date1) &
+                       (df_data['value_label'].apply(contains_phrase)))
         pop_d1 = df_data.loc[mask_pop_d1, 'value_records'].sum()
-        mask_pop_d2 = (
-            (df_data['analysis_type'] == 'pop_comp') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date2) &
-            (df_data['value_label'].apply(contains_phrase))
-        )
+        mask_pop_d2 = ((df_data['analysis_type'] == 'pop_comp') &
+                       (df_data['field_name'] == field) &
+                       (df_data['filemonth_dt'] == date2) &
+                       (df_data['value_label'].apply(contains_phrase)))
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
     df = pd.DataFrame(rows, columns=[
@@ -85,7 +77,7 @@ def generate_summary_df(df_data, date1, date2):
         f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})",
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ])
-    # Compute percentage change columns:
+    # Compute percentage change columns
     m1 = f"Missing Values ({date1.strftime('%Y-%m-%d')})"
     m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
     d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
@@ -202,7 +194,6 @@ def main():
                     gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')")
                 else:
                     gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toLocaleString() : '')")
-        # Wrap header text
         sum_opts = gb_sum.build()
         if isinstance(sum_opts, list):
             sum_opts = {"columnDefs": sum_opts}
@@ -247,10 +238,13 @@ def main():
         gb_val.configure_column("Comments", editable=True)
         gb_val.configure_selection("single", use_checkbox=False)
         val_opts = gb_val.build()
+        if isinstance(val_opts, list):
+            val_opts = {"columnDefs": val_opts}
         for c in val_opts["columnDefs"]:
             if "headerName" in c:
                 c["headerName"] = "\n".join(c["headerName"].split())
         val_opts["rowSelection"] = "single"
+        val_opts["pagination"] = False
         val_height = compute_grid_height(filtered_val, row_height=30, header_height=35)
         AgGrid(
             filtered_val,
@@ -279,10 +273,13 @@ def main():
         gb_pop.configure_column("Comments", editable=True)
         gb_pop.configure_selection("single", use_checkbox=False)
         pop_opts = gb_pop.build()
+        if isinstance(pop_opts, list):
+            pop_opts = {"columnDefs": pop_opts}
         for c in pop_opts["columnDefs"]:
             if "headerName" in c:
                 c["headerName"] = "\n".join(c["headerName"].split())
         pop_opts["rowSelection"] = "single"
+        pop_opts["pagination"] = False
         pop_height = compute_grid_height(filtered_pop, row_height=30, header_height=35)
         pop_res = AgGrid(
             filtered_pop,
