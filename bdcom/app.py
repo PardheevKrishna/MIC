@@ -9,6 +9,21 @@ from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
+# Add CSS to force header wrapping
+st.markdown("""
+    <style>
+        .ag-header-cell-label {
+            white-space: pre-wrap !important;
+            text-align: center;
+            line-height: 1.2em;
+        }
+        .ag-root-wrapper {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 def get_excel_engine(file_path):
     if file_path.lower().endswith('.xlsb'):
         return 'pyxlsb'
@@ -57,13 +72,21 @@ def generate_summary_df(df_data, date1, date2):
         )
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
-    return pd.DataFrame(rows, columns=[
+    df = pd.DataFrame(rows, columns=[
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
         f"Missing Values ({date2.strftime('%Y-%m-%d')})",
         f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})",
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ])
+    # Calculate percentage change columns:
+    miss_col1 = f"Missing Values ({date1.strftime('%Y-%m-%d')})"
+    miss_col2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
+    m2m_col1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
+    m2m_col2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
+    df["Missing % Change"] = df.apply(lambda r: ((r[miss_col1] - r[miss_col2]) / r[miss_col2])*100 if r[miss_col2] != 0 else None, axis=1)
+    df["Month-to-Month % Change"] = df.apply(lambda r: ((r[m2m_col1] - r[m2m_col2]) / r[m2m_col2])*100 if r[m2m_col2] != 0 else None, axis=1)
+    return df
 
 def generate_distribution_df(df, analysis_type, date1):
     months = [(date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
@@ -158,23 +181,44 @@ def main():
         st.write(f"**File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
-        # --- Summary Grid (Read-only except Comments) ---
+        # --- Summary Grid ---
         sum_df = st.session_state.summary_df.copy()
         if "Comments" not in sum_df.columns:
             sum_df["Comments"] = ""
+        # Configure numeric columns with thousand separators and percentage columns with percent formatting.
+        num_cols = [col for col in sum_df.columns if col != "Field Name" and col != "Comments"]
+        # Build grid for summary:
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(editable=False)
+        gb_sum.configure_default_column(
+            editable=False,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
+        )
+        for col in num_cols:
+            # For percentage columns, check if the column name contains "%" Change.
+            if "Change" in col:
+                gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')")
+            else:
+                gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toLocaleString() : '')")
         gb_sum.configure_column("Comments", editable=True)
         gb_sum.configure_selection("single", use_checkbox=False)
         sum_opts = gb_sum.build()
         sum_opts["rowSelection"] = "single"
+        # Set pagination: 30 rows
+        sum_opts["pagination"] = True
+        sum_opts["paginationPageSize"] = 30
+        # Update header names to wrap: modify headerName in columnDefs.
+        for col in sum_opts["columnDefs"]:
+            if "headerName" in col:
+                col["headerName"] = "\n".join(col["headerName"].split())
         st.subheader("Summary")
         sum_res = AgGrid(
             sum_df,
             gridOptions=sum_opts,
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-            key="sum_grid"
+            key="sum_grid",
+            height=400,
+            use_container_width=True
         )
         sel_sum = sum_res.get("selectedRows", [])
         if sel_sum:
@@ -183,63 +227,80 @@ def main():
         # --- Value Distribution Grid ---
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
-        # If active_field exists, use it; else default to first field.
         active_val = st.session_state.active_field if st.session_state.get("active_field") in val_fields else val_fields[0]
-        selected_val_field = st.selectbox("Select Field (Value Dist)", val_fields, index=val_fields.index(active_val), key="val_select")
+        selected_val_field = st.selectbox("Field (Value Dist)", val_fields, index=val_fields.index(active_val), key="val_select")
         st.session_state.active_field = selected_val_field
         filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field]
         if "Comments" not in filtered_val.columns:
             filtered_val["Comments"] = ""
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-        gb_val.configure_default_column(editable=False)
+        gb_val.configure_default_column(
+            editable=False,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
+        )
         gb_val.configure_column("Comments", editable=True)
         gb_val.configure_selection("single", use_checkbox=False)
         val_opts = gb_val.build()
         val_opts["rowSelection"] = "single"
+        val_opts["pagination"] = True
+        val_opts["paginationPageSize"] = 30
+        for col in val_opts["columnDefs"]:
+            if "headerName" in col:
+                col["headerName"] = "\n".join(col["headerName"].split())
         AgGrid(
             filtered_val,
             gridOptions=val_opts,
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-            key="val_grid"
+            key="val_grid",
+            height=400,
+            use_container_width=True
         )
         
         # --- Population Comparison Grid ---
         st.subheader("Population Comparison")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         active_pop = st.session_state.active_field if st.session_state.get("active_field") in pop_fields else pop_fields[0]
-        selected_pop_field = st.selectbox("Select Field (Pop Comp)", pop_fields, index=pop_fields.index(active_pop), key="pop_select")
+        selected_pop_field = st.selectbox("Field (Pop Comp)", pop_fields, index=pop_fields.index(active_pop), key="pop_select")
         st.session_state.active_field = selected_pop_field
         filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
         if "Comments" not in filtered_pop.columns:
             filtered_pop["Comments"] = ""
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
-        gb_pop.configure_default_column(editable=False)
+        gb_pop.configure_default_column(
+            editable=False,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
+        )
         gb_pop.configure_column("Comments", editable=True)
         gb_pop.configure_selection("single", use_checkbox=False)
         pop_opts = gb_pop.build()
         pop_opts["rowSelection"] = "single"
+        pop_opts["pagination"] = True
+        pop_opts["paginationPageSize"] = 30
+        for col in pop_opts["columnDefs"]:
+            if "headerName" in col:
+                col["headerName"] = "\n".join(col["headerName"].split())
         pop_res = AgGrid(
             filtered_pop,
             gridOptions=pop_opts,
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-            key="pop_grid"
+            key="pop_grid",
+            height=400,
+            use_container_width=True
         )
+        sel_pop = pop_res.get("selectedRows", [])
         
-        # --- Dedicated View SQL Logic Section via Drop-downs ---
+        # --- View SQL Logic Section (via dropdowns) ---
         st.subheader("View SQL Logic")
-        # Get all rows from the original data with analysis_type "pop_comp" for the active field
         orig = st.session_state.df_data
         pop_orig = orig[orig["analysis_type"] == "pop_comp"]
         pop_orig_field = pop_orig[pop_orig["field_name"] == selected_pop_field]
-        # Dropdown for Value Label options
         val_labels = pop_orig_field["value_label"].dropna().unique().tolist()
         if not val_labels:
             st.write("No Value Labels available for SQL Logic.")
         else:
             sel_val_label = st.selectbox("Select Value Label", val_labels, key="sql_val_label")
-            # Dropdown for Month (from the last 12 months based on Date1)
             months = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
             months = sorted(months, reverse=True)
             month_options = [m.strftime("%Y-%m") for m in months]
