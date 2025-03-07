@@ -9,7 +9,7 @@ from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
-# Add CSS to force header wrapping
+# --- Custom CSS for header wrapping and full width ---
 st.markdown("""
     <style>
         .ag-header-cell-label {
@@ -79,13 +79,13 @@ def generate_summary_df(df_data, date1, date2):
         f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})",
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ])
-    # Calculate percentage change columns:
-    miss_col1 = f"Missing Values ({date1.strftime('%Y-%m-%d')})"
-    miss_col2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
-    m2m_col1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
-    m2m_col2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
-    df["Missing % Change"] = df.apply(lambda r: ((r[miss_col1] - r[miss_col2]) / r[miss_col2])*100 if r[miss_col2] != 0 else None, axis=1)
-    df["Month-to-Month % Change"] = df.apply(lambda r: ((r[m2m_col1] - r[m2m_col2]) / r[m2m_col2])*100 if r[m2m_col2] != 0 else None, axis=1)
+    # Compute percentage change columns:
+    m1 = f"Missing Values ({date1.strftime('%Y-%m-%d')})"
+    m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
+    d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
+    d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
+    df["Missing % Change"] = df.apply(lambda r: ((r[m1] - r[m2]) / r[m2] * 100) if r[m2] != 0 else None, axis=1)
+    df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1] - r[d2]) / r[d2] * 100) if r[d2] != 0 else None, axis=1)
     return df
 
 def generate_distribution_df(df, analysis_type, date1):
@@ -97,7 +97,12 @@ def generate_distribution_df(df, analysis_type, date1):
     grouped = sub.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
         return pd.DataFrame()
-    pivot = grouped.pivot_table(index=['field_name', 'value_label'], columns='month', values='value_records', fill_value=0)
+    pivot = grouped.pivot_table(
+        index=['field_name', 'value_label'], 
+        columns='month', 
+        values='value_records', 
+        fill_value=0
+    )
     pivot = pivot.reindex(columns=months, fill_value=0)
     frames = []
     for field, sub_df in pivot.groupby(level=0):
@@ -185,31 +190,27 @@ def main():
         sum_df = st.session_state.summary_df.copy()
         if "Comments" not in sum_df.columns:
             sum_df["Comments"] = ""
-        # Configure numeric columns with thousand separators and percentage columns with percent formatting.
-        num_cols = [col for col in sum_df.columns if col != "Field Name" and col != "Comments"]
-        # Build grid for summary:
+        # Build grid with custom formatting for numeric values and percentage columns.
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
         gb_sum.configure_default_column(
             editable=False,
             cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
         )
-        for col in num_cols:
-            # For percentage columns, check if the column name contains "%" Change.
-            if "Change" in col:
-                gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')")
-            else:
-                gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toLocaleString() : '')")
-        gb_sum.configure_column("Comments", editable=True)
+        for col in sum_df.columns:
+            if col not in ["Field Name", "Comments"]:
+                # For percentage change columns:
+                if "Change" in col:
+                    gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')")
+                else:
+                    gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toLocaleString() : '')")
+        # Wrap header text:
+        for c in gb_sum.build()["columnDefs"]:
+            if "headerName" in c:
+                c["headerName"] = "\n".join(c["headerName"].split())
         gb_sum.configure_selection("single", use_checkbox=False)
         sum_opts = gb_sum.build()
         sum_opts["rowSelection"] = "single"
-        # Set pagination: 30 rows
-        sum_opts["pagination"] = True
-        sum_opts["paginationPageSize"] = 30
-        # Update header names to wrap: modify headerName in columnDefs.
-        for col in sum_opts["columnDefs"]:
-            if "headerName" in col:
-                col["headerName"] = "\n".join(col["headerName"].split())
+        sum_opts["pagination"] = False  # we want to see 30 rows height
         st.subheader("Summary")
         sum_res = AgGrid(
             sum_df,
@@ -217,7 +218,7 @@ def main():
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="sum_grid",
-            height=400,
+            height=800,  # enough height for ~30 rows
             use_container_width=True
         )
         sel_sum = sum_res.get("selectedRows", [])
@@ -239,21 +240,20 @@ def main():
             cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
         )
         gb_val.configure_column("Comments", editable=True)
+        for c in gb_val.build()["columnDefs"]:
+            if "headerName" in c:
+                c["headerName"] = "\n".join(c["headerName"].split())
         gb_val.configure_selection("single", use_checkbox=False)
         val_opts = gb_val.build()
         val_opts["rowSelection"] = "single"
-        val_opts["pagination"] = True
-        val_opts["paginationPageSize"] = 30
-        for col in val_opts["columnDefs"]:
-            if "headerName" in col:
-                col["headerName"] = "\n".join(col["headerName"].split())
+        val_opts["pagination"] = False
         AgGrid(
             filtered_val,
             gridOptions=val_opts,
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="val_grid",
-            height=400,
+            height=800,
             use_container_width=True
         )
         
@@ -272,21 +272,20 @@ def main():
             cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
         )
         gb_pop.configure_column("Comments", editable=True)
+        for c in gb_pop.build()["columnDefs"]:
+            if "headerName" in c:
+                c["headerName"] = "\n".join(c["headerName"].split())
         gb_pop.configure_selection("single", use_checkbox=False)
         pop_opts = gb_pop.build()
         pop_opts["rowSelection"] = "single"
-        pop_opts["pagination"] = True
-        pop_opts["paginationPageSize"] = 30
-        for col in pop_opts["columnDefs"]:
-            if "headerName" in col:
-                col["headerName"] = "\n".join(col["headerName"].split())
+        pop_opts["pagination"] = False
         pop_res = AgGrid(
             filtered_pop,
             gridOptions=pop_opts,
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="pop_grid",
-            height=400,
+            height=800,
             use_container_width=True
         )
         sel_pop = pop_res.get("selectedRows", [])
