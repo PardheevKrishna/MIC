@@ -1,5 +1,5 @@
 import streamlit as st
-st.set_page_config(page_title="Final FRY14M Field Analysis", layout="centered", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Final FRY14M Field Analysis", layout="wide", initial_sidebar_state="expanded")
 
 import pandas as pd
 import os
@@ -9,7 +9,7 @@ from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
-# Custom CSS to force header wrapping and full width
+# --- Custom CSS to wrap header text and remove extra margin ---
 st.markdown("""
     <style>
         .ag-header-cell-label {
@@ -24,6 +24,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- Utility: Compute grid height dynamically ---
+def compute_grid_height(df, row_height=30, header_height=35):
+    n = len(df)
+    if n == 0:
+        return header_height + 20
+    return min(n, 30)*row_height + header_height
+
 def get_excel_engine(file_path):
     if file_path.lower().endswith('.xlsb'):
         return 'pyxlsb'
@@ -33,15 +40,19 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     rows = []
     for field in fields:
-        mask_miss_d1 = ((df_data['analysis_type'] == 'value_dist') &
-                        (df_data['field_name'] == field) &
-                        (df_data['filemonth_dt'] == date1) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_miss_d1 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_d1 = df_data.loc[mask_miss_d1, 'value_records'].sum()
-        mask_miss_d2 = ((df_data['analysis_type'] == 'value_dist') &
-                        (df_data['field_name'] == field) &
-                        (df_data['filemonth_dt'] == date2) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_miss_d2 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_d2 = df_data.loc[mask_miss_d2, 'value_records'].sum()
         phrases = [
             "1\\)   CF Loan - Both Pop, Diff Values",
@@ -53,15 +64,19 @@ def generate_summary_df(df_data, date1, date2):
                 if pd.notna(x) and re.search(pat, x):
                     return True
             return False
-        mask_pop_d1 = ((df_data['analysis_type'] == 'pop_comp') &
-                       (df_data['field_name'] == field) &
-                       (df_data['filemonth_dt'] == date1) &
-                       (df_data['value_label'].apply(contains_phrase)))
+        mask_pop_d1 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].apply(contains_phrase))
+        )
         pop_d1 = df_data.loc[mask_pop_d1, 'value_records'].sum()
-        mask_pop_d2 = ((df_data['analysis_type'] == 'pop_comp') &
-                       (df_data['field_name'] == field) &
-                       (df_data['filemonth_dt'] == date2) &
-                       (df_data['value_label'].apply(contains_phrase)))
+        mask_pop_d2 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].apply(contains_phrase))
+        )
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
     df = pd.DataFrame(rows, columns=[
@@ -182,29 +197,27 @@ def main():
             editable=False,
             cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
         )
-        # Format numeric columns with commas and percentages
         for col in sum_df.columns:
             if col not in ["Field Name", "Comments"]:
                 if "Change" in col:
                     gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')")
                 else:
                     gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toLocaleString() : '')")
-        # Wrap header text
-        grid_opts = gb_sum.build()
-        for col_def in grid_opts["columnDefs"]:
-            if "headerName" in col_def:
-                col_def["headerName"] = "\n".join(col_def["headerName"].split())
+        for c in gb_sum.build()["columnDefs"]:
+            if "headerName" in c:
+                c["headerName"] = "\n".join(c["headerName"].split())
         gb_sum.configure_selection("single", use_checkbox=False)
-        grid_opts["rowSelection"] = "single"
-        grid_opts["pagination"] = False  # Expand height to show 30 rows
+        sum_opts = gb_sum.build()
+        sum_opts["rowSelection"] = "single"
+        sum_height = compute_grid_height(sum_df, row_height=30, header_height=35)
         st.subheader("Summary")
         sum_res = AgGrid(
             sum_df,
-            gridOptions=grid_opts,
+            gridOptions=sum_opts,
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="sum_grid",
-            height=800,
+            height=sum_height,
             use_container_width=True
         )
         sel_sum = sum_res.get("selectedRows", [])
@@ -228,18 +241,18 @@ def main():
         gb_val.configure_column("Comments", editable=True)
         gb_val.configure_selection("single", use_checkbox=False)
         val_opts = gb_val.build()
-        for col_def in val_opts["columnDefs"]:
-            if "headerName" in col_def:
-                col_def["headerName"] = "\n".join(col_def["headerName"].split())
+        for c in val_opts["columnDefs"]:
+            if "headerName" in c:
+                c["headerName"] = "\n".join(c["headerName"].split())
         val_opts["rowSelection"] = "single"
-        val_opts["pagination"] = False
+        val_height = compute_grid_height(filtered_val, row_height=30, header_height=35)
         AgGrid(
             filtered_val,
             gridOptions=val_opts,
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="val_grid",
-            height=800,
+            height=val_height,
             use_container_width=True
         )
         
@@ -258,25 +271,25 @@ def main():
             cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
         )
         gb_pop.configure_column("Comments", editable=True)
+        for c in gb_pop.build()["columnDefs"]:
+            if "headerName" in c:
+                c["headerName"] = "\n".join(c["headerName"].split())
         gb_pop.configure_selection("single", use_checkbox=False)
         pop_opts = gb_pop.build()
-        for col_def in pop_opts["columnDefs"]:
-            if "headerName" in col_def:
-                col_def["headerName"] = "\n".join(col_def["headerName"].split())
         pop_opts["rowSelection"] = "single"
-        pop_opts["pagination"] = False
+        pop_height = compute_grid_height(filtered_pop, row_height=30, header_height=35)
         pop_res = AgGrid(
             filtered_pop,
             gridOptions=pop_opts,
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="pop_grid",
-            height=800,
+            height=pop_height,
             use_container_width=True
         )
         sel_pop = pop_res.get("selectedRows", [])
         
-        # --- View SQL Logic Section via Dropdowns ---
+        # --- View SQL Logic Section (via Dropdowns) ---
         st.subheader("View SQL Logic")
         orig = st.session_state.df_data
         pop_orig = orig[orig["analysis_type"] == "pop_comp"]
@@ -313,6 +326,12 @@ def main():
             file_name="FRY14M_Field_Analysis_Report.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+def compute_grid_height(df, row_height=30, header_height=35):
+    n = len(df)
+    if n == 0:
+        return header_height + 20
+    return min(n, 30)*row_height + header_height
 
 if __name__ == "__main__":
     main()
