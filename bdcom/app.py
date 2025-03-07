@@ -4,6 +4,7 @@ st.set_page_config(page_title="Final FRY14M Field Analysis", layout="centered", 
 import pandas as pd
 import os
 import datetime
+import re
 from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
@@ -73,7 +74,12 @@ def generate_distribution_df(df, analysis_type, date1):
     grouped = sub.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
         return pd.DataFrame()
-    pivot = grouped.pivot_table(index=['field_name', 'value_label'], columns='month', values='value_records', fill_value=0)
+    pivot = grouped.pivot_table(
+        index=['field_name', 'value_label'],
+        columns='month',
+        values='value_records',
+        fill_value=0
+    )
     pivot = pivot.reindex(columns=months, fill_value=0)
     frames = []
     for field, sub_df in pivot.groupby(level=0):
@@ -120,6 +126,7 @@ def load_report_data(file_path, date1, date2):
 
 st.write("Working Directory:", os.getcwd())
 
+# --- Main App ---
 def main():
     st.sidebar.title("File & Date Selection")
     folder = st.sidebar.selectbox("Select Folder", ["BDCOM", "WFHMSA"])
@@ -149,6 +156,7 @@ def main():
         st.session_state.folder = folder
         st.session_state.date1 = date1
         st.session_state.date2 = date2
+        st.session_state.active_field = None  # for linking
 
     if st.session_state.get("df_data") is not None:
         st.title("FRY14M Field Analysis Summary Report")
@@ -176,16 +184,20 @@ def main():
         )
         sel_sum = sum_res.get("selectedRows", [])
         if sel_sum:
-            link_field = sel_sum[0].get("Field Name")
-            # Use this field to update the population comparison dropdown later
-            st.session_state.linked_field = link_field
-        else:
-            st.session_state.linked_field = None
+            # Set the active field based on the selected row in summary
+            st.session_state.active_field = sel_sum[0].get("Field Name")
+            st.write("Linked Field:", st.session_state.active_field)
         
-        # --- Value Distribution Grid (not used for SQL logic) ---
+        # --- Value Distribution Grid ---
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
-        selected_val_field = st.selectbox("Select Field (Value Dist)", val_fields, key="val_select")
+        # If active_field is set from summary, use it; else default to first field
+        if st.session_state.get("active_field") in val_fields:
+            active_val = st.session_state.active_field
+        else:
+            active_val = val_fields[0] if val_fields else None
+        selected_val_field = st.selectbox("Field (Value Dist)", val_fields, index=val_fields.index(active_val) if active_val else 0, key="val_select")
+        st.session_state.active_field = selected_val_field  # update linking
         filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field]
         if "Comments" not in filtered_val.columns:
             filtered_val["Comments"] = ""
@@ -205,10 +217,14 @@ def main():
         
         # --- Population Comparison Grid ---
         st.subheader("Population Comparison")
-        # Use the linked field from summary if available, else let user choose
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
-        default_pop_field = st.session_state.linked_field if st.session_state.get("linked_field") in pop_fields else pop_fields[0]
-        selected_pop_field = st.selectbox("Select Field (Pop Comp)", pop_fields, index=pop_fields.index(default_pop_field), key="pop_select")
+        # Use the active field if set; else default
+        if st.session_state.get("active_field") in pop_fields:
+            active_pop = st.session_state.active_field
+        else:
+            active_pop = pop_fields[0] if pop_fields else None
+        selected_pop_field = st.selectbox("Field (Pop Comp)", pop_fields, index=pop_fields.index(active_pop) if active_pop else 0, key="pop_select")
+        st.session_state.active_field = selected_pop_field  # update linking
         filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
         if "Comments" not in filtered_pop.columns:
             filtered_pop["Comments"] = ""
@@ -225,34 +241,28 @@ def main():
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="pop_grid"
         )
+        sel_pop = pop_res.get("selectedRows", [])
         
-        # --- View SQL Logic Section ---
+        # --- Dedicated SQL Logic Viewer for Population Comparison ---
         st.subheader("View SQL Logic")
-        # Dropdown to select Value Label from original Data for analysis_type "pop_comp" and the selected field
-        orig = st.session_state.df_data
-        pop_orig = orig[orig["analysis_type"] == "pop_comp"]
-        pop_orig = pop_orig[pop_orig["field_name"] == selected_pop_field]
-        val_labels = pop_orig["value_label"].dropna().unique().tolist()
-        if not val_labels:
-            st.write("No Value Labels available for SQL Logic.")
-        else:
-            selected_val_label = st.selectbox("Select Value Label", val_labels, key="sql_val_label")
-            # Dropdown for Date: list months from st.session_state.date1 (last 12 months)
-            months = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
-            months = sorted(months, reverse=True)
-            month_strs = [m.strftime("%Y-%m") for m in months]
-            selected_month = st.selectbox("Select Month", month_strs, key="sql_month")
-            if st.button("Show SQL Logic"):
-                # Filter original Data by analysis_type "pop_comp", field_name, value_label, and filemonth_dt's month equals selected_month.
-                matches = pop_orig[
-                    (pop_orig["value_label"] == selected_val_label) &
-                    (pop_orig["filemonth_dt"].dt.strftime("%Y-%m") == selected_month)
+        if sel_pop:
+            pop_field = sel_pop[0].get("Field Name")
+            pop_value = sel_pop[0].get("Value Label")
+            if pop_value != "Current period total":
+                orig = st.session_state.df_data
+                # Filter original Data sheet for analysis_type "pop_comp", matching field and value label
+                matches = orig[
+                    (orig["analysis_type"] == "pop_comp") &
+                    (orig["field_name"] == pop_field) &
+                    (orig["value_label"] == pop_value)
                 ]
                 sql_vals = matches["value_sql_logic"].dropna().unique()
                 if sql_vals.size > 0:
                     st.text_area("Value SQL Logic", "\n".join(sql_vals), height=150)
                 else:
                     st.text_area("Value SQL Logic", "No SQL Logic found", height=150)
+        else:
+            st.write("Select a row in the Population Comparison grid to view SQL logic.")
         
         # --- Excel Download ---
         out_buf = BytesIO()
