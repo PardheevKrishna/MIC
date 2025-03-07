@@ -81,6 +81,7 @@ def generate_summary_df(df_data, date1, date2):
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     df["Missing % Change"] = df.apply(lambda r: ((r[m1] - r[m2]) / r[m2] * 100) if r[m2] != 0 else None, axis=1)
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1] - r[d2]) / r[d2] * 100) if r[d2] != 0 else None, axis=1)
+    # Reorder columns so that percentage columns are next to the related values.
     new_order = [
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
@@ -197,9 +198,9 @@ def main():
         for col in sum_df.columns:
             if col not in ["Field Name", "Comments"]:
                 if "Change" in col:
-                    gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')", width=25)
+                    gb_sum.configure_column(col, type=["numericColumn"], valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')", width=25)
                 else:
-                    gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')", width=25)
+                    gb_sum.configure_column(col, type=["numericColumn"], valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')", width=25)
         sum_opts = gb_sum.build()
         if isinstance(sum_opts, list):
             sum_opts = {"columnDefs": sum_opts}
@@ -208,7 +209,6 @@ def main():
                 c["headerName"] = "\n".join(c["headerName"].split())
                 c["width"] = 25
         gb_sum.configure_selection("single", use_checkbox=False)
-        # Use the already built sum_opts; do not call build() again.
         sum_opts["rowSelection"] = "single"
         sum_opts["pagination"] = False
         sum_opts["rowHeight"] = 40
