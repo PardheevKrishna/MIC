@@ -9,7 +9,7 @@ from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
-# Custom CSS for header wrapping and full container usage
+# Custom CSS to force header wrapping and full container width
 st.markdown("""
     <style>
         .ag-header-cell-label {
@@ -103,12 +103,7 @@ def generate_distribution_df(df, analysis_type, date1):
     grouped = sub.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
         return pd.DataFrame()
-    pivot = grouped.pivot_table(
-        index=['field_name', 'value_label'],
-        columns='month',
-        values='value_records',
-        fill_value=0
-    )
+    pivot = grouped.pivot_table(index=['field_name', 'value_label'], columns='month', values='value_records', fill_value=0)
     pivot = pivot.reindex(columns=months, fill_value=0)
     frames = []
     for field, sub_df in pivot.groupby(level=0):
@@ -157,7 +152,6 @@ st.write("Working Directory:", os.getcwd())
 
 def main():
     st.sidebar.title("File & Date Selection")
-    # Add folder options including "BCards"
     folder = st.sidebar.selectbox("Select Folder", ["BDCOM", "WFHMSA", "BCards"])
     folder_path = os.path.join(os.getcwd(), folder)
     st.sidebar.write(f"Folder path: {folder_path}")
@@ -202,7 +196,6 @@ def main():
             editable=False,
             cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
         )
-        # Format numeric columns
         for col in sum_df.columns:
             if col not in ["Field Name", "Comments"]:
                 if "Change" in col:
@@ -221,7 +214,7 @@ def main():
         if isinstance(sum_opts, list):
             sum_opts = {"columnDefs": sum_opts}
         sum_opts["rowSelection"] = "single"
-        sum_opts["pagination"] = False  # dynamic height
+        sum_opts["pagination"] = False
         sum_height = compute_grid_height(sum_df, row_height=30, header_height=35)
         st.subheader("Summary")
         sum_res = AgGrid(
@@ -302,7 +295,7 @@ def main():
         )
         sel_pop = pop_res.get("selectedRows", [])
         
-        # --- View SQL Logic Section (via dropdowns) ---
+        # --- View SQL Logic Section (via Dropdowns) ---
         st.subheader("View SQL Logic")
         orig = st.session_state.df_data
         pop_orig = orig[orig["analysis_type"] == "pop_comp"]
