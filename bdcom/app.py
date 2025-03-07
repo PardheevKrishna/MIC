@@ -9,7 +9,7 @@ from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
-# Custom CSS to force header wrapping and remove extra margins
+# Custom CSS: wrap header text and remove extra margins
 st.markdown("""
     <style>
         .ag-header-cell-label {
@@ -24,11 +24,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- Utility: Compute grid height dynamically (30 rows max) ---
 def compute_grid_height(df, row_height=30, header_height=35):
     n = len(df)
     if n == 0:
         return header_height + 20
-    return min(n, 30)*row_height + header_height
+    return min(n, 30) * row_height + header_height
 
 def get_excel_engine(file_path):
     if file_path.lower().endswith('.xlsb'):
@@ -92,7 +93,17 @@ def generate_summary_df(df_data, date1, date2):
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     df["Missing % Change"] = df.apply(lambda r: ((r[m1] - r[m2]) / r[m2] * 100) if r[m2] != 0 else None, axis=1)
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1] - r[d2]) / r[d2] * 100) if r[d2] != 0 else None, axis=1)
-    return df
+    # Reorder columns: insert percentages next to their related values.
+    new_order = [
+        "Field Name",
+        f"Missing Values ({date1.strftime('%Y-%m-%d')})",
+        "Missing % Change",
+        f"Missing Values ({date2.strftime('%Y-%m-%d')})",
+        f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})",
+        "Month-to-Month % Change",
+        f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
+    ]
+    return df[new_order]
 
 def generate_distribution_df(df, analysis_type, date1):
     months = [(date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
@@ -194,23 +205,26 @@ def main():
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
         gb_sum.configure_default_column(
             editable=False,
-            cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 25}
         )
         for col in sum_df.columns:
             if col not in ["Field Name", "Comments"]:
                 if "Change" in col:
-                    gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')")
+                    # Format percentage with two decimals
+                    gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')", width=25)
                 else:
-                    gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toLocaleString() : '')")
-        # Call build() once and wrap if necessary.
+                    gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')", width=25)
         sum_opts = gb_sum.build()
         if isinstance(sum_opts, list):
             sum_opts = {"columnDefs": sum_opts}
         for c in sum_opts["columnDefs"]:
             if "headerName" in c:
                 c["headerName"] = "\n".join(c["headerName"].split())
+                c["width"] = 25  # reduce header cell width
         gb_sum.configure_selection("single", use_checkbox=False)
-        # Do not call build() again; use the already built sum_opts.
+        sum_opts = gb_sum.build()
+        if isinstance(sum_opts, list):
+            sum_opts = {"columnDefs": sum_opts}
         sum_opts["rowSelection"] = "single"
         sum_opts["pagination"] = False
         sum_height = compute_grid_height(sum_df, row_height=30, header_height=35)
@@ -240,9 +254,9 @@ def main():
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
         gb_val.configure_default_column(
             editable=False,
-            cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 25}
         )
-        gb_val.configure_column("Comments", editable=True)
+        gb_val.configure_column("Comments", editable=True, width=25)
         gb_val.configure_selection("single", use_checkbox=False)
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
@@ -250,6 +264,7 @@ def main():
         for c in val_opts["columnDefs"]:
             if "headerName" in c:
                 c["headerName"] = "\n".join(c["headerName"].split())
+                c["width"] = 25
         val_opts["rowSelection"] = "single"
         val_opts["pagination"] = False
         val_height = compute_grid_height(filtered_val, row_height=30, header_height=35)
@@ -275,9 +290,9 @@ def main():
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
         gb_pop.configure_default_column(
             editable=False,
-            cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 25}
         )
-        gb_pop.configure_column("Comments", editable=True)
+        gb_pop.configure_column("Comments", editable=True, width=25)
         gb_pop.configure_selection("single", use_checkbox=False)
         pop_opts = gb_pop.build()
         if isinstance(pop_opts, list):
@@ -285,6 +300,7 @@ def main():
         for c in pop_opts["columnDefs"]:
             if "headerName" in c:
                 c["headerName"] = "\n".join(c["headerName"].split())
+                c["width"] = 25
         pop_opts["rowSelection"] = "single"
         pop_opts["pagination"] = False
         pop_height = compute_grid_height(filtered_pop, row_height=30, header_height=35)
