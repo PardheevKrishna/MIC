@@ -9,7 +9,7 @@ from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
-# Custom CSS for header wrapping and full width
+# Custom CSS for header wrapping and full container usage
 st.markdown("""
     <style>
         .ag-header-cell-label {
@@ -24,12 +24,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-def compute_grid_height(df, row_height=40, header_height=35):
+def compute_grid_height(df, row_height=40, header_height=80):
     n = len(df)
     if n == 0:
         return header_height + 20
-    # Use 40px per row and show exactly n rows if n < 30, else 30 rows.
-    return (n if n < 30 else 30)*row_height + header_height
+    return min(n, 30) * row_height + header_height
 
 def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
@@ -76,14 +75,12 @@ def generate_summary_df(df_data, date1, date2):
         f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})",
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ])
-    # Compute percentage change columns:
     m1 = f"Missing Values ({date1.strftime('%Y-%m-%d')})"
     m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
     d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     df["Missing % Change"] = df.apply(lambda r: ((r[m1] - r[m2]) / r[m2] * 100) if r[m2] != 0 else None, axis=1)
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1] - r[d2]) / r[d2] * 100) if r[d2] != 0 else None, axis=1)
-    # Reorder columns: insert percentage columns next to their related values.
     new_order = [
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
@@ -193,7 +190,6 @@ def main():
         if "Comments" not in sum_df.columns:
             sum_df["Comments"] = ""
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        # Set cell style and row height via gridOptions property "rowHeight"
         gb_sum.configure_default_column(
             editable=False,
             cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 25}
@@ -216,7 +212,8 @@ def main():
         sum_opts["rowSelection"] = "single"
         sum_opts["pagination"] = False
         sum_opts["rowHeight"] = 40
-        sum_height = compute_grid_height(sum_df, row_height=40, header_height=35)
+        sum_opts["headerHeight"] = 80
+        sum_height = compute_grid_height(sum_df, row_height=40, header_height=80)
         st.subheader("Summary")
         sum_res = AgGrid(
             sum_df,
@@ -257,7 +254,8 @@ def main():
         val_opts["rowSelection"] = "single"
         val_opts["pagination"] = False
         val_opts["rowHeight"] = 40
-        val_height = compute_grid_height(filtered_val, row_height=40, header_height=35)
+        val_opts["headerHeight"] = 80
+        val_height = compute_grid_height(filtered_val, row_height=40, header_height=80)
         AgGrid(
             filtered_val,
             gridOptions=val_opts,
@@ -294,7 +292,8 @@ def main():
         pop_opts["rowSelection"] = "single"
         pop_opts["pagination"] = False
         pop_opts["rowHeight"] = 40
-        pop_height = compute_grid_height(filtered_pop, row_height=40, header_height=35)
+        pop_opts["headerHeight"] = 80
+        pop_height = compute_grid_height(filtered_pop, row_height=40, header_height=80)
         pop_res = AgGrid(
             filtered_pop,
             gridOptions=pop_opts,
