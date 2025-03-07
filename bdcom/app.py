@@ -73,12 +73,7 @@ def generate_distribution_df(df, analysis_type, date1):
     grouped = sub.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
         return pd.DataFrame()
-    pivot = grouped.pivot_table(
-        index=['field_name', 'value_label'], 
-        columns='month', 
-        values='value_records', 
-        fill_value=0
-    )
+    pivot = grouped.pivot_table(index=['field_name', 'value_label'], columns='month', values='value_records', fill_value=0)
     pivot = pivot.reindex(columns=months, fill_value=0)
     frames = []
     for field, sub_df in pivot.groupby(level=0):
@@ -108,10 +103,7 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [
-            " ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
-            for col in df.columns.values
-        ]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -157,8 +149,6 @@ def main():
         st.session_state.folder = folder
         st.session_state.date1 = date1
         st.session_state.date2 = date2
-        st.session_state.val_field_index = 0
-        st.session_state.pop_field_index = 0
 
     if st.session_state.get("df_data") is not None:
         st.title("FRY14M Field Analysis Summary Report")
@@ -166,7 +156,7 @@ def main():
         st.write(f"**File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
-        # --- Summary Grid (Read-only except Comments) ---
+        # --- Summary Grid ---
         sum_df = st.session_state.summary_df.copy()
         if "Comments" not in sum_df.columns:
             sum_df["Comments"] = ""
@@ -187,24 +177,16 @@ def main():
         sel_sum = sum_res.get("selectedRows", [])
         if sel_sum:
             link_field = sel_sum[0].get("Field Name")
-            val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
-            pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
-            if link_field in val_fields:
-                st.session_state.val_field_index = val_fields.index(link_field)
-            if link_field in pop_fields:
-                st.session_state.pop_field_index = pop_fields.index(link_field)
+            # Use this field to update the population comparison dropdown later
+            st.session_state.linked_field = link_field
+        else:
+            st.session_state.linked_field = None
         
-        # --- Value Distribution Grid ---
+        # --- Value Distribution Grid (not used for SQL logic) ---
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
-        col1, col2, col3 = st.columns([1,1,1])
-        if col1.button("←", key="prev_val"):
-            st.session_state.val_field_index = (st.session_state.val_field_index - 1) % len(val_fields)
-        if col3.button("→", key="next_val"):
-            st.session_state.val_field_index = (st.session_state.val_field_index + 1) % len(val_fields)
-        sel_val_field = st.selectbox("Field (Value Dist)", val_fields, index=st.session_state.val_field_index, key="val_select")
-        st.session_state.val_field_index = val_fields.index(sel_val_field)
-        filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == sel_val_field]
+        selected_val_field = st.selectbox("Select Field (Value Dist)", val_fields, key="val_select")
+        filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field]
         if "Comments" not in filtered_val.columns:
             filtered_val["Comments"] = ""
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
@@ -213,31 +195,21 @@ def main():
         gb_val.configure_selection("single", use_checkbox=False)
         val_opts = gb_val.build()
         val_opts["rowSelection"] = "single"
-        val_res = AgGrid(
+        AgGrid(
             filtered_val,
             gridOptions=val_opts,
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="val_grid"
         )
-        sel_val = val_res.get("selectedRows", [])
-        if sel_val:
-            field_from_val = sel_val[0].get("Field Name")
-            pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
-            if field_from_val in pop_fields:
-                st.session_state.pop_field_index = pop_fields.index(field_from_val)
         
         # --- Population Comparison Grid ---
         st.subheader("Population Comparison")
+        # Use the linked field from summary if available, else let user choose
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
-        col4, col5, col6 = st.columns([1,1,1])
-        if col4.button("←", key="prev_pop"):
-            st.session_state.pop_field_index = (st.session_state.pop_field_index - 1) % len(pop_fields)
-        if col6.button("→", key="next_pop"):
-            st.session_state.pop_field_index = (st.session_state.pop_field_index + 1) % len(pop_fields)
-        sel_pop_field = st.selectbox("Field (Pop Comp)", pop_fields, index=st.session_state.pop_field_index, key="pop_select")
-        st.session_state.pop_field_index = pop_fields.index(sel_pop_field)
-        filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == sel_pop_field].copy()
+        default_pop_field = st.session_state.linked_field if st.session_state.get("linked_field") in pop_fields else pop_fields[0]
+        selected_pop_field = st.selectbox("Select Field (Pop Comp)", pop_fields, index=pop_fields.index(default_pop_field), key="pop_select")
+        filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
         if "Comments" not in filtered_pop.columns:
             filtered_pop["Comments"] = ""
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
@@ -253,20 +225,30 @@ def main():
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="pop_grid"
         )
-        sel_pop = pop_res.get("selectedRows", [])
+        
         # --- View SQL Logic Section ---
-        if sel_pop:
-            pop_field = sel_pop[0].get("Field Name")
-            pop_value = sel_pop[0].get("Value Label")
-            if pop_value != "Current period total":
-                # Filter original data for matching pop_comp row
-                orig = st.session_state.df_data
-                match = orig[
-                    (orig["analysis_type"] == "pop_comp") &
-                    (orig["field_name"] == pop_field) &
-                    (orig["value_label"] == pop_value)
+        st.subheader("View SQL Logic")
+        # Dropdown to select Value Label from original Data for analysis_type "pop_comp" and the selected field
+        orig = st.session_state.df_data
+        pop_orig = orig[orig["analysis_type"] == "pop_comp"]
+        pop_orig = pop_orig[pop_orig["field_name"] == selected_pop_field]
+        val_labels = pop_orig["value_label"].dropna().unique().tolist()
+        if not val_labels:
+            st.write("No Value Labels available for SQL Logic.")
+        else:
+            selected_val_label = st.selectbox("Select Value Label", val_labels, key="sql_val_label")
+            # Dropdown for Date: list months from st.session_state.date1 (last 12 months)
+            months = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
+            months = sorted(months, reverse=True)
+            month_strs = [m.strftime("%Y-%m") for m in months]
+            selected_month = st.selectbox("Select Month", month_strs, key="sql_month")
+            if st.button("Show SQL Logic"):
+                # Filter original Data by analysis_type "pop_comp", field_name, value_label, and filemonth_dt's month equals selected_month.
+                matches = pop_orig[
+                    (pop_orig["value_label"] == selected_val_label) &
+                    (pop_orig["filemonth_dt"].dt.strftime("%Y-%m") == selected_month)
                 ]
-                sql_vals = match["value_sql_logic"].unique()
+                sql_vals = matches["value_sql_logic"].dropna().unique()
                 if sql_vals.size > 0:
                     st.text_area("Value SQL Logic", "\n".join(sql_vals), height=150)
                 else:
