@@ -128,7 +128,6 @@ def load_report_data(file_path, date1, date2):
 
 st.write("Working Directory:", os.getcwd())
 
-# --- Main App ---
 def main():
     st.sidebar.title("File & Date Selection")
     folder = st.sidebar.selectbox("Select Folder", ["BDCOM", "WFHMSA"])
@@ -167,7 +166,7 @@ def main():
         st.write(f"**File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
-        # --- Summary Grid (read-only except Comments) ---
+        # --- Summary Grid (Read-only except Comments) ---
         sum_df = st.session_state.summary_df.copy()
         if "Comments" not in sum_df.columns:
             sum_df["Comments"] = ""
@@ -188,7 +187,6 @@ def main():
         sel_sum = sum_res.get("selectedRows", [])
         if sel_sum:
             link_field = sel_sum[0].get("Field Name")
-            # Update the current field index for both Value Dist and Pop Comp based on the linked field.
             val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
             pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
             if link_field in val_fields:
@@ -199,10 +197,10 @@ def main():
         # --- Value Distribution Grid ---
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
-        col_val = st.columns(3)
-        if col_val[0].button("←", key="prev_val"):
+        col1, col2, col3 = st.columns([1,1,1])
+        if col1.button("←", key="prev_val"):
             st.session_state.val_field_index = (st.session_state.val_field_index - 1) % len(val_fields)
-        if col_val[2].button("→", key="next_val"):
+        if col3.button("→", key="next_val"):
             st.session_state.val_field_index = (st.session_state.val_field_index + 1) % len(val_fields)
         sel_val_field = st.selectbox("Field (Value Dist)", val_fields, index=st.session_state.val_field_index, key="val_select")
         st.session_state.val_field_index = val_fields.index(sel_val_field)
@@ -232,17 +230,16 @@ def main():
         # --- Population Comparison Grid ---
         st.subheader("Population Comparison")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
-        col_pop = st.columns(3)
-        if col_pop[0].button("←", key="prev_pop"):
+        col4, col5, col6 = st.columns([1,1,1])
+        if col4.button("←", key="prev_pop"):
             st.session_state.pop_field_index = (st.session_state.pop_field_index - 1) % len(pop_fields)
-        if col_pop[2].button("→", key="next_pop"):
+        if col6.button("→", key="next_pop"):
             st.session_state.pop_field_index = (st.session_state.pop_field_index + 1) % len(pop_fields)
         sel_pop_field = st.selectbox("Field (Pop Comp)", pop_fields, index=st.session_state.pop_field_index, key="pop_select")
         st.session_state.pop_field_index = pop_fields.index(sel_pop_field)
         filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == sel_pop_field].copy()
         if "Comments" not in filtered_pop.columns:
             filtered_pop["Comments"] = ""
-        # Make all columns read-only except "Comments"
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
         gb_pop.configure_default_column(editable=False)
         gb_pop.configure_column("Comments", editable=True)
@@ -257,21 +254,21 @@ def main():
             key="pop_grid"
         )
         sel_pop = pop_res.get("selectedRows", [])
-        # --- SQL Logic Display Section ---
+        # --- View SQL Logic Section ---
         if sel_pop:
             pop_field = sel_pop[0].get("Field Name")
             pop_value = sel_pop[0].get("Value Label")
-            # Do not display SQL logic for the total row.
             if pop_value != "Current period total":
-                # Use the original Data sheet (st.session_state.df_data)
+                # Filter original data for matching pop_comp row
                 orig = st.session_state.df_data
-                # Filter for analysis_type "pop_comp" and matching field and value label
-                matching = orig[(orig["analysis_type"] == "pop_comp") &
-                                (orig["field_name"] == pop_field) &
-                                (orig["value_label"] == pop_value)]
-                sql_texts = matching["value_sql_logic"].unique()
-                if sql_texts.size > 0:
-                    st.text_area("Value SQL Logic", "\n".join(sql_texts), height=150)
+                match = orig[
+                    (orig["analysis_type"] == "pop_comp") &
+                    (orig["field_name"] == pop_field) &
+                    (orig["value_label"] == pop_value)
+                ]
+                sql_vals = match["value_sql_logic"].unique()
+                if sql_vals.size > 0:
+                    st.text_area("Value SQL Logic", "\n".join(sql_vals), height=150)
                 else:
                     st.text_area("Value SQL Logic", "No SQL Logic found", height=150)
         
