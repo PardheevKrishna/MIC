@@ -9,7 +9,7 @@ from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
-# --- Custom CSS to wrap header text and remove extra margin ---
+# Custom CSS for header wrapping and full container usage
 st.markdown("""
     <style>
         .ag-header-cell-label {
@@ -24,7 +24,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Utility: Compute grid height dynamically ---
 def compute_grid_height(df, row_height=30, header_height=35):
     n = len(df)
     if n == 0:
@@ -104,7 +103,12 @@ def generate_distribution_df(df, analysis_type, date1):
     grouped = sub.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
         return pd.DataFrame()
-    pivot = grouped.pivot_table(index=['field_name', 'value_label'], columns='month', values='value_records', fill_value=0)
+    pivot = grouped.pivot_table(
+        index=['field_name', 'value_label'],
+        columns='month',
+        values='value_records',
+        fill_value=0
+    )
     pivot = pivot.reindex(columns=months, fill_value=0)
     frames = []
     for field, sub_df in pivot.groupby(level=0):
@@ -153,7 +157,8 @@ st.write("Working Directory:", os.getcwd())
 
 def main():
     st.sidebar.title("File & Date Selection")
-    folder = st.sidebar.selectbox("Select Folder", ["BDCOM", "WFHMSA"])
+    # Add folder options including "BCards"
+    folder = st.sidebar.selectbox("Select Folder", ["BDCOM", "WFHMSA", "BCards"])
     folder_path = os.path.join(os.getcwd(), folder)
     st.sidebar.write(f"Folder path: {folder_path}")
     if not os.path.exists(folder_path):
@@ -197,18 +202,26 @@ def main():
             editable=False,
             cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
         )
+        # Format numeric columns
         for col in sum_df.columns:
             if col not in ["Field Name", "Comments"]:
                 if "Change" in col:
                     gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')")
                 else:
                     gb_sum.configure_column(col, valueFormatter="(params.value != null ? params.value.toLocaleString() : '')")
-        for c in gb_sum.build()["columnDefs"]:
+        # Wrap header text
+        sum_opts = gb_sum.build()
+        if isinstance(sum_opts, list):
+            sum_opts = {"columnDefs": sum_opts}
+        for c in sum_opts["columnDefs"]:
             if "headerName" in c:
                 c["headerName"] = "\n".join(c["headerName"].split())
         gb_sum.configure_selection("single", use_checkbox=False)
         sum_opts = gb_sum.build()
+        if isinstance(sum_opts, list):
+            sum_opts = {"columnDefs": sum_opts}
         sum_opts["rowSelection"] = "single"
+        sum_opts["pagination"] = False  # dynamic height
         sum_height = compute_grid_height(sum_df, row_height=30, header_height=35)
         st.subheader("Summary")
         sum_res = AgGrid(
@@ -271,11 +284,11 @@ def main():
             cellStyle={'white-space': 'normal', 'line-height': '1.2em'}
         )
         gb_pop.configure_column("Comments", editable=True)
-        for c in gb_pop.build()["columnDefs"]:
-            if "headerName" in c:
-                c["headerName"] = "\n".join(c["headerName"].split())
         gb_pop.configure_selection("single", use_checkbox=False)
         pop_opts = gb_pop.build()
+        for c in pop_opts["columnDefs"]:
+            if "headerName" in c:
+                c["headerName"] = "\n".join(c["headerName"].split())
         pop_opts["rowSelection"] = "single"
         pop_height = compute_grid_height(filtered_pop, row_height=30, header_height=35)
         pop_res = AgGrid(
@@ -289,7 +302,7 @@ def main():
         )
         sel_pop = pop_res.get("selectedRows", [])
         
-        # --- View SQL Logic Section (via Dropdowns) ---
+        # --- View SQL Logic Section (via dropdowns) ---
         st.subheader("View SQL Logic")
         orig = st.session_state.df_data
         pop_orig = orig[orig["analysis_type"] == "pop_comp"]
@@ -326,12 +339,6 @@ def main():
             file_name="FRY14M_Field_Analysis_Report.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-def compute_grid_height(df, row_height=30, header_height=35):
-    n = len(df)
-    if n == 0:
-        return header_height + 20
-    return min(n, 30)*row_height + header_height
 
 if __name__ == "__main__":
     main()
