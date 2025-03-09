@@ -83,6 +83,7 @@ def generate_summary_df(df_data, date1, date2):
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     df["Missing % Change"] = df.apply(lambda r: ((r[m1] - r[m2]) / r[m2] * 100) if r[m2] != 0 else None, axis=1)
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1] - r[d2]) / r[d2] * 100) if r[d2] != 0 else None, axis=1)
+    # Reorder columns so percentage columns follow their related value columns
     new_order = [
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
@@ -230,13 +231,16 @@ def main():
             height=sum_height,
             use_container_width=True
         )
-        # When a comment is added in Summary, propagate it to value distribution and population comparison dataframes.
+        # Updated summary data after user edits
         updated_sum = pd.DataFrame(sum_res["data"])
         st.session_state.summary_df = updated_sum
-        for field in updated_sum["Field Name"].unique():
-            comment = updated_sum.loc[updated_sum["Field Name"] == field, "Comment"].iloc[0]
-            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"] == field, "Comment"] = comment
-            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"] == field, "Comment"] = comment
+
+        # Propagate summary "Comment" to value_dist_df and pop_comp_df by matching Field Name
+        for field_name in updated_sum["Field Name"].unique():
+            comment_for_field = updated_sum.loc[updated_sum["Field Name"] == field_name, "Comment"].iloc[0]
+            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"] == field_name, "Comment"] = comment_for_field
+            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"] == field_name, "Comment"] = comment_for_field
+
         sel_sum = sum_res.get("selectedRows", [])
         if sel_sum:
             st.session_state.active_field = sel_sum[0].get("Field Name")
@@ -280,10 +284,14 @@ def main():
             height=val_height,
             use_container_width=True
         )
-        # Preselect the value label from the selected row in the Value Distribution grid
-        sel_val = val_res.get("selectedRows", [])
-        preselect_val_label = sel_val[0]["Value Label"] if sel_val and "Value Label" in sel_val[0] else None
-        
+        # Capture the selected row in Value Distribution
+        val_selected = val_res.get("selectedRows", [])
+        preselect_val_label = val_selected[0]["Value Label"] if val_selected and "Value Label" in val_selected[0] else None
+
+        # Update st.session_state.value_dist_df with new comment changes
+        updated_val = pd.DataFrame(val_res["data"])
+        st.session_state.value_dist_df.update(updated_val)
+
         # --- Population Comparison Grid ---
         st.subheader("Population Comparison")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
@@ -323,20 +331,23 @@ def main():
             height=pop_height,
             use_container_width=True
         )
-        sel_pop = pop_res.get("selectedRows", [])
+        pop_selected = pop_res.get("selectedRows", [])
+
+        # Update st.session_state.pop_comp_df with new comment changes
+        updated_pop = pd.DataFrame(pop_res["data"])
+        st.session_state.pop_comp_df.update(updated_pop)
         
-        # --- View SQL Logic Section for Population Comparison ---
+        # --- View SQL Logic Section (Population Comparison) ---
         st.subheader("View SQL Logic (Population Comparison)")
-        orig = st.session_state.df_data
-        pop_orig = orig[orig["analysis_type"] == "pop_comp"]
+        pop_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"] == "pop_comp"]
         pop_orig_field = pop_orig[pop_orig["field_name"] == selected_pop_field]
         pop_val_labels = pop_orig_field["value_label"].dropna().unique().tolist()
         if not pop_val_labels:
             st.write("No Value Labels available for SQL Logic (Pop Comp).")
         else:
-            # Preselect the value label from the selected row in Value Distribution if available, else default to first.
-            default_pop_val = preselect_val_label if preselect_val_label in pop_val_labels else pop_val_labels[0]
-            sel_pop_val_label = st.selectbox("Select Value Label (Pop Comp)", pop_val_labels, index=pop_val_labels.index(default_pop_val), key="pop_sql_val_label")
+            # If we have a preselect_val_label from Value Dist, we try to match it here
+            default_pop_val = preselect_val_label if preselect_val_label in pop_val_labels else pop_val_labels[0] if pop_val_labels else None
+            sel_pop_val_label = st.selectbox("Select Value Label (Pop Comp)", pop_val_labels, index=pop_val_labels.index(default_pop_val) if default_pop_val else 0, key="pop_sql_val_label")
             months = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
             months = sorted(months, reverse=True)
             month_options = [m.strftime("%Y-%m") for m in months]
@@ -351,18 +362,17 @@ def main():
                     st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
                 else:
                     st.text_area("Value SQL Logic (Pop Comp)", "No SQL Logic found", height=150)
-        
-        # --- View SQL Logic Section for Value Distribution ---
+
+        # --- View SQL Logic Section (Value Distribution) ---
         st.subheader("View SQL Logic (Value Distribution)")
-        orig_val = st.session_state.df_data
-        val_orig = orig_val[orig_val["analysis_type"] == "value_dist"]
+        val_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"] == "value_dist"]
         val_orig_field = val_orig[val_orig["field_name"] == selected_val_field]
         val_val_labels = val_orig_field["value_label"].dropna().unique().tolist()
         if not val_val_labels:
             st.write("No Value Labels available for SQL Logic (Value Dist).")
         else:
-            default_val_val = preselect_val_label if preselect_val_label in val_val_labels else val_val_labels[0]
-            sel_val_val_label = st.selectbox("Select Value Label (Value Dist)", val_val_labels, index=val_val_labels.index(default_val_val), key="val_sql_val_label")
+            default_val_val = preselect_val_label if preselect_val_label in val_val_labels else val_val_labels[0] if val_val_labels else None
+            sel_val_val_label = st.selectbox("Select Value Label (Value Dist)", val_val_labels, index=val_val_labels.index(default_val_val) if default_val_val else 0, key="val_sql_val_label")
             months_val = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
             months_val = sorted(months_val, reverse=True)
             month_options_val = [m.strftime("%Y-%m") for m in months_val]
@@ -382,7 +392,7 @@ def main():
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
             export_sum = st.session_state.summary_df.copy()
-            # Extract comment column and then drop it from export data
+            # Extract single comment column
             comments = export_sum["Comment"]
             export_sum = export_sum.drop(columns=["Comment"])
             export_sum.to_excel(writer, index=False, sheet_name="Summary")
@@ -390,9 +400,10 @@ def main():
             st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
             workbook = writer.book
             sheet = writer.sheets["Summary"]
-            for i, comm in comments.iteritems():
+            # Add each comment as a cell note in the Summary sheet
+            for i, comm in comments.items():  # <-- changed .iteritems() to .items()
                 excel_row = i + 2
-                # Assume the comment column is the last column
+                # Put the comment in the last column of the summary
                 excel_col = export_sum.shape[1]
                 cell = sheet.cell(row=excel_row, column=excel_col)
                 if str(comm).strip():
