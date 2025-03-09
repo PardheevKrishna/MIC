@@ -8,6 +8,8 @@ import re
 from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+from openpyxl import load_workbook
+from openpyxl.comments import Comment
 
 # Custom CSS for header wrapping and full container usage
 st.markdown("""
@@ -81,6 +83,7 @@ def generate_summary_df(df_data, date1, date2):
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     df["Missing % Change"] = df.apply(lambda r: ((r[m1] - r[m2]) / r[m2] * 100) if r[m2] != 0 else None, axis=1)
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1] - r[d2]) / r[d2] * 100) if r[d2] != 0 else None, axis=1)
+    # Reorder columns so percentage columns follow their related value columns
     new_order = [
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
@@ -90,7 +93,11 @@ def generate_summary_df(df_data, date1, date2):
         "Month-to-Month % Change",
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ]
-    return df[new_order]
+    df = df[new_order]
+    # Add comment columns for every numeric column (except Field Name)
+    for col in new_order[1:]:
+        df[col + " Comment"] = ""
+    return df
 
 def generate_distribution_df(df, analysis_type, date1):
     months = [(date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
@@ -188,27 +195,28 @@ def main():
         # --- Summary Grid ---
         sum_df = st.session_state.summary_df.copy()
         if "Comments" not in sum_df.columns:
-            sum_df["Comments"] = ""
+            # There are comment columns for each numeric column already added in generate_summary_df
+            pass
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
         gb_sum.configure_default_column(
             editable=False,
-            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 25}
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 150}
         )
         for col in sum_df.columns:
             if col not in ["Field Name", "Comments"]:
                 if "Change" in col:
-                    gb_sum.configure_column(col, type=["numericColumn"], valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')", width=25)
+                    gb_sum.configure_column(col, type=["numericColumn"], valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')", width=150, minWidth=100, maxWidth=200)
                 else:
-                    gb_sum.configure_column(col, type=["numericColumn"], valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')", width=25)
+                    gb_sum.configure_column(col, type=["numericColumn"], valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')", width=150, minWidth=100, maxWidth=200)
         sum_opts = gb_sum.build()
         if isinstance(sum_opts, list):
             sum_opts = {"columnDefs": sum_opts}
         for c in sum_opts["columnDefs"]:
             if "headerName" in c:
                 c["headerName"] = "\n".join(c["headerName"].split())
-                c["width"] = 25
-                c["minWidth"] = 25
-                c["maxWidth"] = 25
+                c["width"] = 150
+                c["minWidth"] = 100
+                c["maxWidth"] = 200
         gb_sum.configure_selection("single", use_checkbox=False)
         sum_opts["rowSelection"] = "single"
         sum_opts["pagination"] = False
@@ -241,9 +249,9 @@ def main():
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
         gb_val.configure_default_column(
             editable=False,
-            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 25}
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 150}
         )
-        gb_val.configure_column("Comments", editable=True, width=25)
+        gb_val.configure_column("Comments", editable=True, width=150, minWidth=100, maxWidth=200)
         gb_val.configure_selection("single", use_checkbox=False)
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
@@ -251,9 +259,9 @@ def main():
         for c in val_opts["columnDefs"]:
             if "headerName" in c:
                 c["headerName"] = "\n".join(c["headerName"].split())
-                c["width"] = 25
-                c["minWidth"] = 25
-                c["maxWidth"] = 25
+                c["width"] = 150
+                c["minWidth"] = 100
+                c["maxWidth"] = 200
         val_opts["rowSelection"] = "single"
         val_opts["pagination"] = False
         val_opts["rowHeight"] = 40
@@ -281,9 +289,9 @@ def main():
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
         gb_pop.configure_default_column(
             editable=False,
-            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 25}
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 150}
         )
-        gb_pop.configure_column("Comments", editable=True, width=25)
+        gb_pop.configure_column("Comments", editable=True, width=150, minWidth=100, maxWidth=200)
         gb_pop.configure_selection("single", use_checkbox=False)
         pop_opts = gb_pop.build()
         if isinstance(pop_opts, list):
@@ -291,9 +299,9 @@ def main():
         for c in pop_opts["columnDefs"]:
             if "headerName" in c:
                 c["headerName"] = "\n".join(c["headerName"].split())
-                c["width"] = 25
-                c["minWidth"] = 25
-                c["maxWidth"] = 25
+                c["width"] = 150
+                c["minWidth"] = 100
+                c["maxWidth"] = 200
         pop_opts["rowSelection"] = "single"
         pop_opts["pagination"] = False
         pop_opts["rowHeight"] = 40
@@ -310,8 +318,8 @@ def main():
         )
         sel_pop = pop_res.get("selectedRows", [])
         
-        # --- View SQL Logic Section (via Dropdowns) ---
-        st.subheader("View SQL Logic")
+        # --- View SQL Logic Section (via Dropdowns) for Population Comparison ---
+        st.subheader("View SQL Logic (Population Comparison)")
         orig = st.session_state.df_data
         pop_orig = orig[orig["analysis_type"] == "pop_comp"]
         pop_orig_field = pop_orig[pop_orig["field_name"] == selected_pop_field]
@@ -319,28 +327,71 @@ def main():
         if not val_labels:
             st.write("No Value Labels available for SQL Logic.")
         else:
-            sel_val_label = st.selectbox("Select Value Label", val_labels, key="sql_val_label")
+            sel_val_label = st.selectbox("Select Value Label", val_labels, key="pop_sql_val_label")
             months = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
             months = sorted(months, reverse=True)
             month_options = [m.strftime("%Y-%m") for m in months]
-            sel_month = st.selectbox("Select Month", month_options, key="sql_month")
-            if st.button("Show SQL Logic"):
+            sel_month = st.selectbox("Select Month", month_options, key="pop_sql_month")
+            if st.button("Show SQL Logic (Pop Comp)"):
                 matches = pop_orig_field[
                     (pop_orig_field["value_label"] == sel_val_label) &
                     (pop_orig_field["filemonth_dt"].dt.strftime("%Y-%m") == sel_month)
                 ]
                 sql_vals = matches["value_sql_logic"].dropna().unique()
                 if sql_vals.size > 0:
-                    st.text_area("Value SQL Logic", "\n".join(sql_vals), height=150)
+                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
                 else:
-                    st.text_area("Value SQL Logic", "No SQL Logic found", height=150)
+                    st.text_area("Value SQL Logic (Pop Comp)", "No SQL Logic found", height=150)
         
-        # --- Excel Download ---
+        # --- View SQL Logic Section (via Dropdowns) for Value Distribution ---
+        st.subheader("View SQL Logic (Value Distribution)")
+        orig_val = st.session_state.df_data
+        val_orig = orig_val[orig_val["analysis_type"] == "value_dist"]
+        val_orig_field = val_orig[val_orig["field_name"] == selected_val_field]
+        val_labels_val = val_orig_field["value_label"].dropna().unique().tolist()
+        if not val_labels_val:
+            st.write("No Value Labels available for SQL Logic.")
+        else:
+            sel_val_label_val = st.selectbox("Select Value Label", val_labels_val, key="val_sql_val_label")
+            months_val = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
+            months_val = sorted(months_val, reverse=True)
+            month_options_val = [m.strftime("%Y-%m") for m in months_val]
+            sel_month_val = st.selectbox("Select Month", month_options_val, key="val_sql_month")
+            if st.button("Show SQL Logic (Value Dist)"):
+                matches_val = val_orig_field[
+                    (val_orig_field["value_label"] == sel_val_label_val) &
+                    (val_orig_field["filemonth_dt"].dt.strftime("%Y-%m") == sel_month_val)
+                ]
+                sql_vals_val = matches_val["value_sql_logic"].dropna().unique()
+                if sql_vals_val.size > 0:
+                    st.text_area("Value SQL Logic (Value Dist)", "\n".join(sql_vals_val), height=150)
+                else:
+                    st.text_area("Value SQL Logic (Value Dist)", "No SQL Logic found", height=150)
+        
+        # --- Excel Download with Cell Comments for Summary ---
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
-            st.session_state.summary_df.to_excel(writer, index=False, sheet_name="Summary")
+            # Export summary without the comment columns
+            export_sum = st.session_state.summary_df.copy()
+            # Extract comment columns and then drop them
+            comment_cols = [col for col in export_sum.columns if "Comment" in col]
+            comments = export_sum[comment_cols]
+            export_sum = export_sum.drop(columns=comment_cols)
+            export_sum.to_excel(writer, index=False, sheet_name="Summary")
             st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
             st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
+            workbook  = writer.book
+            sheet = writer.sheets["Summary"]
+            # Now add comments from the summary grid to the corresponding cells in the Summary sheet
+            # (Assuming the order of rows is maintained.)
+            for i, row in comments.iterrows():
+                # Start from row 2 in Excel (1-indexed, row 1 is header)
+                excel_row = i + 2
+                for j, col in enumerate(comments.columns, start=2): # starting from column 2 (B)
+                    cell = sheet.cell(row=excel_row, column=j)
+                    comment_text = str(row[col])
+                    if comment_text.strip():
+                        cell.comment = Comment(comment_text, "User")
         st.download_button(
             "Download Report as Excel",
             data=out_buf.getvalue(),
