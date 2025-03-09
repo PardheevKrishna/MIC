@@ -293,6 +293,7 @@ def main():
                 c["minWidth"] = 100
                 c["maxWidth"] = 200
 
+        # KEY CHANGE: Use SELECTION_CHANGED so row selection triggers a re-run
         gb_sum.configure_selection("single", use_checkbox=False)
         sum_opts["rowSelection"] = "single"
         sum_opts["pagination"] = False
@@ -304,7 +305,7 @@ def main():
         sum_res = AgGrid(
             sum_df,
             gridOptions=sum_opts,
-            update_mode=GridUpdateMode.VALUE_CHANGED,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,  # triggers re-run on row select
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="sum_grid",
             height=sum_height,
@@ -326,18 +327,25 @@ def main():
 
         sel_sum = sum_res.get("selectedRows", [])
         if sel_sum:
-            st.session_state.active_field = sel_sum[0].get("Field Name")
+            new_field = sel_sum[0].get("Field Name")
+            # Only re-run if the field changed
+            if new_field != st.session_state.active_field:
+                st.session_state.active_field = new_field
+                st.experimental_rerun()
 
         # --------------------------------------------------------------------
         # Value Distribution Grid
         # --------------------------------------------------------------------
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
-        # Active field logic
-        active_val = st.session_state.active_field if st.session_state.get("active_field") in val_fields else val_fields[0]
+        # If no active_field, pick the first field from val_fields
+        if st.session_state.active_field and (st.session_state.active_field in val_fields):
+            active_val = st.session_state.active_field
+        else:
+            active_val = val_fields[0] if val_fields else None
 
         selected_val_field = st.selectbox("Field (Value Dist)", val_fields,
-                                          index=val_fields.index(active_val),
+                                          index=val_fields.index(active_val) if active_val in val_fields else 0,
                                           key="val_select")
         st.session_state.active_field = selected_val_field
 
@@ -375,7 +383,7 @@ def main():
         val_res = AgGrid(
             filtered_val,
             gridOptions=val_opts,
-            update_mode=GridUpdateMode.VALUE_CHANGED,
+            update_mode=GridUpdateMode.VALUE_CHANGED,  # we only want to capture edits, not re-run
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="val_grid",
             height=val_height,
@@ -400,10 +408,14 @@ def main():
         # --------------------------------------------------------------------
         st.subheader("Population Comparison")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
-        active_pop = st.session_state.active_field if st.session_state.get("active_field") in pop_fields else pop_fields[0]
+
+        if st.session_state.active_field and (st.session_state.active_field in pop_fields):
+            active_pop = st.session_state.active_field
+        else:
+            active_pop = pop_fields[0] if pop_fields else None
 
         selected_pop_field = st.selectbox("Field (Pop Comp)", pop_fields,
-                                          index=pop_fields.index(active_pop),
+                                          index=pop_fields.index(active_pop) if active_pop in pop_fields else 0,
                                           key="pop_select")
         st.session_state.active_field = selected_pop_field
 
@@ -536,8 +548,16 @@ def main():
                     st.text_area("Value SQL Logic (Value Dist)", "No SQL Logic found", height=150)
 
         # --------------------------------------------------------------------
-        # Excel Download with Cell Comments for ALL Sheets
+        # Excel Download with Cell Comments in the date1 Column
         # --------------------------------------------------------------------
+        # The user specifically asked for the comment to be added in the column with date1:
+        #   - In the Summary sheet, that's "Missing Values (date1)"
+        #   - In the Dist/Pop sheets, that's the flatten column named "YYYY-MM Sum" for date1.
+
+        summary_date1_col_name = f"Missing Values ({st.session_state.date1.strftime('%Y-%m-%d')})"
+        dist_date1_col_name    = f"{st.session_state.date1.strftime('%Y-%m')} Sum"  # e.g. "2025-01 Sum"
+        pop_date1_col_name     = f"{st.session_state.date1.strftime('%Y-%m')} Sum"
+
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
             # 1) Summary
@@ -558,31 +578,43 @@ def main():
             export_pop_comp.drop(columns=["Comment"], inplace=True, errors="ignore")
             export_pop_comp.to_excel(writer, index=False, sheet_name="Population Comparison")
 
-            # Now add each comment as a cell note in the last column of each sheet
             workbook = writer.book
 
-            # Summary comments
+            # ------------------- Add Comments to Summary (date1 column) -------------------
             sheet_sum = writer.sheets["Summary"]
-            sum_col_count = export_sum.shape[1]  # last column index (since 'Comment' was dropped)
+            # Safely find the date1 column index, fallback to last column if not found
+            if summary_date1_col_name in export_sum.columns:
+                sum_col_idx = export_sum.columns.get_loc(summary_date1_col_name) + 1  # +1 for Excel index
+            else:
+                sum_col_idx = export_sum.shape[1]  # fallback to last column
+
             for row_idx, comm_text in enumerate(sum_comments, start=2):
                 if str(comm_text).strip():
-                    cell = sheet_sum.cell(row=row_idx, column=sum_col_count)
+                    cell = sheet_sum.cell(row=row_idx, column=sum_col_idx)
                     cell.comment = Comment(str(comm_text), "User")
 
-            # Value Distribution comments
+            # ------------------- Add Comments to Value Distribution (date1 column) -------------------
             sheet_val = writer.sheets["Value Distribution"]
-            val_col_count = export_val_dist.shape[1]
+            if dist_date1_col_name in export_val_dist.columns:
+                val_col_idx = export_val_dist.columns.get_loc(dist_date1_col_name) + 1
+            else:
+                val_col_idx = export_val_dist.shape[1]
+
             for row_idx, comm_text in enumerate(val_dist_comments, start=2):
                 if str(comm_text).strip():
-                    cell = sheet_val.cell(row=row_idx, column=val_col_count)
+                    cell = sheet_val.cell(row=row_idx, column=val_col_idx)
                     cell.comment = Comment(str(comm_text), "User")
 
-            # Population Comparison comments
+            # ------------------- Add Comments to Population Comparison (date1 column) -------------------
             sheet_pop = writer.sheets["Population Comparison"]
-            pop_col_count = export_pop_comp.shape[1]
+            if pop_date1_col_name in export_pop_comp.columns:
+                pop_col_idx = export_pop_comp.columns.get_loc(pop_date1_col_name) + 1
+            else:
+                pop_col_idx = export_pop_comp.shape[1]
+
             for row_idx, comm_text in enumerate(pop_comp_comments, start=2):
                 if str(comm_text).strip():
-                    cell = sheet_pop.cell(row=row_idx, column=pop_col_count)
+                    cell = sheet_pop.cell(row=row_idx, column=pop_col_idx)
                     cell.comment = Comment(str(comm_text), "User")
 
         st.download_button(
