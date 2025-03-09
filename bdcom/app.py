@@ -42,6 +42,7 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     rows = []
     for field in fields:
+        # Missing for date1
         mask_miss_d1 = (
             (df_data['analysis_type'] == 'value_dist') &
             (df_data['field_name'] == field) &
@@ -50,6 +51,7 @@ def generate_summary_df(df_data, date1, date2):
         )
         missing_d1 = df_data.loc[mask_miss_d1, 'value_records'].sum()
 
+        # Missing for date2
         mask_miss_d2 = (
             (df_data['analysis_type'] == 'value_dist') &
             (df_data['field_name'] == field) &
@@ -70,6 +72,7 @@ def generate_summary_df(df_data, date1, date2):
                     return True
             return False
 
+        # Pop comp for date1
         mask_pop_d1 = (
             (df_data['analysis_type'] == 'pop_comp') &
             (df_data['field_name'] == field) &
@@ -78,6 +81,7 @@ def generate_summary_df(df_data, date1, date2):
         )
         pop_d1 = df_data.loc[mask_pop_d1, 'value_records'].sum()
 
+        # Pop comp for date2
         mask_pop_d2 = (
             (df_data['analysis_type'] == 'pop_comp') &
             (df_data['field_name'] == field) &
@@ -381,9 +385,9 @@ def main():
         # Capture the selected row in Value Distribution
         val_selected = val_res.get("selectedRows", [])
         if not val_selected and not filtered_val.empty:
-            preselect_val_label = filtered_val.iloc[0]["Value Label"]
+            preselect_val_label_dist = filtered_val.iloc[0]["Value Label"]
         else:
-            preselect_val_label = (
+            preselect_val_label_dist = (
                 val_selected[0]["Value Label"] if val_selected and "Value Label" in val_selected[0] else None
             )
 
@@ -444,6 +448,12 @@ def main():
             use_container_width=True
         )
         pop_selected = pop_res.get("selectedRows", [])
+        if not pop_selected and not filtered_pop.empty:
+            preselect_val_label_pop = filtered_pop.iloc[0]["Value Label"]
+        else:
+            preselect_val_label_pop = (
+                pop_selected[0]["Value Label"] if pop_selected and "Value Label" in pop_selected[0] else None
+            )
 
         # Update st.session_state.pop_comp_df with new comment changes
         updated_pop = pd.DataFrame(pop_res["data"])
@@ -461,8 +471,8 @@ def main():
             st.write("No Value Labels available for SQL Logic (Pop Comp).")
         else:
             default_pop_val = (
-                preselect_val_label
-                if preselect_val_label in pop_val_labels
+                preselect_val_label_pop
+                if (preselect_val_label_pop in pop_val_labels)
                 else (pop_val_labels[0] if pop_val_labels else None)
             )
             sel_pop_val_label = st.selectbox(
@@ -499,8 +509,8 @@ def main():
             st.write("No Value Labels available for SQL Logic (Value Dist).")
         else:
             default_val_val = (
-                preselect_val_label
-                if preselect_val_label in val_val_labels
+                preselect_val_label_dist
+                if (preselect_val_label_dist in val_val_labels)
                 else (val_val_labels[0] if val_val_labels else None)
             )
             sel_val_val_label = st.selectbox(
@@ -526,30 +536,53 @@ def main():
                     st.text_area("Value SQL Logic (Value Dist)", "No SQL Logic found", height=150)
 
         # --------------------------------------------------------------------
-        # Excel Download with Cell Comments for Summary
+        # Excel Download with Cell Comments for ALL Sheets
         # --------------------------------------------------------------------
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
+            # 1) Summary
             export_sum = st.session_state.summary_df.copy()
-
-            # Extract single comment column as a list
-            comments_list = export_sum["Comment"].tolist()
-            # Drop the comment column from the DataFrame
-            export_sum.drop(columns=["Comment"], inplace=True)
-
-            # Write each sheet
+            sum_comments = export_sum["Comment"].tolist()
+            export_sum.drop(columns=["Comment"], inplace=True, errors="ignore")
             export_sum.to_excel(writer, index=False, sheet_name="Summary")
-            st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
-            st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
 
+            # 2) Value Distribution
+            export_val_dist = st.session_state.value_dist_df.copy()
+            val_dist_comments = export_val_dist["Comment"].tolist()
+            export_val_dist.drop(columns=["Comment"], inplace=True, errors="ignore")
+            export_val_dist.to_excel(writer, index=False, sheet_name="Value Distribution")
+
+            # 3) Population Comparison
+            export_pop_comp = st.session_state.pop_comp_df.copy()
+            pop_comp_comments = export_pop_comp["Comment"].tolist()
+            export_pop_comp.drop(columns=["Comment"], inplace=True, errors="ignore")
+            export_pop_comp.to_excel(writer, index=False, sheet_name="Population Comparison")
+
+            # Now add each comment as a cell note in the last column of each sheet
             workbook = writer.book
-            sheet = writer.sheets["Summary"]
 
-            # Add each comment as a cell note in the Summary sheet
-            excel_col = export_sum.shape[1]  # the last column (since we dropped 'Comment')
-            for row_idx, comm_text in enumerate(comments_list, start=2):
+            # Summary comments
+            sheet_sum = writer.sheets["Summary"]
+            sum_col_count = export_sum.shape[1]  # last column index (since 'Comment' was dropped)
+            for row_idx, comm_text in enumerate(sum_comments, start=2):
                 if str(comm_text).strip():
-                    cell = sheet.cell(row=row_idx, column=excel_col)
+                    cell = sheet_sum.cell(row=row_idx, column=sum_col_count)
+                    cell.comment = Comment(str(comm_text), "User")
+
+            # Value Distribution comments
+            sheet_val = writer.sheets["Value Distribution"]
+            val_col_count = export_val_dist.shape[1]
+            for row_idx, comm_text in enumerate(val_dist_comments, start=2):
+                if str(comm_text).strip():
+                    cell = sheet_val.cell(row=row_idx, column=val_col_count)
+                    cell.comment = Comment(str(comm_text), "User")
+
+            # Population Comparison comments
+            sheet_pop = writer.sheets["Population Comparison"]
+            pop_col_count = export_pop_comp.shape[1]
+            for row_idx, comm_text in enumerate(pop_comp_comments, start=2):
+                if str(comm_text).strip():
+                    cell = sheet_pop.cell(row=row_idx, column=pop_col_count)
                     cell.comment = Comment(str(comm_text), "User")
 
         st.download_button(
