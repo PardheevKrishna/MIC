@@ -14,21 +14,6 @@ from openpyxl.comments import Comment
 if "sql_logic_value" not in st.session_state:
     st.session_state["sql_logic_value"] = ""
 
-# Custom CSS for header wrapping and full container usage
-st.markdown("""
-    <style>
-        .ag-header-cell-label {
-            white-space: pre-wrap !important;
-            text-align: center;
-            line-height: 1.2em;
-        }
-        .ag-root-wrapper {
-            margin: 0 !important;
-            padding: 0 !important;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
 def compute_grid_height(df, row_height=40, header_height=80):
     n = len(df)
     if n == 0:
@@ -104,6 +89,7 @@ def generate_summary_df(df_data, date1, date2):
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ]
     df = df[new_order]
+    # Add one editable "Comment" column
     df["Comment"] = ""
     return df
 
@@ -213,11 +199,11 @@ def main():
             if col not in ["Field Name", "Comment"]:
                 if "Change" in col:
                     gb_sum.configure_column(col, type=["numericColumn"],
-                        valueFormatter="(params.value!=null ? params.value.toFixed(2)+'%' : '')",
+                        valueFormatter="(params.value != null ? params.value.toFixed(2)+'%' : '')",
                         width=150, minWidth=100, maxWidth=200)
                 else:
                     gb_sum.configure_column(col, type=["numericColumn"],
-                        valueFormatter="(params.value!=null ? params.value.toLocaleString('en-US') : '')",
+                        valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')",
                         width=150, minWidth=100, maxWidth=200)
         sum_opts = gb_sum.build()
         if isinstance(sum_opts, list):
@@ -254,7 +240,7 @@ def main():
                 st.session_state.active_field = new_field
                 st.experimental_rerun()
         
-        # ---- Value Distribution Grid with in-cell "Set SQL" Button ----
+        # ---- Value Distribution Grid with in-table Button ----
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         active_val = st.session_state.active_field if st.session_state.active_field in val_fields else (val_fields[0] if val_fields else None)
@@ -263,28 +249,28 @@ def main():
             key="val_field_select")
         st.session_state.active_field = selected_val_field
         filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==selected_val_field].copy()
-        # Add an Action column with a dummy value so that it appears in the grid.
-        filtered_val["action"] = ""
+        # Add a dummy "Action" column for the in-table button.
+        filtered_val["Action"] = ""
         if "Comment" not in filtered_val.columns:
             filtered_val["Comment"] = ""
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
         gb_val.configure_default_column(editable=False,
             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Configure the "action" column with a custom cell renderer that shows a button.
+        # Configure the Action column with a custom cell renderer that returns an HTML button.
         gb_val.configure_column(
-            "action",
+            "Action",
             headerName="Action",
             cellRenderer="""
-            function(params) {
-                return '<button style="width:100%;">Set SQL</button>';
-            }
+                function(params) {
+                    return '<button style="width:100%;">Set SQL</button>';
+                }
             """,
             editable=False,
             suppressMenu=True,
             width=150, minWidth=100, maxWidth=200
         )
-        # Use CELL_CLICKED update mode so we can capture button clicks.
+        # Set update_mode to CELL_CLICKED so we can capture clicks on the button.
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
             val_opts = {"columnDefs": val_opts}
@@ -296,7 +282,6 @@ def main():
         val_opts["rowHeight"] = 40
         val_opts["headerHeight"] = 80
         val_height = compute_grid_height(filtered_val,40,80)
-        # Set update_mode to CELL_CLICKED to catch clicks in the Action column.
         val_res = AgGrid(
             filtered_val,
             gridOptions=val_opts,
@@ -306,11 +291,11 @@ def main():
             height=val_height,
             use_container_width=True
         )
-        # Check if a cell was clicked in the Action column
-        cell_event = val_res.get("cellClickedEvent", None)
-        if cell_event and cell_event["colDef"]["field"] == "action":
-            # Use the clicked row's "Value Label" to look up SQL logic
-            sel_val_label = cell_event["data"].get("Value Label", "")
+        # If a cell was clicked in the "Action" column, update SQL logic.
+        cell_event = val_res.get("cellClickedEvent")
+        if cell_event and cell_event["colDef"]["field"] == "Action":
+            row_data = cell_event["data"]
+            sel_val_label = row_data.get("Value Label", "")
             matching = st.session_state.df_data[
                 (st.session_state.df_data["analysis_type"]=="value_dist") &
                 (st.session_state.df_data["field_name"]==selected_val_field) &
@@ -392,7 +377,7 @@ def main():
                 ]
                 sql_vals = matches["value_sql_logic"].dropna().unique()
                 if sql_vals.size>0:
-                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals),height=150)
+                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
                 else:
                     st.text_area("Value SQL Logic (Pop Comp)","No SQL Logic found",height=150)
         
