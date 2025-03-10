@@ -10,7 +10,7 @@ from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from openpyxl.comments import Comment
 
-# Initialize SQL logic session state key if not already set.
+# Initialize session state key for SQL logic text if not set.
 if "sql_logic_value" not in st.session_state:
     st.session_state["sql_logic_value"] = ""
 
@@ -92,8 +92,8 @@ def generate_summary_df(df_data, date1, date2):
     m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
     d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
-    df["Missing % Change"] = df.apply(lambda r: ((r[m1]-r[m2])/r[m2]*100) if r[m2]!=0 else None, axis=1)
-    df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2])/r[d2]*100) if r[d2]!=0 else None, axis=1)
+    df["Missing % Change"] = df.apply(lambda r: ((r[m1]-r[m2]) / r[m2] * 100) if r[m2]!=0 else None, axis=1)
+    df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     new_order = [
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
@@ -147,7 +147,7 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str,col)).strip() if isinstance(col,tuple) else col for col in df.columns.values]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -254,7 +254,7 @@ def main():
                 st.session_state.active_field = new_field
                 st.experimental_rerun()
         
-        # ---- Value Distribution Grid ----
+        # ---- Value Distribution Grid with in-cell "Set SQL" Button ----
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         active_val = st.session_state.active_field if st.session_state.active_field in val_fields else (val_fields[0] if val_fields else None)
@@ -263,15 +263,28 @@ def main():
             key="val_field_select")
         st.session_state.active_field = selected_val_field
         filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==selected_val_field].copy()
+        # Add an Action column with a dummy value so that it appears in the grid.
+        filtered_val["action"] = ""
         if "Comment" not in filtered_val.columns:
             filtered_val["Comment"] = ""
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
         gb_val.configure_default_column(editable=False,
             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Instead of checkboxes, we won't rely on row selection.
-        # We'll display a custom button below the grid for each row.
-        gb_val.configure_selection("single", use_checkbox=False)
+        # Configure the "action" column with a custom cell renderer that shows a button.
+        gb_val.configure_column(
+            "action",
+            headerName="Action",
+            cellRenderer="""
+            function(params) {
+                return '<button style="width:100%;">Set SQL</button>';
+            }
+            """,
+            editable=False,
+            suppressMenu=True,
+            width=150, minWidth=100, maxWidth=200
+        )
+        # Use CELL_CLICKED update mode so we can capture button clicks.
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
             val_opts = {"columnDefs": val_opts}
@@ -283,40 +296,33 @@ def main():
         val_opts["rowHeight"] = 40
         val_opts["headerHeight"] = 80
         val_height = compute_grid_height(filtered_val,40,80)
+        # Set update_mode to CELL_CLICKED to catch clicks in the Action column.
         val_res = AgGrid(
             filtered_val,
             gridOptions=val_opts,
-            update_mode=GridUpdateMode.VALUE_CHANGED,
+            update_mode=GridUpdateMode.CELL_CLICKED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="val_grid",
             height=val_height,
             use_container_width=True
         )
+        # Check if a cell was clicked in the Action column
+        cell_event = val_res.get("cellClickedEvent", None)
+        if cell_event and cell_event["colDef"]["field"] == "action":
+            # Use the clicked row's "Value Label" to look up SQL logic
+            sel_val_label = cell_event["data"].get("Value Label", "")
+            matching = st.session_state.df_data[
+                (st.session_state.df_data["analysis_type"]=="value_dist") &
+                (st.session_state.df_data["field_name"]==selected_val_field) &
+                (st.session_state.df_data["value_label"]==sel_val_label)
+            ]["value_sql_logic"].dropna().unique()
+            if matching.size > 0:
+                st.session_state["sql_logic_value"] = "\n".join(matching)
+            else:
+                st.session_state["sql_logic_value"] = "No SQL Logic found"
         updated_val = pd.DataFrame(val_res["data"])
         st.session_state.value_dist_df.update(updated_val)
         
-        # ---- Button-triggered SQL Logic for Value Distribution ----
-        st.subheader("Set SQL Logic (Value Distribution)")
-        # Instead of relying on grid selection, we iterate through each row and add a button.
-        if not filtered_val.empty:
-            for i, row in filtered_val.iterrows():
-                cols = st.columns([1, 4])
-                # Add a button with a unique key for this row
-                if cols[0].button("Set SQL", key=f"set_sql_{i}"):
-                    # Lookup SQL logic from original df_data filtered by analysis_type, Field Name and Value Label.
-                    sel_val_label = row["Value Label"]
-                    matching = st.session_state.df_data[
-                        (st.session_state.df_data["analysis_type"]=="value_dist") &
-                        (st.session_state.df_data["field_name"]==selected_val_field) &
-                        (st.session_state.df_data["value_label"]==sel_val_label)
-                    ]["value_sql_logic"].dropna().unique()
-                    if matching.size > 0:
-                        st.session_state["sql_logic_value"] = "\n".join(matching)
-                    else:
-                        st.session_state["sql_logic_value"] = "No SQL Logic found"
-                cols[1].write(f"Row {i}: Value Label = {row['Value Label']}")
-        else:
-            st.write("No rows to set SQL logic from.")
         st.text_area("SQL Logic (Value Dist)", st.session_state["sql_logic_value"], key="sql_logic_area_val", height=150)
         
         # ---- Population Comparison Grid ----
@@ -386,11 +392,11 @@ def main():
                 ]
                 sql_vals = matches["value_sql_logic"].dropna().unique()
                 if sql_vals.size>0:
-                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
+                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals),height=150)
                 else:
                     st.text_area("Value SQL Logic (Pop Comp)","No SQL Logic found",height=150)
         
-        # ---- Excel Download with Comments as Cell Notes in Summary ----
+        # ---- Excel Download with Summary Comments as Cell Notes ----
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
             export_sum = st.session_state.summary_df.copy()
