@@ -10,6 +10,10 @@ from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from openpyxl.comments import Comment
 
+# Initialize session state key for SQL logic text
+if "sql_logic_value" not in st.session_state:
+    st.session_state["sql_logic_value"] = ""
+
 # Custom CSS for header wrapping and full container usage
 st.markdown("""
     <style>
@@ -38,15 +42,19 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     rows = []
     for field in fields:
-        mask_miss_d1 = ((df_data['analysis_type'] == 'value_dist') &
-                        (df_data['field_name'] == field) &
-                        (df_data['filemonth_dt'] == date1) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_miss_d1 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_d1 = df_data.loc[mask_miss_d1, 'value_records'].sum()
-        mask_miss_d2 = ((df_data['analysis_type'] == 'value_dist') &
-                        (df_data['field_name'] == field) &
-                        (df_data['filemonth_dt'] == date2) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_miss_d2 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_d2 = df_data.loc[mask_miss_d2, 'value_records'].sum()
         phrases = [
             "1\\)   CF Loan - Both Pop, Diff Values",
@@ -58,15 +66,19 @@ def generate_summary_df(df_data, date1, date2):
                 if pd.notna(x) and re.search(pat, x):
                     return True
             return False
-        mask_pop_d1 = ((df_data['analysis_type'] == 'pop_comp') &
-                       (df_data['field_name'] == field) &
-                       (df_data['filemonth_dt'] == date1) &
-                       (df_data['value_label'].apply(contains_phrase)))
+        mask_pop_d1 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].apply(contains_phrase))
+        )
         pop_d1 = df_data.loc[mask_pop_d1, 'value_records'].sum()
-        mask_pop_d2 = ((df_data['analysis_type'] == 'pop_comp') &
-                       (df_data['field_name'] == field) &
-                       (df_data['filemonth_dt'] == date2) &
-                       (df_data['value_label'].apply(contains_phrase)))
+        mask_pop_d2 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].apply(contains_phrase))
+        )
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
     df = pd.DataFrame(rows, columns=[
@@ -80,8 +92,8 @@ def generate_summary_df(df_data, date1, date2):
     m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
     d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
-    df["Missing % Change"] = df.apply(lambda r: ((r[m1]-r[m2])/r[m2]*100) if r[m2]!=0 else None, axis=1)
-    df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2])/r[d2]*100) if r[d2]!=0 else None, axis=1)
+    df["Missing % Change"] = df.apply(lambda r: ((r[m1]-r[m2]) / r[m2] * 100) if r[m2]!=0 else None, axis=1)
+    df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     new_order = [
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
@@ -92,7 +104,6 @@ def generate_summary_df(df_data, date1, date2):
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ]
     df = df[new_order]
-    # Add one Comment column at the end
     df["Comment"] = ""
     return df
 
@@ -105,8 +116,7 @@ def generate_distribution_df(df, analysis_type, date1):
     grouped = sub.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
         return pd.DataFrame()
-    pivot = grouped.pivot_table(index=['field_name', 'value_label'],
-                                columns='month', values='value_records', fill_value=0)
+    pivot = grouped.pivot_table(index=['field_name', 'value_label'], columns='month', values='value_records', fill_value=0)
     pivot = pivot.reindex(columns=months, fill_value=0)
     frames = []
     for field, sub_df in pivot.groupby(level=0):
@@ -136,7 +146,7 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str,col)).strip() if isinstance(col,tuple) else col for col in df.columns.values]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -184,7 +194,7 @@ def main():
         st.session_state.date2 = date2
         st.session_state.active_field = None
 
-    if st.session_state.get("df_data") is not None:
+    if "df_data" in st.session_state:
         st.title("FRY14M Field Analysis Summary Report")
         st.write(f"**Folder:** {st.session_state.folder}")
         st.write(f"**File:** {st.session_state.selected_file}")
@@ -258,7 +268,7 @@ def main():
         gb_val.configure_default_column(editable=False,
             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Add checkbox selection and suppress row click selection so only the checkbox works.
+        # Use checkbox selection
         gb_val.configure_selection("single", use_checkbox=True, suppressRowClickSelection=True)
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
@@ -288,32 +298,25 @@ def main():
         updated_val = pd.DataFrame(val_res["data"])
         st.session_state.value_dist_df.update(updated_val)
 
-        # ---- View SQL Logic (Value Distribution) ----
-        st.subheader("View SQL Logic (Value Distribution)")
-        val_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="value_dist"]
-        val_orig_field = val_orig[val_orig["field_name"]==selected_val_field]
-        val_val_labels = val_orig_field["value_label"].dropna().unique().tolist()
-        if not val_val_labels:
-            st.write("No Value Labels available for SQL Logic (Value Dist).")
-        else:
-            default_val_val = st.session_state.preselect_val_label_dist if (st.session_state.preselect_val_label_dist in val_val_labels) else (val_val_labels[0] if val_val_labels else None)
-            sel_val_val_label = st.selectbox("Select Value Label (Value Dist)", val_val_labels,
-                index=val_val_labels.index(default_val_val) if default_val_val else 0,
-                key="val_sql_val_label")
-            months_val = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
-            months_val = sorted(months_val, reverse=True)
-            month_options_val = [m.strftime("%Y-%m") for m in months_val]
-            sel_val_month = st.selectbox("Select Month (Value Dist)", month_options_val, key="val_sql_month")
-            if st.button("Show SQL Logic (Value Dist)"):
-                matches_val = val_orig_field[
-                    (val_orig_field["value_label"]==sel_val_val_label) &
-                    (val_orig_field["filemonth_dt"].dt.strftime("%Y-%m")==sel_val_month)
-                ]
-                sql_vals_val = matches_val["value_sql_logic"].dropna().unique()
-                if sql_vals_val.size>0:
-                    st.text_area("Value SQL Logic (Value Dist)", "\n".join(sql_vals_val), height=150)
+        # ---- Button-triggered selection for Value Distribution SQL Logic ----
+        st.subheader("Set SQL Logic (Value Distribution)")
+        if st.button("Set SQL Logic (Value Dist)"):
+            selected_rows = val_res.get("selectedRows", [])
+            if selected_rows:
+                sel_val_label = selected_rows[0].get("Value Label")
+                # Look up the SQL logic from the original df_data
+                matching = st.session_state.df_data[
+                    (st.session_state.df_data["analysis_type"]=="value_dist") &
+                    (st.session_state.df_data["field_name"]==st.session_state.active_field) &
+                    (st.session_state.df_data["value_label"]==sel_val_label)
+                ]["value_sql_logic"].dropna().unique()
+                if matching.size>0:
+                    st.session_state["sql_logic_value"] = "\n".join(matching)
                 else:
-                    st.text_area("Value SQL Logic (Value Dist)", "No SQL Logic found", height=150)
+                    st.session_state["sql_logic_value"] = "No SQL Logic found"
+            else:
+                st.session_state["sql_logic_value"] = "No row selected"
+        st.text_area("SQL Logic (Value Dist)", st.session_state["sql_logic_value"], key="sql_logic_area_val", height=150)
 
         # ---- Population Comparison Grid ----
         st.subheader("Population Comparison")
@@ -367,7 +370,7 @@ def main():
         if not pop_val_labels:
             st.write("No Value Labels available for SQL Logic (Pop Comp).")
         else:
-            default_pop_val = st.session_state.preselect_val_label_pop if (st.session_state.preselect_val_label_pop in pop_val_labels) else (pop_val_labels[0] if pop_val_labels else None)
+            default_pop_val = st.session_state.preselect_val_label_pop if st.session_state.preselect_val_label_pop in pop_val_labels else (pop_val_labels[0] if pop_val_labels else None)
             sel_pop_val_label = st.selectbox("Select Value Label (Pop Comp)", pop_val_labels,
                 index=pop_val_labels.index(default_pop_val) if default_pop_val else 0,
                 key="pop_sql_val_label")
@@ -382,11 +385,11 @@ def main():
                 ]
                 sql_vals = matches["value_sql_logic"].dropna().unique()
                 if sql_vals.size>0:
-                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
+                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals),height=150)
                 else:
-                    st.text_area("Value SQL Logic (Pop Comp)", "No SQL Logic found", height=150)
+                    st.text_area("Value SQL Logic (Pop Comp)","No SQL Logic found",height=150)
         
-        # ---- Excel Download with Comments as Cell Notes in Summary ----
+        # ---- Excel Download with Summary Comments as Cell Notes ----
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
             export_sum = st.session_state.summary_df.copy()
@@ -395,7 +398,7 @@ def main():
             export_sum.to_excel(writer, index=False, sheet_name="Summary")
             st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
             st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
-            workbook = writer.book
+            workbook  = writer.book
             sheet = writer.sheets["Summary"]
             for i, comm in sum_comments.items():
                 excel_row = i + 2
@@ -410,5 +413,5 @@ def main():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
