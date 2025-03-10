@@ -10,7 +10,7 @@ from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from openpyxl.comments import Comment
 
-# Initialize session state key for SQL logic text
+# Initialize session state key for SQL logic text if not set.
 if "sql_logic_value" not in st.session_state:
     st.session_state["sql_logic_value"] = ""
 
@@ -92,8 +92,8 @@ def generate_summary_df(df_data, date1, date2):
     m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
     d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
-    df["Missing % Change"] = df.apply(lambda r: ((r[m1]-r[m2]) / r[m2] * 100) if r[m2]!=0 else None, axis=1)
-    df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
+    df["Missing % Change"] = df.apply(lambda r: ((r[m1] - r[m2]) / r[m2] * 100) if r[m2] != 0 else None, axis=1)
+    df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1] - r[d2]) / r[d2] * 100) if r[d2] != 0 else None, axis=1)
     new_order = [
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
@@ -116,7 +116,8 @@ def generate_distribution_df(df, analysis_type, date1):
     grouped = sub.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
         return pd.DataFrame()
-    pivot = grouped.pivot_table(index=['field_name', 'value_label'], columns='month', values='value_records', fill_value=0)
+    pivot = grouped.pivot_table(index=['field_name', 'value_label'],
+                                columns='month', values='value_records', fill_value=0)
     pivot = pivot.reindex(columns=months, fill_value=0)
     frames = []
     for field, sub_df in pivot.groupby(level=0):
@@ -242,17 +243,18 @@ def main():
         )
         updated_sum = pd.DataFrame(sum_res["data"])
         st.session_state.summary_df = updated_sum
+        # Propagate summary comments to other tables based on Field Name
         for field_name in updated_sum["Field Name"].unique():
-            comment_for_field = updated_sum.loc[updated_sum["Field Name"]==field_name, "Comment"].iloc[0]
-            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"]==field_name, "Comment"] = comment_for_field
-            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"]==field_name, "Comment"] = comment_for_field
+            comment = updated_sum.loc[updated_sum["Field Name"]==field_name, "Comment"].iloc[0]
+            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"]==field_name, "Comment"] = comment
+            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"]==field_name, "Comment"] = comment
         sel_sum = sum_res.get("selectedRows", [])
         if sel_sum:
             new_field = sel_sum[0].get("Field Name")
             if new_field != st.session_state.active_field:
                 st.session_state.active_field = new_field
                 st.experimental_rerun()
-
+        
         # ---- Value Distribution Grid ----
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
@@ -268,7 +270,7 @@ def main():
         gb_val.configure_default_column(editable=False,
             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Use checkbox selection
+        # Enable checkbox selection
         gb_val.configure_selection("single", use_checkbox=True, suppressRowClickSelection=True)
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
@@ -284,7 +286,7 @@ def main():
         val_res = AgGrid(
             filtered_val,
             gridOptions=val_opts,
-            update_mode=GridUpdateMode.VALUE_CHANGED,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="val_grid",
             height=val_height,
@@ -297,14 +299,13 @@ def main():
             st.session_state.preselect_val_label_dist = (filtered_val.iloc[0]["Value Label"] if not filtered_val.empty else None)
         updated_val = pd.DataFrame(val_res["data"])
         st.session_state.value_dist_df.update(updated_val)
-
+        
         # ---- Button-triggered selection for Value Distribution SQL Logic ----
         st.subheader("Set SQL Logic (Value Distribution)")
         if st.button("Set SQL Logic (Value Dist)"):
             selected_rows = val_res.get("selectedRows", [])
             if selected_rows:
                 sel_val_label = selected_rows[0].get("Value Label")
-                # Look up the SQL logic from the original df_data
                 matching = st.session_state.df_data[
                     (st.session_state.df_data["analysis_type"]=="value_dist") &
                     (st.session_state.df_data["field_name"]==st.session_state.active_field) &
@@ -317,7 +318,7 @@ def main():
             else:
                 st.session_state["sql_logic_value"] = "No row selected"
         st.text_area("SQL Logic (Value Dist)", st.session_state["sql_logic_value"], key="sql_logic_area_val", height=150)
-
+        
         # ---- Population Comparison Grid ----
         st.subheader("Population Comparison")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
@@ -348,7 +349,7 @@ def main():
         pop_res = AgGrid(
             filtered_pop,
             gridOptions=pop_opts,
-            update_mode=GridUpdateMode.VALUE_CHANGED,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="pop_grid",
             height=pop_height,
@@ -389,7 +390,7 @@ def main():
                 else:
                     st.text_area("Value SQL Logic (Pop Comp)","No SQL Logic found",height=150)
         
-        # ---- Excel Download with Summary Comments as Cell Notes ----
+        # ---- Excel Download with Comments as Cell Notes ----
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
             export_sum = st.session_state.summary_df.copy()
