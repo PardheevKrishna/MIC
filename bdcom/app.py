@@ -10,7 +10,7 @@ from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from openpyxl.comments import Comment
 
-# Initialize session state key for SQL logic text if not set.
+# Initialize SQL logic session state key if not already set.
 if "sql_logic_value" not in st.session_state:
     st.session_state["sql_logic_value"] = ""
 
@@ -92,8 +92,8 @@ def generate_summary_df(df_data, date1, date2):
     m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
     d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
-    df["Missing % Change"] = df.apply(lambda r: ((r[m1] - r[m2]) / r[m2] * 100) if r[m2] != 0 else None, axis=1)
-    df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1] - r[d2]) / r[d2] * 100) if r[d2] != 0 else None, axis=1)
+    df["Missing % Change"] = df.apply(lambda r: ((r[m1]-r[m2])/r[m2]*100) if r[m2]!=0 else None, axis=1)
+    df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2])/r[d2]*100) if r[d2]!=0 else None, axis=1)
     new_order = [
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
@@ -147,7 +147,7 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
+        df.columns = [" ".join(map(str,col)).strip() if isinstance(col,tuple) else col for col in df.columns.values]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -243,11 +243,10 @@ def main():
         )
         updated_sum = pd.DataFrame(sum_res["data"])
         st.session_state.summary_df = updated_sum
-        # Propagate summary comments to other tables based on Field Name
         for field_name in updated_sum["Field Name"].unique():
-            comment = updated_sum.loc[updated_sum["Field Name"]==field_name, "Comment"].iloc[0]
-            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"]==field_name, "Comment"] = comment
-            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"]==field_name, "Comment"] = comment
+            comment_for_field = updated_sum.loc[updated_sum["Field Name"]==field_name, "Comment"].iloc[0]
+            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"]==field_name, "Comment"] = comment_for_field
+            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"]==field_name, "Comment"] = comment_for_field
         sel_sum = sum_res.get("selectedRows", [])
         if sel_sum:
             new_field = sel_sum[0].get("Field Name")
@@ -270,8 +269,9 @@ def main():
         gb_val.configure_default_column(editable=False,
             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Enable checkbox selection
-        gb_val.configure_selection("single", use_checkbox=True, suppressRowClickSelection=True)
+        # Instead of checkboxes, we won't rely on row selection.
+        # We'll display a custom button below the grid for each row.
+        gb_val.configure_selection("single", use_checkbox=False)
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
             val_opts = {"columnDefs": val_opts}
@@ -286,37 +286,37 @@ def main():
         val_res = AgGrid(
             filtered_val,
             gridOptions=val_opts,
-            update_mode=GridUpdateMode.SELECTION_CHANGED,
+            update_mode=GridUpdateMode.VALUE_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="val_grid",
             height=val_height,
             use_container_width=True
         )
-        val_selected = val_res.get("selectedRows", [])
-        if val_selected and "Value Label" in val_selected[0]:
-            st.session_state.preselect_val_label_dist = val_selected[0]["Value Label"]
-        else:
-            st.session_state.preselect_val_label_dist = (filtered_val.iloc[0]["Value Label"] if not filtered_val.empty else None)
         updated_val = pd.DataFrame(val_res["data"])
         st.session_state.value_dist_df.update(updated_val)
         
-        # ---- Button-triggered selection for Value Distribution SQL Logic ----
+        # ---- Button-triggered SQL Logic for Value Distribution ----
         st.subheader("Set SQL Logic (Value Distribution)")
-        if st.button("Set SQL Logic (Value Dist)"):
-            selected_rows = val_res.get("selectedRows", [])
-            if selected_rows:
-                sel_val_label = selected_rows[0].get("Value Label")
-                matching = st.session_state.df_data[
-                    (st.session_state.df_data["analysis_type"]=="value_dist") &
-                    (st.session_state.df_data["field_name"]==st.session_state.active_field) &
-                    (st.session_state.df_data["value_label"]==sel_val_label)
-                ]["value_sql_logic"].dropna().unique()
-                if matching.size>0:
-                    st.session_state["sql_logic_value"] = "\n".join(matching)
-                else:
-                    st.session_state["sql_logic_value"] = "No SQL Logic found"
-            else:
-                st.session_state["sql_logic_value"] = "No row selected"
+        # Instead of relying on grid selection, we iterate through each row and add a button.
+        if not filtered_val.empty:
+            for i, row in filtered_val.iterrows():
+                cols = st.columns([1, 4])
+                # Add a button with a unique key for this row
+                if cols[0].button("Set SQL", key=f"set_sql_{i}"):
+                    # Lookup SQL logic from original df_data filtered by analysis_type, Field Name and Value Label.
+                    sel_val_label = row["Value Label"]
+                    matching = st.session_state.df_data[
+                        (st.session_state.df_data["analysis_type"]=="value_dist") &
+                        (st.session_state.df_data["field_name"]==selected_val_field) &
+                        (st.session_state.df_data["value_label"]==sel_val_label)
+                    ]["value_sql_logic"].dropna().unique()
+                    if matching.size > 0:
+                        st.session_state["sql_logic_value"] = "\n".join(matching)
+                    else:
+                        st.session_state["sql_logic_value"] = "No SQL Logic found"
+                cols[1].write(f"Row {i}: Value Label = {row['Value Label']}")
+        else:
+            st.write("No rows to set SQL logic from.")
         st.text_area("SQL Logic (Value Dist)", st.session_state["sql_logic_value"], key="sql_logic_area_val", height=150)
         
         # ---- Population Comparison Grid ----
@@ -349,19 +349,19 @@ def main():
         pop_res = AgGrid(
             filtered_pop,
             gridOptions=pop_opts,
-            update_mode=GridUpdateMode.SELECTION_CHANGED,
+            update_mode=GridUpdateMode.VALUE_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="pop_grid",
             height=pop_height,
             use_container_width=True
         )
+        updated_pop = pd.DataFrame(pop_res["data"])
+        st.session_state.pop_comp_df.update(updated_pop)
         pop_selected = pop_res.get("selectedRows", [])
         if pop_selected and "Value Label" in pop_selected[0]:
             st.session_state.preselect_val_label_pop = pop_selected[0]["Value Label"]
         else:
             st.session_state.preselect_val_label_pop = (filtered_pop.iloc[0]["Value Label"] if not filtered_pop.empty else None)
-        updated_pop = pd.DataFrame(pop_res["data"])
-        st.session_state.pop_comp_df.update(updated_pop)
         
         # ---- View SQL Logic (Population Comparison) ----
         st.subheader("View SQL Logic (Population Comparison)")
@@ -386,11 +386,11 @@ def main():
                 ]
                 sql_vals = matches["value_sql_logic"].dropna().unique()
                 if sql_vals.size>0:
-                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals),height=150)
+                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
                 else:
                     st.text_area("Value SQL Logic (Pop Comp)","No SQL Logic found",height=150)
         
-        # ---- Excel Download with Comments as Cell Notes ----
+        # ---- Excel Download with Comments as Cell Notes in Summary ----
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
             export_sum = st.session_state.summary_df.copy()
