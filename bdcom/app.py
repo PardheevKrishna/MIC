@@ -8,8 +8,13 @@ import re
 from io import BytesIO
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
-from openpyxl import load_workbook
 from openpyxl.comments import Comment
+
+# Initialize session state keys for selected value labels if not already set.
+if "preselect_val_label_dist" not in st.session_state:
+    st.session_state.preselect_val_label_dist = None
+if "preselect_val_label_pop" not in st.session_state:
+    st.session_state.preselect_val_label_pop = None
 
 # Custom CSS for header wrapping and full container usage
 st.markdown("""
@@ -39,6 +44,7 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     rows = []
     for field in fields:
+        # For missing values from value_dist rows
         mask_miss_d1 = (
             (df_data['analysis_type'] == 'value_dist') &
             (df_data['field_name'] == field) &
@@ -46,7 +52,6 @@ def generate_summary_df(df_data, date1, date2):
             (df_data['value_label'].str.contains("Missing", case=False, na=False))
         )
         missing_d1 = df_data.loc[mask_miss_d1, 'value_records'].sum()
-
         mask_miss_d2 = (
             (df_data['analysis_type'] == 'value_dist') &
             (df_data['field_name'] == field) &
@@ -54,7 +59,7 @@ def generate_summary_df(df_data, date1, date2):
             (df_data['value_label'].str.contains("Missing", case=False, na=False))
         )
         missing_d2 = df_data.loc[mask_miss_d2, 'value_records'].sum()
-
+        # For population comparison rows (using sample phrases)
         phrases = [
             "1\\)   CF Loan - Both Pop, Diff Values",
             "2\\)   CF Loan - Prior Null, Current Pop",
@@ -65,7 +70,6 @@ def generate_summary_df(df_data, date1, date2):
                 if pd.notna(x) and re.search(pat, x):
                     return True
             return False
-
         mask_pop_d1 = (
             (df_data['analysis_type'] == 'pop_comp') &
             (df_data['field_name'] == field) &
@@ -73,7 +77,6 @@ def generate_summary_df(df_data, date1, date2):
             (df_data['value_label'].apply(contains_phrase))
         )
         pop_d1 = df_data.loc[mask_pop_d1, 'value_records'].sum()
-
         mask_pop_d2 = (
             (df_data['analysis_type'] == 'pop_comp') &
             (df_data['field_name'] == field) &
@@ -81,7 +84,6 @@ def generate_summary_df(df_data, date1, date2):
             (df_data['value_label'].apply(contains_phrase))
         )
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
-
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
     df = pd.DataFrame(rows, columns=[
         "Field Name",
@@ -118,7 +120,8 @@ def generate_distribution_df(df, analysis_type, date1):
     grouped = sub.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
         return pd.DataFrame()
-    pivot = grouped.pivot_table(index=['field_name', 'value_label'], columns='month', values='value_records', fill_value=0)
+    pivot = grouped.pivot_table(index=['field_name', 'value_label'],
+                                columns='month', values='value_records', fill_value=0)
     pivot = pivot.reindex(columns=months, fill_value=0)
     frames = []
     for field, sub_df in pivot.groupby(level=0):
@@ -148,7 +151,10 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
+        df.columns = [
+            " ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
+            for col in df.columns.values
+        ]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -207,30 +213,26 @@ def main():
         if "Comment" not in sum_df.columns:
             sum_df["Comment"] = ""
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(
-            editable=False,
-            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 150}
-        )
+        gb_sum.configure_default_column(editable=False,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 150})
         gb_sum.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
         for col in sum_df.columns:
             if col not in ["Field Name", "Comment"]:
                 if "Change" in col:
                     gb_sum.configure_column(col, type=["numericColumn"],
-                                              valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')",
-                                              width=150, minWidth=100, maxWidth=200)
+                        valueFormatter="(params.value != null ? params.value.toFixed(2) + '%' : '')",
+                        width=150, minWidth=100, maxWidth=200)
                 else:
                     gb_sum.configure_column(col, type=["numericColumn"],
-                                              valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')",
-                                              width=150, minWidth=100, maxWidth=200)
+                        valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')",
+                        width=150, minWidth=100, maxWidth=200)
         sum_opts = gb_sum.build()
         if isinstance(sum_opts, list):
             sum_opts = {"columnDefs": sum_opts}
         for c in sum_opts["columnDefs"]:
             if "headerName" in c:
                 c["headerName"] = "\n".join(c["headerName"].split())
-                c["width"] = 150
-                c["minWidth"] = 100
-                c["maxWidth"] = 200
+                c["width"] = 150; c["minWidth"] = 100; c["maxWidth"] = 200
         gb_sum.configure_selection("single", use_checkbox=False)
         sum_opts["rowSelection"] = "single"
         sum_opts["pagination"] = False
@@ -241,7 +243,7 @@ def main():
         sum_res = AgGrid(
             sum_df,
             gridOptions=sum_opts,
-            update_mode=GridUpdateMode.SELECTION_CHANGED,  # using selection changed for summary grid
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="sum_grid",
             height=sum_height,
@@ -259,20 +261,23 @@ def main():
             if new_field != st.session_state.active_field:
                 st.session_state.active_field = new_field
                 st.experimental_rerun()
-        
+
         # --- Value Distribution Grid ---
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         active_val = st.session_state.active_field if (st.session_state.active_field in val_fields) else (val_fields[0] if val_fields else None)
-        selected_val_field = st.selectbox("Field (Value Dist)", val_fields, index=val_fields.index(active_val) if active_val in val_fields else 0, key="val_select")
+        selected_val_field = st.selectbox("Field (Value Dist)", val_fields,
+            index=val_fields.index(active_val) if active_val in val_fields else 0,
+            key="val_select")
         st.session_state.active_field = selected_val_field
         filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field]
         if "Comment" not in filtered_val.columns:
             filtered_val["Comment"] = ""
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-        gb_val.configure_default_column(editable=False, cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 150})
+        gb_val.configure_default_column(editable=False,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 150})
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Here we add a checkbox for selection
+        # Add a checkbox column
         gb_val.configure_selection("single", use_checkbox=True)
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
@@ -289,7 +294,7 @@ def main():
         val_res = AgGrid(
             filtered_val,
             gridOptions=val_opts,
-            update_mode=GridUpdateMode.SELECTION_CHANGED,  # use selection changed so checkbox selection is captured
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="val_grid",
             height=val_height,
@@ -300,22 +305,54 @@ def main():
             preselect_val_label_dist = filtered_val.iloc[0]["Value Label"]
         else:
             preselect_val_label_dist = (val_selected[0]["Value Label"] if val_selected and "Value Label" in val_selected[0] else None)
+        st.session_state.preselect_val_label_dist = preselect_val_label_dist
         updated_val = pd.DataFrame(val_res["data"])
         st.session_state.value_dist_df.update(updated_val)
+        
+        # --- View SQL Logic (Value Distribution) ---
+        st.subheader("View SQL Logic (Value Distribution)")
+        # Use the selected value label from the grid
+        val_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"] == "value_dist"]
+        val_orig_field = val_orig[val_orig["field_name"] == selected_val_field]
+        val_val_labels = val_orig_field["value_label"].dropna().unique().tolist()
+        if not val_val_labels:
+            st.write("No Value Labels available for SQL Logic (Value Dist).")
+        else:
+            default_val_val = (st.session_state.preselect_val_label_dist if st.session_state.preselect_val_label_dist in val_val_labels else (val_val_labels[0] if val_val_labels else None))
+            sel_val_val_label = st.selectbox("Select Value Label (Value Dist)", val_val_labels,
+                index=val_val_labels.index(default_val_val) if default_val_val else 0,
+                key="val_sql_val_label")
+            months_val = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
+            months_val = sorted(months_val, reverse=True)
+            month_options_val = [m.strftime("%Y-%m") for m in months_val]
+            sel_val_month = st.selectbox("Select Month (Value Dist)", month_options_val, key="val_sql_month")
+            if st.button("Show SQL Logic (Value Dist)"):
+                matches_val = val_orig_field[
+                    (val_orig_field["value_label"] == sel_val_val_label) &
+                    (val_orig_field["filemonth_dt"].dt.strftime("%Y-%m") == sel_val_month)
+                ]
+                sql_vals_val = matches_val["value_sql_logic"].dropna().unique()
+                if sql_vals_val.size > 0:
+                    st.text_area("Value SQL Logic (Value Dist)", "\n".join(sql_vals_val), height=150)
+                else:
+                    st.text_area("Value SQL Logic (Value Dist)", "No SQL Logic found", height=150)
         
         # --- Population Comparison Grid ---
         st.subheader("Population Comparison")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         active_pop = st.session_state.active_field if (st.session_state.active_field in pop_fields) else (pop_fields[0] if pop_fields else None)
-        selected_pop_field = st.selectbox("Field (Pop Comp)", pop_fields, index=pop_fields.index(active_pop) if active_pop in pop_fields else 0, key="pop_select")
+        selected_pop_field = st.selectbox("Field (Pop Comp)", pop_fields,
+            index=pop_fields.index(active_pop) if active_pop in pop_fields else 0,
+            key="pop_select")
         st.session_state.active_field = selected_pop_field
         filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
         if "Comment" not in filtered_pop.columns:
             filtered_pop["Comment"] = ""
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
-        gb_pop.configure_default_column(editable=False, cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 150})
+        gb_pop.configure_default_column(editable=False,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', "width": 150})
         gb_pop.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Add a checkbox for selection here as well
+        # Add a checkbox for selection
         gb_pop.configure_selection("single", use_checkbox=True)
         pop_opts = gb_pop.build()
         if isinstance(pop_opts, list):
@@ -343,33 +380,9 @@ def main():
             preselect_val_label_pop = filtered_pop.iloc[0]["Value Label"]
         else:
             preselect_val_label_pop = (pop_selected[0]["Value Label"] if pop_selected and "Value Label" in pop_selected[0] else None)
+        st.session_state.preselect_val_label_pop = preselect_val_label_pop
         updated_pop = pd.DataFrame(pop_res["data"])
         st.session_state.pop_comp_df.update(updated_pop)
-        
-        # --- View SQL Logic (Value Distribution) ---
-        st.subheader("View SQL Logic (Value Distribution)")
-        val_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"] == "value_dist"]
-        val_orig_field = val_orig[val_orig["field_name"] == selected_val_field]
-        val_val_labels = val_orig_field["value_label"].dropna().unique().tolist()
-        if not val_val_labels:
-            st.write("No Value Labels available for SQL Logic (Value Dist).")
-        else:
-            default_val_val = (preselect_val_label_dist if preselect_val_label_dist in val_val_labels else (val_val_labels[0] if val_val_labels else None))
-            sel_val_val_label = st.selectbox("Select Value Label (Value Dist)", val_val_labels, index=val_val_labels.index(default_val_val) if default_val_val else 0, key="val_sql_val_label")
-            months_val = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
-            months_val = sorted(months_val, reverse=True)
-            month_options_val = [m.strftime("%Y-%m") for m in months_val]
-            sel_val_month = st.selectbox("Select Month (Value Dist)", month_options_val, key="val_sql_month")
-            if st.button("Show SQL Logic (Value Dist)"):
-                matches_val = val_orig_field[
-                    (val_orig_field["value_label"] == sel_val_val_label) &
-                    (val_orig_field["filemonth_dt"].dt.strftime("%Y-%m") == sel_val_month)
-                ]
-                sql_vals_val = matches_val["value_sql_logic"].dropna().unique()
-                if sql_vals_val.size > 0:
-                    st.text_area("Value SQL Logic (Value Dist)", "\n".join(sql_vals_val), height=150)
-                else:
-                    st.text_area("Value SQL Logic (Value Dist)", "No SQL Logic found", height=150)
         
         # --- View SQL Logic (Population Comparison) ---
         st.subheader("View SQL Logic (Population Comparison)")
@@ -379,8 +392,10 @@ def main():
         if not pop_val_labels:
             st.write("No Value Labels available for SQL Logic (Pop Comp).")
         else:
-            default_pop_val = (preselect_val_label_pop if preselect_val_label_pop in pop_val_labels else (pop_val_labels[0] if pop_val_labels else None))
-            sel_pop_val_label = st.selectbox("Select Value Label (Pop Comp)", pop_val_labels, index=pop_val_labels.index(default_pop_val) if default_pop_val else 0, key="pop_sql_val_label")
+            default_pop_val = (st.session_state.preselect_val_label_pop if st.session_state.preselect_val_label_pop in pop_val_labels else (pop_val_labels[0] if pop_val_labels else None))
+            sel_pop_val_label = st.selectbox("Select Value Label (Pop Comp)", pop_val_labels,
+                index=pop_val_labels.index(default_pop_val) if default_pop_val else 0,
+                key="pop_sql_val_label")
             months = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
             months = sorted(months, reverse=True)
             month_options = [m.strftime("%Y-%m") for m in months]
@@ -396,7 +411,7 @@ def main():
                 else:
                     st.text_area("Value SQL Logic (Pop Comp)", "No SQL Logic found", height=150)
         
-        # --- Excel Download with Cell Comments in the date1 Column ---
+        # --- Excel Download with Comments in date1 Column ---
         summary_date1_col_name = f"Missing Values ({st.session_state.date1.strftime('%Y-%m-%d')})"
         dist_date1_col_name    = f"{st.session_state.date1.strftime('%Y-%m')} Sum"
         pop_date1_col_name     = f"{st.session_state.date1.strftime('%Y-%m')} Sum"
