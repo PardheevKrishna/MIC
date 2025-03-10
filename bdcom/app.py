@@ -10,7 +10,7 @@ from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from openpyxl.comments import Comment
 
-# Initialize session state for SQL logic if not set.
+# Initialize session state for SQL logic if not already set.
 if "sql_logic_value" not in st.session_state:
     st.session_state["sql_logic_value"] = ""
 
@@ -253,9 +253,9 @@ def main():
         updated_sum = pd.DataFrame(sum_res["data"])
         st.session_state.summary_df = updated_sum
         for field_name in updated_sum["Field Name"].unique():
-            comment_for_field = updated_sum.loc[updated_sum["Field Name"] == field_name, "Comment"].iloc[0]
-            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"] == field_name, "Comment"] = comment_for_field
-            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"] == field_name, "Comment"] = comment_for_field
+            comment_for_field = updated_sum.loc[updated_sum["Field Name"]==field_name, "Comment"].iloc[0]
+            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"]==field_name, "Comment"] = comment_for_field
+            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"]==field_name, "Comment"] = comment_for_field
         sel_sum = sum_res.get("selectedRows", [])
         if sel_sum:
             new_field = sel_sum[0].get("Field Name")
@@ -263,7 +263,7 @@ def main():
                 st.session_state.active_field = new_field
                 st.experimental_rerun()
         
-        # ---- Value Distribution Grid using row selection and a button ----
+        # ---- Value Distribution Grid using row selection with checkboxes ----
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         active_val = st.session_state.active_field if st.session_state.active_field in val_fields else (val_fields[0] if val_fields else None)
@@ -271,14 +271,16 @@ def main():
             index=val_fields.index(active_val) if active_val in val_fields else 0,
             key="val_field_select")
         st.session_state.active_field = selected_val_field
-        filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
+        filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==selected_val_field].copy()
         if "Comment" not in filtered_val.columns:
             filtered_val["Comment"] = ""
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-        gb_val.configure_default_column(editable=False,
-            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+        gb_val.configure_default_column(
+            editable=False,
+            cellStyle={'white-space':'normal','line-height':'1.2em','width':150}
+        )
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Enable row selection (checkboxes)
+        # Use checkbox selection
         gb_val.configure_selection("single", use_checkbox=True)
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
@@ -291,7 +293,6 @@ def main():
         val_opts["rowHeight"] = 40
         val_opts["headerHeight"] = 80
         val_height = compute_grid_height(filtered_val,40,80)
-        # Use SELECTION_CHANGED update mode to get the selected row.
         val_res = AgGrid(
             filtered_val,
             gridOptions=val_opts,
@@ -302,15 +303,14 @@ def main():
             use_container_width=True
         )
         selected_rows = val_res.get("selectedRows", [])
-        
         # A separate button to trigger SQL logic update for Value Distribution
         if st.button("Set SQL Logic (Value Dist)"):
             if selected_rows:
                 sel_val_label = selected_rows[0].get("Value Label", "")
                 matching = st.session_state.df_data[
-                    (st.session_state.df_data["analysis_type"] == "value_dist") &
-                    (st.session_state.df_data["field_name"] == selected_val_field) &
-                    (st.session_state.df_data["value_label"] == sel_val_label)
+                    (st.session_state.df_data["analysis_type"]=="value_dist") &
+                    (st.session_state.df_data["field_name"]==selected_val_field) &
+                    (st.session_state.df_data["value_label"]==sel_val_label)
                 ]["value_sql_logic"].dropna().unique()
                 if matching.size > 0:
                     st.session_state["sql_logic_value"] = "\n".join(matching)
@@ -329,12 +329,14 @@ def main():
             index=pop_fields.index(active_pop) if active_pop in pop_fields else 0,
             key="pop_field_select")
         st.session_state.active_field = selected_pop_field
-        filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
+        filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"]==selected_pop_field].copy()
         if "Comment" not in filtered_pop.columns:
             filtered_pop["Comment"] = ""
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
-        gb_pop.configure_default_column(editable=False,
-            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+        gb_pop.configure_default_column(
+            editable=False,
+            cellStyle={'white-space':'normal','line-height':'1.2em','width':150}
+        )
         gb_pop.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
         gb_pop.configure_selection("single", use_checkbox=True, suppressRowClickSelection=True)
         pop_opts = gb_pop.build()
@@ -388,7 +390,7 @@ def main():
                 ]
                 sql_vals = matches["value_sql_logic"].dropna().unique()
                 if sql_vals.size>0:
-                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
+                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals),height=150)
                 else:
                     st.text_area("Value SQL Logic (Pop Comp)","No SQL Logic found",height=150)
         
