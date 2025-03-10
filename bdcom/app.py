@@ -10,9 +10,24 @@ from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from openpyxl.comments import Comment
 
-# Initialize session state key for SQL logic text if not set.
+# Initialize session state for SQL logic if not set.
 if "sql_logic_value" not in st.session_state:
     st.session_state["sql_logic_value"] = ""
+
+# Custom CSS for header wrapping and container usage
+st.markdown("""
+    <style>
+        .ag-header-cell-label {
+            white-space: pre-wrap !important;
+            text-align: center;
+            line-height: 1.2em;
+        }
+        .ag-root-wrapper {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
 def compute_grid_height(df, row_height=40, header_height=80):
     n = len(df)
@@ -89,7 +104,6 @@ def generate_summary_df(df_data, date1, date2):
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ]
     df = df[new_order]
-    # Add one editable "Comment" column
     df["Comment"] = ""
     return df
 
@@ -133,7 +147,8 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
+                      for col in df.columns.values]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -192,19 +207,27 @@ def main():
         if "Comment" not in sum_df.columns:
             sum_df["Comment"] = ""
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(editable=False,
-            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+        gb_sum.configure_default_column(
+            editable=False,
+            cellStyle={'white-space':'normal','line-height':'1.2em','width':150}
+        )
         gb_sum.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
         for col in sum_df.columns:
             if col not in ["Field Name", "Comment"]:
                 if "Change" in col:
-                    gb_sum.configure_column(col, type=["numericColumn"],
+                    gb_sum.configure_column(
+                        col,
+                        type=["numericColumn"],
                         valueFormatter="(params.value != null ? params.value.toFixed(2)+'%' : '')",
-                        width=150, minWidth=100, maxWidth=200)
+                        width=150, minWidth=100, maxWidth=200
+                    )
                 else:
-                    gb_sum.configure_column(col, type=["numericColumn"],
+                    gb_sum.configure_column(
+                        col,
+                        type=["numericColumn"],
                         valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')",
-                        width=150, minWidth=100, maxWidth=200)
+                        width=150, minWidth=100, maxWidth=200
+                    )
         sum_opts = gb_sum.build()
         if isinstance(sum_opts, list):
             sum_opts = {"columnDefs": sum_opts}
@@ -230,9 +253,9 @@ def main():
         updated_sum = pd.DataFrame(sum_res["data"])
         st.session_state.summary_df = updated_sum
         for field_name in updated_sum["Field Name"].unique():
-            comment_for_field = updated_sum.loc[updated_sum["Field Name"]==field_name, "Comment"].iloc[0]
-            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"]==field_name, "Comment"] = comment_for_field
-            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"]==field_name, "Comment"] = comment_for_field
+            comment_for_field = updated_sum.loc[updated_sum["Field Name"] == field_name, "Comment"].iloc[0]
+            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"] == field_name, "Comment"] = comment_for_field
+            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"] == field_name, "Comment"] = comment_for_field
         sel_sum = sum_res.get("selectedRows", [])
         if sel_sum:
             new_field = sel_sum[0].get("Field Name")
@@ -240,7 +263,7 @@ def main():
                 st.session_state.active_field = new_field
                 st.experimental_rerun()
         
-        # ---- Value Distribution Grid with in-table Button ----
+        # ---- Value Distribution Grid using row selection and a button ----
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         active_val = st.session_state.active_field if st.session_state.active_field in val_fields else (val_fields[0] if val_fields else None)
@@ -248,29 +271,15 @@ def main():
             index=val_fields.index(active_val) if active_val in val_fields else 0,
             key="val_field_select")
         st.session_state.active_field = selected_val_field
-        filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==selected_val_field].copy()
-        # Add a dummy "Action" column for the in-table button.
-        filtered_val["Action"] = ""
+        filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
         if "Comment" not in filtered_val.columns:
             filtered_val["Comment"] = ""
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
         gb_val.configure_default_column(editable=False,
             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Configure the Action column with a custom cell renderer that returns an HTML button.
-        gb_val.configure_column(
-            "Action",
-            headerName="Action",
-            cellRenderer="""
-                function(params) {
-                    return '<button style="width:100%;">Set SQL</button>';
-                }
-            """,
-            editable=False,
-            suppressMenu=True,
-            width=150, minWidth=100, maxWidth=200
-        )
-        # Set update_mode to CELL_CLICKED so we can capture clicks on the button.
+        # Enable row selection (checkboxes)
+        gb_val.configure_selection("single", use_checkbox=True)
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
             val_opts = {"columnDefs": val_opts}
@@ -282,31 +291,33 @@ def main():
         val_opts["rowHeight"] = 40
         val_opts["headerHeight"] = 80
         val_height = compute_grid_height(filtered_val,40,80)
+        # Use SELECTION_CHANGED update mode to get the selected row.
         val_res = AgGrid(
             filtered_val,
             gridOptions=val_opts,
-            update_mode=GridUpdateMode.CELL_CLICKED,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="val_grid",
             height=val_height,
             use_container_width=True
         )
-        # If a cell was clicked in the "Action" column, update SQL logic.
-        cell_event = val_res.get("cellClickedEvent")
-        if cell_event and cell_event["colDef"]["field"] == "Action":
-            row_data = cell_event["data"]
-            sel_val_label = row_data.get("Value Label", "")
-            matching = st.session_state.df_data[
-                (st.session_state.df_data["analysis_type"]=="value_dist") &
-                (st.session_state.df_data["field_name"]==selected_val_field) &
-                (st.session_state.df_data["value_label"]==sel_val_label)
-            ]["value_sql_logic"].dropna().unique()
-            if matching.size > 0:
-                st.session_state["sql_logic_value"] = "\n".join(matching)
+        selected_rows = val_res.get("selectedRows", [])
+        
+        # A separate button to trigger SQL logic update for Value Distribution
+        if st.button("Set SQL Logic (Value Dist)"):
+            if selected_rows:
+                sel_val_label = selected_rows[0].get("Value Label", "")
+                matching = st.session_state.df_data[
+                    (st.session_state.df_data["analysis_type"] == "value_dist") &
+                    (st.session_state.df_data["field_name"] == selected_val_field) &
+                    (st.session_state.df_data["value_label"] == sel_val_label)
+                ]["value_sql_logic"].dropna().unique()
+                if matching.size > 0:
+                    st.session_state["sql_logic_value"] = "\n".join(matching)
+                else:
+                    st.session_state["sql_logic_value"] = "No SQL Logic found"
             else:
-                st.session_state["sql_logic_value"] = "No SQL Logic found"
-        updated_val = pd.DataFrame(val_res["data"])
-        st.session_state.value_dist_df.update(updated_val)
+                st.session_state["sql_logic_value"] = "No row selected"
         
         st.text_area("SQL Logic (Value Dist)", st.session_state["sql_logic_value"], key="sql_logic_area_val", height=150)
         
@@ -318,7 +329,7 @@ def main():
             index=pop_fields.index(active_pop) if active_pop in pop_fields else 0,
             key="pop_field_select")
         st.session_state.active_field = selected_pop_field
-        filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"]==selected_pop_field].copy()
+        filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
         if "Comment" not in filtered_pop.columns:
             filtered_pop["Comment"] = ""
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
