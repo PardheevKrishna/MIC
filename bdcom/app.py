@@ -6,30 +6,20 @@ import os
 import datetime
 import re
 from io import BytesIO
-from urllib.parse import urlencode
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from openpyxl.comments import Comment
+import json
 
-# For demonstration, simulate a Python function that processes row data.
-def process_row_data(row):
-    # This function can do any processing.
-    # For demonstration, we simply return a string.
-    return f"Processed data for Field: {row['Field Name']}, Value Label: {row['Value Label']}"
-
-# Check for URL query parameters
-query_params = st.experimental_get_query_params()
-if "selected_row" in query_params:
-    # If a row is selected via hyperlink, process it.
-    selected_row_str = query_params["selected_row"][0]
-    # In a real app, you would decode this value and lookup the corresponding data.
-    st.write("Hyperlink triggered processing:", selected_row_str)
-    result = process_row_data(eval(selected_row_str))  # use eval for demonstration only
-    st.write("Result:", result)
+# Do not allow editing comments in the summary grid.
+# Instead, comments are only editable in the Value Distribution and Population Comparison grids.
+# Aggregated comments from those grids will be added as notes in the summary.
 
 def compute_grid_height(df, row_height=40, header_height=80):
     n = len(df)
-    return header_height + (min(n, 30) * row_height)
+    if n == 0:
+        return header_height + 20
+    return min(n, 30) * row_height + header_height
 
 def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
@@ -38,15 +28,19 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     rows = []
     for field in fields:
-        mask_miss_d1 = ((df_data['analysis_type'] == 'value_dist') &
-                        (df_data['field_name'] == field) &
-                        (df_data['filemonth_dt'] == date1) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_miss_d1 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_d1 = df_data.loc[mask_miss_d1, 'value_records'].sum()
-        mask_miss_d2 = ((df_data['analysis_type'] == 'value_dist') &
-                        (df_data['field_name'] == field) &
-                        (df_data['filemonth_dt'] == date2) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_miss_d2 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_d2 = df_data.loc[mask_miss_d2, 'value_records'].sum()
         phrases = [
             "1\\)   CF Loan - Both Pop, Diff Values",
@@ -58,15 +52,19 @@ def generate_summary_df(df_data, date1, date2):
                 if pd.notna(x) and re.search(pat, x):
                     return True
             return False
-        mask_pop_d1 = ((df_data['analysis_type'] == 'pop_comp') &
-                       (df_data['field_name'] == field) &
-                       (df_data['filemonth_dt'] == date1) &
-                       (df_data['value_label'].apply(contains_phrase)))
+        mask_pop_d1 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].apply(contains_phrase))
+        )
         pop_d1 = df_data.loc[mask_pop_d1, 'value_records'].sum()
-        mask_pop_d2 = ((df_data['analysis_type'] == 'pop_comp') &
-                       (df_data['field_name'] == field) &
-                       (df_data['filemonth_dt'] == date2) &
-                       (df_data['value_label'].apply(contains_phrase)))
+        mask_pop_d2 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].apply(contains_phrase))
+        )
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
     df = pd.DataFrame(rows, columns=[
@@ -92,7 +90,8 @@ def generate_summary_df(df_data, date1, date2):
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ]
     df = df[new_order]
-    df["Comment"] = ""
+    # Comments will be aggregated from other tables – not editable here.
+    df["Comment"] = ""  
     return df
 
 def generate_distribution_df(df, analysis_type, date1):
@@ -135,8 +134,7 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
-                      for col in df.columns.values]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -151,6 +149,39 @@ def load_report_data(file_path, date1, date2):
     pop_comp_df = generate_distribution_df(df_data, "pop_comp", date1)
     return df_data, summary_df, val_dist_df, pop_comp_df
 
+def aggregate_comments(field, val_df, pop_df):
+    # For a given field, look in value distribution and pop comp dataframes
+    notes = []
+    for idx, row in val_df[val_df["Field Name"]==field].iterrows():
+        comm = str(row.get("Comment", "")).strip()
+        if comm:
+            notes.append(f"{row.get('Value Label', '')} - {comm}")
+    for idx, row in pop_df[pop_df["Field Name"]==field].iterrows():
+        comm = str(row.get("Comment", "")).strip()
+        if comm:
+            notes.append(f"{row.get('Value Label', '')} - {comm}")
+    return "\n".join(notes)
+
+# Initialize a dropdown for SQL logic in Value Distribution.
+# This dropdown will show distinct Value Labels for the active field.
+def get_val_dropdown_options(val_df, field):
+    df_field = val_df[val_df["Field Name"]==field]
+    return list(df_field["Value Label"].unique())
+
+# SQL lookup function for Value Distribution: Given a field and a value label,
+# return the matching SQL logic from the original data.
+def lookup_sql_logic(df_data, field, val_label):
+    matching = df_data[
+        (df_data["analysis_type"]=="value_dist") &
+        (df_data["field_name"]==field) &
+        (df_data["value_label"]==val_label)
+    ]["value_sql_logic"].dropna().unique()
+    if matching.size > 0:
+        return "\n".join(matching)
+    else:
+        return "No SQL Logic found"
+
+# Remove any JS-based code and use dropdown instead.
 st.write("Working Directory:", os.getcwd())
 
 def main():
@@ -190,32 +221,13 @@ def main():
         st.write(f"**File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
-        # ---- Summary Grid ----
+        # ---- Summary Grid (comments not editable) ----
         sum_df = st.session_state.summary_df.copy()
-        if "Comment" not in sum_df.columns:
-            sum_df["Comment"] = ""
+        # Disable editing in summary's comment column by ensuring it's not editable.
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(
-            editable=False,
-            cellStyle={'white-space':'normal','line-height':'1.2em','width':150}
-        )
-        gb_sum.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        for col in sum_df.columns:
-            if col not in ["Field Name", "Comment"]:
-                if "Change" in col:
-                    gb_sum.configure_column(
-                        col,
-                        type=["numericColumn"],
-                        valueFormatter="(params.value != null ? params.value.toFixed(2)+'%' : '')",
-                        width=150, minWidth=100, maxWidth=200
-                    )
-                else:
-                    gb_sum.configure_column(
-                        col,
-                        type=["numericColumn"],
-                        valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')",
-                        width=150, minWidth=100, maxWidth=200
-                    )
+        gb_sum.configure_default_column(editable=False,
+            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+        # Do not configure the "Comment" column for editing.
         sum_opts = gb_sum.build()
         if isinstance(sum_opts, list):
             sum_opts = {"columnDefs": sum_opts}
@@ -239,19 +251,13 @@ def main():
             use_container_width=True
         )
         updated_sum = pd.DataFrame(sum_res["data"])
+        # Now update summary comments by aggregating comments from Value Distribution and Pop Comp.
+        for field in updated_sum["Field Name"].unique():
+            agg_comment = aggregate_comments(field, st.session_state.value_dist_df, st.session_state.pop_comp_df)
+            updated_sum.loc[updated_sum["Field Name"]==field, "Comment"] = agg_comment
         st.session_state.summary_df = updated_sum
-        for field_name in updated_sum["Field Name"].unique():
-            comment_for_field = updated_sum.loc[updated_sum["Field Name"]==field_name, "Comment"].iloc[0]
-            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"]==field_name, "Comment"] = comment_for_field
-            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"]==field_name, "Comment"] = comment_for_field
-        sel_sum = sum_res.get("selectedRows", [])
-        if sel_sum:
-            new_field = sel_sum[0].get("Field Name")
-            if new_field != st.session_state.active_field:
-                st.session_state.active_field = new_field
-                st.experimental_rerun()
         
-        # ---- Value Distribution Grid with in-table hyperlink column ----
+        # ---- Value Distribution Grid (editable comments) ----
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         active_val = st.session_state.active_field if st.session_state.active_field in val_fields else (val_fields[0] if val_fields else None)
@@ -260,31 +266,13 @@ def main():
             key="val_field_select")
         st.session_state.active_field = selected_val_field
         filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==selected_val_field].copy()
-        # Add a dummy "Action" column that will become a hyperlink
-        filtered_val["Action"] = ""
-        if "Comment" not in filtered_val.columns:
-            filtered_val["Comment"] = ""
+        # Note: This grid is editable in the Comment column.
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
         gb_val.configure_default_column(editable=False,
             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Configure the Action column to be a hyperlink.
-        gb_val.configure_column(
-            "Action",
-            headerName="Action",
-            cellRenderer=JsCode("""
-                function(params) {
-                    // Create a query string containing the row data (for demo purposes, using JSON.stringify)
-                    var rowData = encodeURIComponent(JSON.stringify(params.data));
-                    // Create a hyperlink that reloads the app with the selected row data as a query parameter
-                    var url = window.location.origin + window.location.pathname + '?selected_row=' + rowData;
-                    return `<a href="${url}">Set SQL</a>`;
-                }
-            """),
-            editable=False,
-            suppressMenu=True,
-            width=150, minWidth=100, maxWidth=200
-        )
+        # Use checkboxes for row selection.
+        gb_val.configure_selection("single", use_checkbox=True)
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
             val_opts = {"columnDefs": val_opts}
@@ -305,12 +293,23 @@ def main():
             height=val_height,
             use_container_width=True
         )
-        updated_val = pd.DataFrame(val_res["data"])
-        st.session_state.value_dist_df.update(updated_val)
+        selected_rows = val_res.get("selectedRows", [])
+        st.session_state.value_dist_df.update(pd.DataFrame(val_res["data"]))
         
+        # Dropdown to view SQL logic for Value Distribution.
+        st.subheader("View SQL Logic (Value Distribution)")
+        # Get distinct value labels for the selected field.
+        val_options = list(st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==selected_val_field]["Value Label"].unique())
+        if not val_options:
+            st.write("No Value Labels available for SQL Logic.")
+        else:
+            sel_val_label = st.selectbox("Select Value Label", val_options, key="val_sql_val_label")
+            if st.button("Show SQL Logic (Value Dist)"):
+                sql_logic = lookup_sql_logic(st.session_state.df_data, selected_val_field, sel_val_label)
+                st.session_state["sql_logic_value"] = sql_logic
         st.text_area("SQL Logic (Value Dist)", st.session_state.get("sql_logic_value", ""), key="sql_logic_area_val", height=150)
         
-        # ---- Population Comparison Grid ----
+        # ---- Population Comparison Grid (editable comments) ----
         st.subheader("Population Comparison")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         active_pop = st.session_state.active_field if st.session_state.active_field in pop_fields else (pop_fields[0] if pop_fields else None)
@@ -346,8 +345,7 @@ def main():
             height=pop_height,
             use_container_width=True
         )
-        updated_pop = pd.DataFrame(pop_res["data"])
-        st.session_state.pop_comp_df.update(updated_pop)
+        st.session_state.pop_comp_df.update(pd.DataFrame(pop_res["data"]))
         pop_selected = pop_res.get("selectedRows", [])
         if pop_selected and "Value Label" in pop_selected[0]:
             st.session_state.preselect_val_label_pop = pop_selected[0]["Value Label"]
@@ -377,22 +375,30 @@ def main():
                 ]
                 sql_vals = matches["value_sql_logic"].dropna().unique()
                 if sql_vals.size>0:
-                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
+                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals),height=150)
                 else:
                     st.text_area("Value SQL Logic (Pop Comp)","No SQL Logic found",height=150)
         
-        # ---- Excel Download with Summary Comments as Cell Notes ----
+        # ---- Excel Download with Aggregated Summary Comments as Cell Notes ----
+        # Here we aggregate comments from value distribution and population comparison.
+        agg_comments = {}
+        for field in st.session_state.summary_df["Field Name"].unique():
+            agg_comments[field] = aggregate_comments(field, st.session_state.value_dist_df, st.session_state.pop_comp_df)
+        # Update summary_df with these aggregated comments.
+        st.session_state.summary_df["Comment"] = st.session_state.summary_df["Field Name"].map(agg_comments)
+        
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
             export_sum = st.session_state.summary_df.copy()
-            sum_comments = export_sum["Comment"]
+            # Export summary without Comment column
+            comments = export_sum["Comment"]
             export_sum.drop(columns=["Comment"], inplace=True, errors="ignore")
             export_sum.to_excel(writer, index=False, sheet_name="Summary")
             st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
             st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
             workbook  = writer.book
             sheet = writer.sheets["Summary"]
-            for i, comm in sum_comments.items():
+            for i, comm in comments.items():
                 excel_row = i + 2
                 excel_col = export_sum.shape[1]
                 cell = sheet.cell(row=excel_row, column=excel_col)
@@ -404,6 +410,31 @@ def main():
             file_name="FRY14M_Field_Analysis_Report.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+def aggregate_comments(field, val_df, pop_df):
+    notes = []
+    # Aggregate from Value Distribution
+    for idx, row in val_df[val_df["Field Name"]==field].iterrows():
+        comm = str(row.get("Comment", "")).strip()
+        if comm:
+            notes.append(f"{row.get('Value Label','')} - {comm}")
+    # Aggregate from Population Comparison
+    for idx, row in pop_df[pop_df["Field Name"]==field].iterrows():
+        comm = str(row.get("Comment", "")).strip()
+        if comm:
+            notes.append(f"{row.get('Value Label','')} - {comm}")
+    return "\n".join(notes)
+
+def lookup_sql_logic(df_data, field, val_label):
+    matching = df_data[
+        (df_data["analysis_type"]=="value_dist") &
+        (df_data["field_name"]==field) &
+        (df_data["value_label"]==val_label)
+    ]["value_sql_logic"].dropna().unique()
+    if matching.size > 0:
+        return "\n".join(matching)
+    else:
+        return "No SQL Logic found"
 
 if __name__=="__main__":
     main()
