@@ -133,8 +133,10 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
-                      for col in df.columns.values]
+        df.columns = [
+            " ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
+            for col in df.columns.values
+        ]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -154,12 +156,12 @@ def load_report_data(file_path, date1, date2):
 # ---------------------------------------------------------------------
 def aggregate_comments(field, val_df, pop_df):
     notes = []
-    # Expecting "Value Label" to be present in both dataframes.
-    for idx, row in val_df[val_df["Field Name"] == field].iterrows():
+    # Look for comments in rows where the field matches.
+    for _, row in val_df[val_df["Field Name"] == field].iterrows():
         comm = str(row.get("Comment", "")).strip()
         if comm:
             notes.append(f"{row.get('Value Label', '')} - {comm}")
-    for idx, row in pop_df[pop_df["Field Name"] == field].iterrows():
+    for _, row in pop_df[pop_df["Field Name"] == field].iterrows():
         comm = str(row.get("Comment", "")).strip()
         if comm:
             notes.append(f"{row.get('Value Label', '')} - {comm}")
@@ -167,9 +169,9 @@ def aggregate_comments(field, val_df, pop_df):
 
 def lookup_sql_logic(df_data, field, val_label):
     matching = df_data[
-        (df_data["analysis_type"]=="value_dist") &
-        (df_data["field_name"]==field) &
-        (df_data["value_label"]==val_label)
+        (df_data["analysis_type"] == "value_dist") &
+        (df_data["field_name"] == field) &
+        (df_data["value_label"] == val_label)
     ]["value_sql_logic"].dropna().unique()
     if matching.size > 0:
         return "\n".join(matching)
@@ -224,48 +226,14 @@ def main():
         st.session_state["sql_logic_value"] = ""
 
     if "df_data" in st.session_state:
-        # Update aggregated comments in the summary before rendering
-        update_summary_comments()
-
-        # Provide a manual refresh button (no experimental_rerun)
-        if st.button("Refresh Summary"):
-            update_summary_comments()
-
-        st.title("FRY14M Field Analysis Summary Report")
+        st.title("FRY14M Field Analysis Report")
         st.write(f"**Folder:** {st.session_state.folder}")
         st.write(f"**File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
-        # ---- Summary Grid (Read-only) ----
-        sum_df = st.session_state.summary_df.copy()
-        gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(
-            editable=False,
-            cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150}
-        )
-        sum_opts = gb_sum.build()
-        for c in sum_opts["columnDefs"]:
-            c["headerName"] = "\n".join(c["headerName"].split())
-            c["width"] = 150
-            c["minWidth"] = 100
-            c["maxWidth"] = 200
-        sum_opts["rowSelection"] = "single"
-        sum_opts["pagination"] = False
-        sum_opts["rowHeight"] = 40
-        sum_opts["headerHeight"] = 80
-        sum_height = compute_grid_height(sum_df, 40, 80)
-        st.subheader("Summary")
-        AgGrid(
-            sum_df,
-            gridOptions=sum_opts,
-            update_mode=GridUpdateMode.VALUE_CHANGED,
-            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-            key="sum_grid",
-            height=sum_height,
-            use_container_width=True
-        )
-        
-        # ---- Value Distribution Grid (Editable Comments) ----
+        # ------------------------
+        # 1. Value Distribution Grid (Editable Comments)
+        # ------------------------
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         active_val = st.session_state.get("active_val_field", val_fields[0] if val_fields else None)
@@ -308,21 +276,9 @@ def main():
         )
         st.session_state.value_dist_df.update(pd.DataFrame(val_res["data"]))
         
-        # ---- SQL Logic for Value Distribution via Dropdown ----
-        st.subheader("View SQL Logic (Value Distribution)")
-        val_options = list(
-            st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field]["Value Label"].unique()
-        )
-        if not val_options:
-            st.write("No Value Labels available for SQL Logic.")
-        else:
-            sel_val_label = st.selectbox("Select Value Label", val_options, key="val_sql_val_label")
-            if st.button("Show SQL Logic (Value Dist)"):
-                sql_logic = lookup_sql_logic(st.session_state.df_data, selected_val_field, sel_val_label)
-                st.session_state["sql_logic_value"] = sql_logic
-        st.text_area("SQL Logic (Value Dist)", st.session_state.get("sql_logic_value", ""), key="sql_logic_area_val", height=150)
-        
-        # ---- Population Comparison Grid (Editable Comments) ----
+        # ------------------------
+        # 2. Population Comparison Grid (Editable Comments)
+        # ------------------------
         st.subheader("Population Comparison")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         active_pop = st.session_state.get("active_pop_field", pop_fields[0] if pop_fields else None)
@@ -364,51 +320,56 @@ def main():
             use_container_width=True
         )
         st.session_state.pop_comp_df.update(pd.DataFrame(pop_res["data"]))
-        pop_selected = pop_res.get("selectedRows", [])
-        if pop_selected and "Value Label" in pop_selected[0]:
-            st.session_state.preselect_val_label_pop = pop_selected[0]["Value Label"]
-        else:
-            st.session_state.preselect_val_label_pop = (filtered_pop.iloc[0]["Value Label"] if not filtered_pop.empty else None)
         
-        # ---- SQL Logic for Population Comparison ----
-        st.subheader("View SQL Logic (Population Comparison)")
-        pop_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="pop_comp"]
-        pop_orig_field = pop_orig[pop_orig["field_name"]==selected_pop_field]
-        pop_val_labels = pop_orig_field["value_label"].dropna().unique().tolist()
-        if not pop_val_labels:
-            st.write("No Value Labels available for SQL Logic (Pop Comp).")
-        else:
-            default_pop_val = st.session_state.preselect_val_label_pop if st.session_state.preselect_val_label_pop in pop_val_labels else (pop_val_labels[0] if pop_val_labels else None)
-            sel_pop_val_label = st.selectbox(
-                "Select Value Label (Pop Comp)",
-                pop_val_labels,
-                index=pop_val_labels.index(default_pop_val) if default_pop_val else 0,
-                key="pop_sql_val_label"
-            )
-            months = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
-            months = sorted(months, reverse=True)
-            month_options = [m.strftime("%Y-%m") for m in months]
-            sel_pop_month = st.selectbox("Select Month (Pop Comp)", month_options, key="pop_sql_month")
-            if st.button("Show SQL Logic (Pop Comp)"):
-                matches = pop_orig_field[
-                    (pop_orig_field["value_label"] == sel_pop_val_label) &
-                    (pop_orig_field["filemonth_dt"].dt.strftime("%Y-%m") == sel_pop_month)
-                ]
-                sql_vals = matches["value_sql_logic"].dropna().unique()
-                if sql_vals.size > 0:
-                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
-                else:
-                    st.text_area("Value SQL Logic (Pop Comp)", "No SQL Logic found", height=150)
+        # ------------------------
+        # 3. (Optional) SQL Logic Blocks can be placed here if needed...
+        # ------------------------
         
-        # ---- Excel Download with Aggregated Summary Comments as Cell Notes ----
-        # First, capture the aggregated comments from the summary
+        # ------------------------
+        # 4. Refresh Aggregation and Display Summary Grid (Read-only)
+        # ------------------------
+        if st.button("Refresh Aggregation"):
+            update_summary_comments()
+        else:
+            # Always update aggregation before displaying summary
+            update_summary_comments()
+            
+        st.subheader("Summary (Aggregated Comments)")
+        sum_df = st.session_state.summary_df.copy()
+        gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
+        gb_sum.configure_default_column(
+            editable=False,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150}
+        )
+        sum_opts = gb_sum.build()
+        for c in sum_opts["columnDefs"]:
+            c["headerName"] = "\n".join(c["headerName"].split())
+            c["width"] = 150
+            c["minWidth"] = 100
+            c["maxWidth"] = 200
+        sum_opts["rowSelection"] = "single"
+        sum_opts["pagination"] = False
+        sum_opts["rowHeight"] = 40
+        sum_opts["headerHeight"] = 80
+        sum_height = compute_grid_height(sum_df, 40, 80)
+        AgGrid(
+            sum_df,
+            gridOptions=sum_opts,
+            update_mode=GridUpdateMode.VALUE_CHANGED,
+            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+            key="sum_grid",
+            height=sum_height,
+            use_container_width=True
+        )
+        
+        # ------------------------
+        # 5. Excel Download with Aggregated Comments as Cell Notes
+        # ------------------------
+        # (We use the aggregated comments from the summary)
         comments = st.session_state.summary_df["Comment"]
-        # Create a copy and clear the "Comment" column for export
+        # Create a copy for export; clear the "Comment" column values so the cell appears empty.
         export_sum = st.session_state.summary_df.copy()
-        # Ensure the "Comment" column exists so we know its position
-        if "Comment" not in export_sum.columns:
-            export_sum["Comment"] = ""
-        # Replace its content with empty strings so that the cell itself appears empty
+        # (Keep the column so we know its position)
         export_sum["Comment"] = ""
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
@@ -417,11 +378,13 @@ def main():
             st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
             workbook  = writer.book
             sheet = writer.sheets["Summary"]
-            # Get the column index for the "Comment" column (1-indexed)
+            # Find the column index for "Comment" (1-indexed)
             comment_col_index = list(export_sum.columns).index("Comment") + 1
+            # Attach each aggregated comment as a cell note
             for i, comm in comments.items():
                 if str(comm).strip():
                     cell = sheet.cell(row=i+2, column=comment_col_index)
+                    cell.value = ""  # leave cell value blank
                     cell.comment = Comment(str(comm), "User")
         st.download_button(
             "Download Report as Excel",
