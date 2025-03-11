@@ -6,19 +6,30 @@ import os
 import datetime
 import re
 from io import BytesIO
+from urllib.parse import urlencode
 from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from openpyxl.comments import Comment
 
-# Initialize session state key for SQL logic text if not set.
-if "sql_logic_value" not in st.session_state:
-    st.session_state["sql_logic_value"] = ""
+# For demonstration, simulate a Python function that processes row data.
+def process_row_data(row):
+    # This function can do any processing.
+    # For demonstration, we simply return a string.
+    return f"Processed data for Field: {row['Field Name']}, Value Label: {row['Value Label']}"
+
+# Check for URL query parameters
+query_params = st.experimental_get_query_params()
+if "selected_row" in query_params:
+    # If a row is selected via hyperlink, process it.
+    selected_row_str = query_params["selected_row"][0]
+    # In a real app, you would decode this value and lookup the corresponding data.
+    st.write("Hyperlink triggered processing:", selected_row_str)
+    result = process_row_data(eval(selected_row_str))  # use eval for demonstration only
+    st.write("Result:", result)
 
 def compute_grid_height(df, row_height=40, header_height=80):
     n = len(df)
-    if n == 0:
-        return header_height + 20
-    return min(n, 30) * row_height + header_height
+    return header_height + (min(n, 30) * row_height)
 
 def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
@@ -27,19 +38,15 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     rows = []
     for field in fields:
-        mask_miss_d1 = (
-            (df_data['analysis_type'] == 'value_dist') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date1) &
-            (df_data['value_label'].str.contains("Missing", case=False, na=False))
-        )
+        mask_miss_d1 = ((df_data['analysis_type'] == 'value_dist') &
+                        (df_data['field_name'] == field) &
+                        (df_data['filemonth_dt'] == date1) &
+                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
         missing_d1 = df_data.loc[mask_miss_d1, 'value_records'].sum()
-        mask_miss_d2 = (
-            (df_data['analysis_type'] == 'value_dist') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date2) &
-            (df_data['value_label'].str.contains("Missing", case=False, na=False))
-        )
+        mask_miss_d2 = ((df_data['analysis_type'] == 'value_dist') &
+                        (df_data['field_name'] == field) &
+                        (df_data['filemonth_dt'] == date2) &
+                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
         missing_d2 = df_data.loc[mask_miss_d2, 'value_records'].sum()
         phrases = [
             "1\\)   CF Loan - Both Pop, Diff Values",
@@ -51,19 +58,15 @@ def generate_summary_df(df_data, date1, date2):
                 if pd.notna(x) and re.search(pat, x):
                     return True
             return False
-        mask_pop_d1 = (
-            (df_data['analysis_type'] == 'pop_comp') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date1) &
-            (df_data['value_label'].apply(contains_phrase))
-        )
+        mask_pop_d1 = ((df_data['analysis_type'] == 'pop_comp') &
+                       (df_data['field_name'] == field) &
+                       (df_data['filemonth_dt'] == date1) &
+                       (df_data['value_label'].apply(contains_phrase)))
         pop_d1 = df_data.loc[mask_pop_d1, 'value_records'].sum()
-        mask_pop_d2 = (
-            (df_data['analysis_type'] == 'pop_comp') &
-            (df_data['field_name'] == field) &
-            (df_data['filemonth_dt'] == date2) &
-            (df_data['value_label'].apply(contains_phrase))
-        )
+        mask_pop_d2 = ((df_data['analysis_type'] == 'pop_comp') &
+                       (df_data['field_name'] == field) &
+                       (df_data['filemonth_dt'] == date2) &
+                       (df_data['value_label'].apply(contains_phrase)))
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
     df = pd.DataFrame(rows, columns=[
@@ -89,7 +92,6 @@ def generate_summary_df(df_data, date1, date2):
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ]
     df = df[new_order]
-    # Add one editable "Comment" column
     df["Comment"] = ""
     return df
 
@@ -133,7 +135,8 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
+                      for col in df.columns.values]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -192,19 +195,27 @@ def main():
         if "Comment" not in sum_df.columns:
             sum_df["Comment"] = ""
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(editable=False,
-            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+        gb_sum.configure_default_column(
+            editable=False,
+            cellStyle={'white-space':'normal','line-height':'1.2em','width':150}
+        )
         gb_sum.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
         for col in sum_df.columns:
             if col not in ["Field Name", "Comment"]:
                 if "Change" in col:
-                    gb_sum.configure_column(col, type=["numericColumn"],
+                    gb_sum.configure_column(
+                        col,
+                        type=["numericColumn"],
                         valueFormatter="(params.value != null ? params.value.toFixed(2)+'%' : '')",
-                        width=150, minWidth=100, maxWidth=200)
+                        width=150, minWidth=100, maxWidth=200
+                    )
                 else:
-                    gb_sum.configure_column(col, type=["numericColumn"],
+                    gb_sum.configure_column(
+                        col,
+                        type=["numericColumn"],
                         valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')",
-                        width=150, minWidth=100, maxWidth=200)
+                        width=150, minWidth=100, maxWidth=200
+                    )
         sum_opts = gb_sum.build()
         if isinstance(sum_opts, list):
             sum_opts = {"columnDefs": sum_opts}
@@ -240,7 +251,7 @@ def main():
                 st.session_state.active_field = new_field
                 st.experimental_rerun()
         
-        # ---- Value Distribution Grid with in-table Button ----
+        # ---- Value Distribution Grid with in-table hyperlink column ----
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         active_val = st.session_state.active_field if st.session_state.active_field in val_fields else (val_fields[0] if val_fields else None)
@@ -249,7 +260,7 @@ def main():
             key="val_field_select")
         st.session_state.active_field = selected_val_field
         filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==selected_val_field].copy()
-        # Add a dummy "Action" column for the in-table button.
+        # Add a dummy "Action" column that will become a hyperlink
         filtered_val["Action"] = ""
         if "Comment" not in filtered_val.columns:
             filtered_val["Comment"] = ""
@@ -257,20 +268,23 @@ def main():
         gb_val.configure_default_column(editable=False,
             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Configure the Action column with a custom cell renderer that returns an HTML button.
+        # Configure the Action column to be a hyperlink.
         gb_val.configure_column(
             "Action",
             headerName="Action",
-            cellRenderer="""
+            cellRenderer=JsCode("""
                 function(params) {
-                    return '<button style="width:100%;">Set SQL</button>';
+                    // Create a query string containing the row data (for demo purposes, using JSON.stringify)
+                    var rowData = encodeURIComponent(JSON.stringify(params.data));
+                    // Create a hyperlink that reloads the app with the selected row data as a query parameter
+                    var url = window.location.origin + window.location.pathname + '?selected_row=' + rowData;
+                    return `<a href="${url}">Set SQL</a>`;
                 }
-            """,
+            """),
             editable=False,
             suppressMenu=True,
             width=150, minWidth=100, maxWidth=200
         )
-        # Set update_mode to CELL_CLICKED so we can capture clicks on the button.
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
             val_opts = {"columnDefs": val_opts}
@@ -285,30 +299,16 @@ def main():
         val_res = AgGrid(
             filtered_val,
             gridOptions=val_opts,
-            update_mode=GridUpdateMode.CELL_CLICKED,
+            update_mode=GridUpdateMode.VALUE_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             key="val_grid",
             height=val_height,
             use_container_width=True
         )
-        # If a cell was clicked in the "Action" column, update SQL logic.
-        cell_event = val_res.get("cellClickedEvent")
-        if cell_event and cell_event["colDef"]["field"] == "Action":
-            row_data = cell_event["data"]
-            sel_val_label = row_data.get("Value Label", "")
-            matching = st.session_state.df_data[
-                (st.session_state.df_data["analysis_type"]=="value_dist") &
-                (st.session_state.df_data["field_name"]==selected_val_field) &
-                (st.session_state.df_data["value_label"]==sel_val_label)
-            ]["value_sql_logic"].dropna().unique()
-            if matching.size > 0:
-                st.session_state["sql_logic_value"] = "\n".join(matching)
-            else:
-                st.session_state["sql_logic_value"] = "No SQL Logic found"
         updated_val = pd.DataFrame(val_res["data"])
         st.session_state.value_dist_df.update(updated_val)
         
-        st.text_area("SQL Logic (Value Dist)", st.session_state["sql_logic_value"], key="sql_logic_area_val", height=150)
+        st.text_area("SQL Logic (Value Dist)", st.session_state.get("sql_logic_value", ""), key="sql_logic_area_val", height=150)
         
         # ---- Population Comparison Grid ----
         st.subheader("Population Comparison")
