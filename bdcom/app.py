@@ -19,7 +19,8 @@ def compute_grid_height(df, row_height=40, header_height=80):
     return header_height + (min(n, 30) * row_height)
 
 def get_excel_engine(file_path):
-    return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
+    # For writing, we are using openpyxl (no engine parameter needed for .xlsx)
+    return None
 
 def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
@@ -146,11 +147,7 @@ def flatten_dataframe(df):
     return df
 
 def load_report_data(file_path, date1, date2):
-    engine = get_excel_engine(file_path)
-    if engine:
-        df_data = pd.read_excel(file_path, sheet_name="Data", engine=engine)
-    else:
-        df_data = pd.read_excel(file_path, sheet_name="Data")
+    df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
     summary_df = generate_summary_df(df_data, date1, date2)
     val_dist_df = generate_distribution_df(df_data, "value_dist", date1)
@@ -169,19 +166,19 @@ def main():
     if not os.path.exists(folder_path):
         st.sidebar.error(f"Folder '{folder}' not found.")
         return
-    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx', '.xlsb'))]
+    # Only .xlsx files are supported for in-place update.
+    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.xlsx')]
     if not all_files:
         st.sidebar.error(f"No Excel files found in folder '{folder}'.")
         return
     selected_file = st.sidebar.selectbox("Select an Excel File", all_files)
+    input_file_path = os.path.join(folder_path, selected_file)
     selected_date = st.sidebar.date_input("Select Date for Date1", datetime.date(2025, 1, 1))
     date1 = datetime.datetime.combine(selected_date, datetime.datetime.min.time())
     date2 = date1 - relativedelta(months=1)
     
     if st.sidebar.button("Generate Report"):
-        df_data, summary_df, val_dist_df, pop_comp_df = load_report_data(
-            os.path.join(folder_path, selected_file), date1, date2
-        )
+        df_data, summary_df, val_dist_df, pop_comp_df = load_report_data(input_file_path, date1, date2)
         st.session_state.df_data = df_data
         st.session_state.summary_df = summary_df
         st.session_state.value_dist_df = flatten_dataframe(val_dist_df.copy())
@@ -190,6 +187,7 @@ def main():
         st.session_state.folder = folder
         st.session_state.date1 = date1
         st.session_state.date2 = date2
+        st.session_state.input_file_path = input_file_path
         st.session_state.active_field = None
 
     st.write("Working Directory:", os.getcwd())
@@ -199,7 +197,7 @@ def main():
         st.write(f"**Folder:** {st.session_state.folder}")
         st.write(f"**File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
-
+        
         ##############################
         # Value Distribution Grid
         ##############################
@@ -416,94 +414,90 @@ def main():
                use_container_width=True)
 
         ##############################
-        # Excel Download with Cell Notes
+        # In-Place Update of Input Excel File
         ##############################
-        out_buf = BytesIO()
-        with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
-            # --- Summary Sheet Export ---
-            export_sum = st.session_state.summary_df.copy().reset_index(drop=True)
-            sum_comments = export_sum["Comment"]
-            # Drop the Comment column from export table
-            export_sum.drop(columns=["Comment"], inplace=True, errors="ignore")
-            export_sum.to_excel(writer, index=False, sheet_name="Summary")
-            summary_sheet = writer.sheets["Summary"]
+        try:
+            # Open the input Excel file in append mode (replace the sheets)
+            with pd.ExcelWriter(st.session_state.input_file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                # --- Summary Sheet ---
+                export_sum = st.session_state.summary_df.copy().reset_index(drop=True)
+                sum_comments = export_sum["Comment"]
+                export_sum.drop(columns=["Comment"], inplace=True, errors="ignore")
+                export_sum.to_excel(writer, index=False, sheet_name="Summary")
+                summary_sheet = writer.sheets["Summary"]
 
-            # Attach the aggregated note to the cell in the Month-to-Month Diff (date1) column
-            d1_col_name = f"Month-to-Month Diff ({st.session_state.date1.strftime('%Y-%m-%d')})"
-            sum_cols = export_sum.columns.tolist()
-            try:
-                d1_col_index = sum_cols.index(d1_col_name) + 1
-            except ValueError:
-                d1_col_index = export_sum.shape[1]
-            for idx, comm in enumerate(sum_comments):
-                excel_row = idx + 2  # header is row 1
-                if str(comm).strip():
-                    cell = summary_sheet.cell(row=excel_row, column=d1_col_index)
-                    com_obj = Comment(str(comm), "User")
-                    com_obj.visible = True
-                    cell.comment = com_obj
-
-            # --- Value Distribution Sheet Export ---
-            vd_df = st.session_state.value_dist_df.copy().reset_index(drop=True)
-            st.session_state.value_dist_df = vd_df
-            vd_df.to_excel(writer, index=False, sheet_name="Value Distribution")
-            vd_sheet = writer.sheets["Value Distribution"]
-            vd_cols = vd_df.columns.tolist()
-            date_str = st.session_state.date1.strftime("%Y-%m")
-            try:
-                vd_sum_col_index = vd_cols.index(date_str + " Sum") + 1
-                vd_percent_col_index = vd_cols.index(date_str + " Percent") + 1
-            except ValueError:
-                vd_sum_col_index = vd_percent_col_index = None
-            for idx, row in vd_df.iterrows():
-                excel_row = idx + 2
-                field = row["Field Name"]
-                agg_note = st.session_state.summary_df.loc[st.session_state.summary_df["Field Name"] == field, "Comment"].values
-                if len(agg_note) > 0 and agg_note[0].strip():
-                    if vd_sum_col_index is not None:
-                        cell = vd_sheet.cell(row=excel_row, column=vd_sum_col_index)
-                        com_obj = Comment(agg_note[0], "User")
-                        com_obj.visible = True
-                        cell.comment = com_obj
-                    if vd_percent_col_index is not None:
-                        cell = vd_sheet.cell(row=excel_row, column=vd_percent_col_index)
-                        com_obj = Comment(agg_note[0], "User")
+                # Attach aggregated note to the cell in the Month-to-Month Diff (date1) column
+                d1_col_name = f"Month-to-Month Diff ({st.session_state.date1.strftime('%Y-%m-%d')})"
+                sum_cols = export_sum.columns.tolist()
+                try:
+                    d1_col_index = sum_cols.index(d1_col_name) + 1
+                except ValueError:
+                    d1_col_index = export_sum.shape[1]
+                for idx, comm in enumerate(sum_comments):
+                    excel_row = idx + 2  # header is row 1
+                    if str(comm).strip():
+                        cell = summary_sheet.cell(row=excel_row, column=d1_col_index)
+                        com_obj = Comment(str(comm), "User")
                         com_obj.visible = True
                         cell.comment = com_obj
 
-            # --- Population Comparison Sheet Export ---
-            pop_df = st.session_state.pop_comp_df.copy().reset_index(drop=True)
-            st.session_state.pop_comp_df = pop_df
-            pop_df.to_excel(writer, index=False, sheet_name="Population Comparison")
-            pop_sheet = writer.sheets["Population Comparison"]
-            pop_cols = pop_df.columns.tolist()
-            try:
-                pop_sum_col_index = pop_cols.index(date_str + " Sum") + 1
-                pop_percent_col_index = pop_cols.index(date_str + " Percent") + 1
-            except ValueError:
-                pop_sum_col_index = pop_percent_col_index = None
-            for idx, row in pop_df.iterrows():
-                excel_row = idx + 2
-                field = row["Field Name"]
-                agg_note = st.session_state.summary_df.loc[st.session_state.summary_df["Field Name"] == field, "Comment"].values
-                if len(agg_note) > 0 and agg_note[0].strip():
-                    if pop_sum_col_index is not None:
-                        cell = pop_sheet.cell(row=excel_row, column=pop_sum_col_index)
-                        com_obj = Comment(agg_note[0], "User")
-                        com_obj.visible = True
-                        cell.comment = com_obj
-                    if pop_percent_col_index is not None:
-                        cell = pop_sheet.cell(row=excel_row, column=pop_percent_col_index)
-                        com_obj = Comment(agg_note[0], "User")
-                        com_obj.visible = True
-                        cell.comment = com_obj
+                # --- Value Distribution Sheet ---
+                vd_df = st.session_state.value_dist_df.copy().reset_index(drop=True)
+                vd_df.to_excel(writer, index=False, sheet_name="Value Distribution")
+                vd_sheet = writer.sheets["Value Distribution"]
+                vd_cols = vd_df.columns.tolist()
+                date_str = st.session_state.date1.strftime("%Y-%m")
+                try:
+                    vd_sum_col_index = vd_cols.index(date_str + " Sum") + 1
+                    vd_percent_col_index = vd_cols.index(date_str + " Percent") + 1
+                except ValueError:
+                    vd_sum_col_index = vd_percent_col_index = None
+                for idx, row in vd_df.iterrows():
+                    excel_row = idx + 2
+                    field = row["Field Name"]
+                    agg_note = st.session_state.summary_df.loc[st.session_state.summary_df["Field Name"] == field, "Comment"].values
+                    if len(agg_note) > 0 and agg_note[0].strip():
+                        if vd_sum_col_index is not None:
+                            cell = vd_sheet.cell(row=excel_row, column=vd_sum_col_index)
+                            com_obj = Comment(agg_note[0], "User")
+                            com_obj.visible = True
+                            cell.comment = com_obj
+                        if vd_percent_col_index is not None:
+                            cell = vd_sheet.cell(row=excel_row, column=vd_percent_col_index)
+                            com_obj = Comment(agg_note[0], "User")
+                            com_obj.visible = True
+                            cell.comment = com_obj
 
-        st.download_button(
-            "Download Report as Excel",
-            data=out_buf.getvalue(),
-            file_name="FRY14M_Field_Analysis_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+                # --- Population Comparison Sheet ---
+                pop_df = st.session_state.pop_comp_df.copy().reset_index(drop=True)
+                pop_df.to_excel(writer, index=False, sheet_name="Population Comparison")
+                pop_sheet = writer.sheets["Population Comparison"]
+                pop_cols = pop_df.columns.tolist()
+                try:
+                    pop_sum_col_index = pop_cols.index(date_str + " Sum") + 1
+                    pop_percent_col_index = pop_cols.index(date_str + " Percent") + 1
+                except ValueError:
+                    pop_sum_col_index = pop_percent_col_index = None
+                for idx, row in pop_df.iterrows():
+                    excel_row = idx + 2
+                    field = row["Field Name"]
+                    agg_note = st.session_state.summary_df.loc[st.session_state.summary_df["Field Name"] == field, "Comment"].values
+                    if len(agg_note) > 0 and agg_note[0].strip():
+                        if pop_sum_col_index is not None:
+                            cell = pop_sheet.cell(row=excel_row, column=pop_sum_col_index)
+                            com_obj = Comment(agg_note[0], "User")
+                            com_obj.visible = True
+                            cell.comment = com_obj
+                        if pop_percent_col_index is not None:
+                            cell = pop_sheet.cell(row=excel_row, column=pop_percent_col_index)
+                            com_obj = Comment(agg_note[0], "User")
+                            com_obj.visible = True
+                            cell.comment = com_obj
+
+                writer.save()
+            st.success("The input Excel file has been updated successfully!")
+        except Exception as e:
+            st.error(f"Error updating the Excel file: {e}")
 
 if __name__ == "__main__":
     main()
