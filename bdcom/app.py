@@ -1,6 +1,4 @@
 import streamlit as st
-st.set_page_config(page_title="Final FRY14M Field Analysis", layout="wide", initial_sidebar_state="expanded")
-
 import pandas as pd
 import os
 import datetime
@@ -10,10 +8,9 @@ from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from openpyxl.comments import Comment
 
-# Do not allow editing of comments in the summary grid.
-# Comments are only added/edited in the Value Distribution and Population Comparison grids.
-# Aggregated comments from those two grids will then be stored in the Summary table.
-
+# ---------------------------------------------------------------------
+# Utility functions and DataFrame generators
+# ---------------------------------------------------------------------
 def compute_grid_height(df, row_height=40, header_height=80):
     n = len(df)
     if n == 0:
@@ -27,16 +24,21 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     rows = []
     for field in fields:
-        mask_miss_d1 = ((df_data['analysis_type'] == 'value_dist') &
-                        (df_data['field_name'] == field) &
-                        (df_data['filemonth_dt'] == date1) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_miss_d1 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_d1 = df_data.loc[mask_miss_d1, 'value_records'].sum()
-        mask_miss_d2 = ((df_data['analysis_type'] == 'value_dist') &
-                        (df_data['field_name'] == field) &
-                        (df_data['filemonth_dt'] == date2) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_miss_d2 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_d2 = df_data.loc[mask_miss_d2, 'value_records'].sum()
+
         phrases = [
             "1\\)   CF Loan - Both Pop, Diff Values",
             "2\\)   CF Loan - Prior Null, Current Pop",
@@ -47,16 +49,22 @@ def generate_summary_df(df_data, date1, date2):
                 if pd.notna(x) and re.search(pat, x):
                     return True
             return False
-        mask_pop_d1 = ((df_data['analysis_type'] == 'pop_comp') &
-                       (df_data['field_name'] == field) &
-                       (df_data['filemonth_dt'] == date1) &
-                       (df_data['value_label'].apply(contains_phrase)))
+
+        mask_pop_d1 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].apply(contains_phrase))
+        )
         pop_d1 = df_data.loc[mask_pop_d1, 'value_records'].sum()
-        mask_pop_d2 = ((df_data['analysis_type'] == 'pop_comp') &
-                       (df_data['field_name'] == field) &
-                       (df_data['filemonth_dt'] == date2) &
-                       (df_data['value_label'].apply(contains_phrase)))
+        mask_pop_d2 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].apply(contains_phrase))
+        )
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
+
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
     df = pd.DataFrame(rows, columns=[
         "Field Name",
@@ -141,20 +149,22 @@ def load_report_data(file_path, date1, date2):
     pop_comp_df = generate_distribution_df(df_data, "pop_comp", date1)
     return df_data, summary_df, val_dist_df, pop_comp_df
 
-# Aggregates comments from value distribution and population comparison for a given field.
+# ---------------------------------------------------------------------
+# Comment aggregation and SQL lookup functions
+# ---------------------------------------------------------------------
 def aggregate_comments(field, val_df, pop_df):
     notes = []
-    for idx, row in val_df[val_df["Field Name"]==field].iterrows():
+    # Expecting "Value Label" to be present in both dataframes.
+    for idx, row in val_df[val_df["Field Name"] == field].iterrows():
         comm = str(row.get("Comment", "")).strip()
         if comm:
             notes.append(f"{row.get('Value Label', '')} - {comm}")
-    for idx, row in pop_df[pop_df["Field Name"]==field].iterrows():
+    for idx, row in pop_df[pop_df["Field Name"] == field].iterrows():
         comm = str(row.get("Comment", "")).strip()
         if comm:
             notes.append(f"{row.get('Value Label', '')} - {comm}")
     return "\n".join(notes)
 
-# Lookup function for SQL logic in Value Distribution.
 def lookup_sql_logic(df_data, field, val_label):
     matching = df_data[
         (df_data["analysis_type"]=="value_dist") &
@@ -166,9 +176,21 @@ def lookup_sql_logic(df_data, field, val_label):
     else:
         return "No SQL Logic found"
 
-st.write("Working Directory:", os.getcwd())
+def update_summary_comments():
+    updated_sum = st.session_state.summary_df.copy()
+    for field in updated_sum["Field Name"].unique():
+        agg_comment = aggregate_comments(field, st.session_state.value_dist_df, st.session_state.pop_comp_df)
+        updated_sum.loc[updated_sum["Field Name"] == field, "Comment"] = agg_comment
+    st.session_state.summary_df = updated_sum
 
+# ---------------------------------------------------------------------
+# Main application
+# ---------------------------------------------------------------------
 def main():
+    st.set_page_config(page_title="Final FRY14M Field Analysis", layout="wide", initial_sidebar_state="expanded")
+    st.write("Working Directory:", os.getcwd())
+
+    # Sidebar for file and date selection
     st.sidebar.title("File & Date Selection")
     folder = st.sidebar.selectbox("Select Folder", ["BDCOM", "WFHMSA", "BCards"])
     folder_path = os.path.join(os.getcwd(), folder)
@@ -176,12 +198,12 @@ def main():
     if not os.path.exists(folder_path):
         st.sidebar.error(f"Folder '{folder}' not found.")
         return
-    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx','.xlsb'))]
+    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx', '.xlsb'))]
     if not all_files:
         st.sidebar.error(f"No Excel files found in folder '{folder}'.")
         return
     selected_file = st.sidebar.selectbox("Select an Excel File", all_files)
-    selected_date = st.sidebar.date_input("Select Date for Date1", datetime.date(2025,1,1))
+    selected_date = st.sidebar.date_input("Select Date for Date1", datetime.date(2025, 1, 1))
     date1 = datetime.datetime.combine(selected_date, datetime.datetime.min.time())
     date2 = date1 - relativedelta(months=1)
     
@@ -197,34 +219,44 @@ def main():
         st.session_state.folder = folder
         st.session_state.date1 = date1
         st.session_state.date2 = date2
-        st.session_state.active_field = None
-
+        st.session_state.active_val_field = None
+        st.session_state.active_pop_field = None
+        st.session_state["sql_logic_value"] = ""
+    
     if "df_data" in st.session_state:
+        # Update aggregated comments in the summary before rendering
+        update_summary_comments()
+        
+        # Optional button to manually refresh the summary grid
+        if st.button("Refresh Summary"):
+            update_summary_comments()
+            st.experimental_rerun()
+        
         st.title("FRY14M Field Analysis Summary Report")
         st.write(f"**Folder:** {st.session_state.folder}")
         st.write(f"**File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
-        # ---- Summary Grid (Comments not editable) ----
+        # ---- Summary Grid (Read-only) ----
         sum_df = st.session_state.summary_df.copy()
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(editable=False,
-            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
-        # Do not allow editing on the Comment column in Summary.
+        gb_sum.configure_default_column(
+            editable=False,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150}
+        )
         sum_opts = gb_sum.build()
-        if isinstance(sum_opts, list):
-            sum_opts = {"columnDefs": sum_opts}
         for c in sum_opts["columnDefs"]:
             c["headerName"] = "\n".join(c["headerName"].split())
-            c["width"] = 150; c["minWidth"] = 100; c["maxWidth"] = 200
-        gb_sum.configure_selection("single", use_checkbox=False)
+            c["width"] = 150
+            c["minWidth"] = 100
+            c["maxWidth"] = 200
         sum_opts["rowSelection"] = "single"
         sum_opts["pagination"] = False
         sum_opts["rowHeight"] = 40
         sum_opts["headerHeight"] = 80
-        sum_height = compute_grid_height(sum_df,40,80)
+        sum_height = compute_grid_height(sum_df, 40, 80)
         st.subheader("Summary")
-        sum_res = AgGrid(
+        AgGrid(
             sum_df,
             gridOptions=sum_opts,
             update_mode=GridUpdateMode.VALUE_CHANGED,
@@ -233,41 +265,39 @@ def main():
             height=sum_height,
             use_container_width=True
         )
-        updated_sum = pd.DataFrame(sum_res["data"])
-        # Now, aggregate comments from Value Distribution and Population Comparison.
-        for field in updated_sum["Field Name"].unique():
-            agg_comment = aggregate_comments(field, st.session_state.value_dist_df, st.session_state.pop_comp_df)
-            updated_sum.loc[updated_sum["Field Name"]==field, "Comment"] = agg_comment
-        st.session_state.summary_df = updated_sum
         
-        # ---- Value Distribution Grid (Editable comments) ----
+        # ---- Value Distribution Grid (Editable Comments) ----
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
-        active_val = st.session_state.active_field if st.session_state.active_field in val_fields else (val_fields[0] if val_fields else None)
-        selected_val_field = st.selectbox("Select Field (Value Dist)", val_fields,
+        active_val = st.session_state.get("active_val_field", val_fields[0] if val_fields else None)
+        selected_val_field = st.selectbox(
+            "Select Field (Value Dist)",
+            val_fields,
             index=val_fields.index(active_val) if active_val in val_fields else 0,
-            key="val_field_select")
-        st.session_state.active_field = selected_val_field
-        filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==selected_val_field].copy()
+            key="val_field_select"
+        )
+        st.session_state.active_val_field = selected_val_field
+        filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
         if "Comment" not in filtered_val.columns:
             filtered_val["Comment"] = ""
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-        gb_val.configure_default_column(editable=False,
-            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+        gb_val.configure_default_column(
+            editable=False,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150}
+        )
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Use checkbox selection so the user can select a row.
         gb_val.configure_selection("single", use_checkbox=True)
         val_opts = gb_val.build()
-        if isinstance(val_opts, list):
-            val_opts = {"columnDefs": val_opts}
         for c in val_opts["columnDefs"]:
             c["headerName"] = "\n".join(c["headerName"].split())
-            c["width"] = 150; c["minWidth"] = 100; c["maxWidth"] = 200
+            c["width"] = 150
+            c["minWidth"] = 100
+            c["maxWidth"] = 200
         val_opts["rowSelection"] = "single"
         val_opts["pagination"] = False
         val_opts["rowHeight"] = 40
         val_opts["headerHeight"] = 80
-        val_height = compute_grid_height(filtered_val,40,80)
+        val_height = compute_grid_height(filtered_val, 40, 80)
         val_res = AgGrid(
             filtered_val,
             gridOptions=val_opts,
@@ -277,13 +307,13 @@ def main():
             height=val_height,
             use_container_width=True
         )
-        selected_rows = val_res.get("selectedRows", [])
         st.session_state.value_dist_df.update(pd.DataFrame(val_res["data"]))
         
         # ---- SQL Logic for Value Distribution via Dropdown ----
         st.subheader("View SQL Logic (Value Distribution)")
-        # Get distinct Value Labels for the selected field.
-        val_options = list(st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==selected_val_field]["Value Label"].unique())
+        val_options = list(
+            st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field]["Value Label"].unique()
+        )
         if not val_options:
             st.write("No Value Labels available for SQL Logic.")
         else:
@@ -293,33 +323,38 @@ def main():
                 st.session_state["sql_logic_value"] = sql_logic
         st.text_area("SQL Logic (Value Dist)", st.session_state.get("sql_logic_value", ""), key="sql_logic_area_val", height=150)
         
-        # ---- Population Comparison Grid (Editable comments) ----
+        # ---- Population Comparison Grid (Editable Comments) ----
         st.subheader("Population Comparison")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
-        active_pop = st.session_state.active_field if st.session_state.active_field in pop_fields else (pop_fields[0] if pop_fields else None)
-        selected_pop_field = st.selectbox("Select Field (Pop Comp)", pop_fields,
+        active_pop = st.session_state.get("active_pop_field", pop_fields[0] if pop_fields else None)
+        selected_pop_field = st.selectbox(
+            "Select Field (Pop Comp)",
+            pop_fields,
             index=pop_fields.index(active_pop) if active_pop in pop_fields else 0,
-            key="pop_field_select")
-        st.session_state.active_field = selected_pop_field
-        filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"]==selected_pop_field].copy()
+            key="pop_field_select"
+        )
+        st.session_state.active_pop_field = selected_pop_field
+        filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
         if "Comment" not in filtered_pop.columns:
             filtered_pop["Comment"] = ""
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
-        gb_pop.configure_default_column(editable=False,
-            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+        gb_pop.configure_default_column(
+            editable=False,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150}
+        )
         gb_pop.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
         gb_pop.configure_selection("single", use_checkbox=True, suppressRowClickSelection=True)
         pop_opts = gb_pop.build()
-        if isinstance(pop_opts, list):
-            pop_opts = {"columnDefs": pop_opts}
         for c in pop_opts["columnDefs"]:
             c["headerName"] = "\n".join(c["headerName"].split())
-            c["width"] = 150; c["minWidth"] = 100; c["maxWidth"] = 200
+            c["width"] = 150
+            c["minWidth"] = 100
+            c["maxWidth"] = 200
         pop_opts["rowSelection"] = "single"
         pop_opts["pagination"] = False
         pop_opts["rowHeight"] = 40
         pop_opts["headerHeight"] = 80
-        pop_height = compute_grid_height(filtered_pop,40,80)
+        pop_height = compute_grid_height(filtered_pop, 40, 80)
         pop_res = AgGrid(
             filtered_pop,
             gridOptions=pop_opts,
@@ -345,17 +380,20 @@ def main():
             st.write("No Value Labels available for SQL Logic (Pop Comp).")
         else:
             default_pop_val = st.session_state.preselect_val_label_pop if st.session_state.preselect_val_label_pop in pop_val_labels else (pop_val_labels[0] if pop_val_labels else None)
-            sel_pop_val_label = st.selectbox("Select Value Label (Pop Comp)", pop_val_labels,
+            sel_pop_val_label = st.selectbox(
+                "Select Value Label (Pop Comp)",
+                pop_val_labels,
                 index=pop_val_labels.index(default_pop_val) if default_pop_val else 0,
-                key="pop_sql_val_label")
+                key="pop_sql_val_label"
+            )
             months = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
             months = sorted(months, reverse=True)
             month_options = [m.strftime("%Y-%m") for m in months]
             sel_pop_month = st.selectbox("Select Month (Pop Comp)", month_options, key="pop_sql_month")
             if st.button("Show SQL Logic (Pop Comp)"):
                 matches = pop_orig_field[
-                    (pop_orig_field["value_label"]==sel_pop_val_label) &
-                    (pop_orig_field["filemonth_dt"].dt.strftime("%Y-%m")==sel_pop_month)
+                    (pop_orig_field["value_label"] == sel_pop_val_label) &
+                    (pop_orig_field["filemonth_dt"].dt.strftime("%Y-%m") == sel_pop_month)
                 ]
                 sql_vals = matches["value_sql_logic"].dropna().unique()
                 if sql_vals.size > 0:
@@ -394,5 +432,5 @@ def main():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
