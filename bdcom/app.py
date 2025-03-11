@@ -98,7 +98,7 @@ def generate_summary_df(df_data, date1, date2):
         "Month-to-Month % Change"
     ]
     df = df[new_order]
-    df["Comment"] = ""  # Aggregated comment will be stored here
+    df["Comment"] = ""  # This column will store the aggregated comments
     return df
 
 def generate_distribution_df(df, analysis_type, date1):
@@ -218,8 +218,10 @@ def main():
         if "Comment" not in filtered_val.columns:
             filtered_val["Comment"] = ""
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-        gb_val.configure_default_column(editable=True,
-                                        cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
+        gb_val.configure_default_column(
+            editable=True,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150}
+        )
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
@@ -283,8 +285,10 @@ def main():
         if "Comment" not in filtered_pop.columns:
             filtered_pop["Comment"] = ""
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
-        gb_pop.configure_default_column(editable=True,
-                                        cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
+        gb_pop.configure_default_column(
+            editable=True,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150}
+        )
         gb_pop.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
         gb_pop.configure_selection("single", use_checkbox=True, suppressRowClickSelection=True)
         pop_opts = gb_pop.build()
@@ -370,11 +374,12 @@ def main():
         # Display the Summary Grid with New Column Order
         ##############################
         st.subheader("Summary")
-        # The summary DataFrame now has new column order
         sum_df = st.session_state.summary_df.copy()
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(editable=False,
-                                        cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
+        gb_sum.configure_default_column(
+            editable=False,
+            cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150}
+        )
         gb_sum.configure_column("Comment", editable=False, width=250, minWidth=100, maxWidth=300)
         for col in sum_df.columns:
             if col not in ["Field Name", "Comment"]:
@@ -416,22 +421,22 @@ def main():
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
             # --- Summary Sheet Export ---
-            export_sum = st.session_state.summary_df.copy()
-            # Retain the "Comment" column in session state, but drop it from the export table
+            export_sum = st.session_state.summary_df.copy().reset_index(drop=True)
             sum_comments = export_sum["Comment"]
+            # Drop the Comment column from export table
             export_sum.drop(columns=["Comment"], inplace=True, errors="ignore")
             export_sum.to_excel(writer, index=False, sheet_name="Summary")
             summary_sheet = writer.sheets["Summary"]
 
-            # For the summary sheet, attach the aggregated note to the cell for the date1 Month-to-Month Diff.
+            # Attach the aggregated note to the cell in the Month-to-Month Diff (date1) column
             d1_col_name = f"Month-to-Month Diff ({st.session_state.date1.strftime('%Y-%m-%d')})"
             sum_cols = export_sum.columns.tolist()
             try:
                 d1_col_index = sum_cols.index(d1_col_name) + 1
             except ValueError:
                 d1_col_index = export_sum.shape[1]
-            for row_idx, comm in enumerate(sum_comments):
-                excel_row = row_idx + 2  # +2 to account for header row
+            for idx, comm in enumerate(sum_comments):
+                excel_row = idx + 2  # header is row 1
                 if str(comm).strip():
                     cell = summary_sheet.cell(row=excel_row, column=d1_col_index)
                     com_obj = Comment(str(comm), "User")
@@ -439,9 +444,10 @@ def main():
                     cell.comment = com_obj
 
             # --- Value Distribution Sheet Export ---
-            st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
+            vd_df = st.session_state.value_dist_df.copy().reset_index(drop=True)
+            st.session_state.value_dist_df = vd_df
+            vd_df.to_excel(writer, index=False, sheet_name="Value Distribution")
             vd_sheet = writer.sheets["Value Distribution"]
-            vd_df = st.session_state.value_dist_df
             vd_cols = vd_df.columns.tolist()
             date_str = st.session_state.date1.strftime("%Y-%m")
             try:
@@ -449,8 +455,8 @@ def main():
                 vd_percent_col_index = vd_cols.index(date_str + " Percent") + 1
             except ValueError:
                 vd_sum_col_index = vd_percent_col_index = None
-            for i, row in vd_df.iterrows():
-                excel_row = i + 2
+            for idx, row in vd_df.iterrows():
+                excel_row = idx + 2
                 field = row["Field Name"]
                 agg_note = st.session_state.summary_df.loc[st.session_state.summary_df["Field Name"] == field, "Comment"].values
                 if len(agg_note) > 0 and agg_note[0].strip():
@@ -466,17 +472,18 @@ def main():
                         cell.comment = com_obj
 
             # --- Population Comparison Sheet Export ---
-            st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
+            pop_df = st.session_state.pop_comp_df.copy().reset_index(drop=True)
+            st.session_state.pop_comp_df = pop_df
+            pop_df.to_excel(writer, index=False, sheet_name="Population Comparison")
             pop_sheet = writer.sheets["Population Comparison"]
-            pop_df = st.session_state.pop_comp_df
             pop_cols = pop_df.columns.tolist()
             try:
                 pop_sum_col_index = pop_cols.index(date_str + " Sum") + 1
                 pop_percent_col_index = pop_cols.index(date_str + " Percent") + 1
             except ValueError:
                 pop_sum_col_index = pop_percent_col_index = None
-            for i, row in pop_df.iterrows():
-                excel_row = i + 2
+            for idx, row in pop_df.iterrows():
+                excel_row = idx + 2
                 field = row["Field Name"]
                 agg_note = st.session_state.summary_df.loc[st.session_state.summary_df["Field Name"] == field, "Comment"].values
                 if len(agg_note) > 0 and agg_note[0].strip():
