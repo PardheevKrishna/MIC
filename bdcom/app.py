@@ -240,18 +240,8 @@ def main():
         )
         updated_sum = pd.DataFrame(sum_res["data"])
         st.session_state.summary_df = updated_sum
-        for field_name in updated_sum["Field Name"].unique():
-            comment_for_field = updated_sum.loc[updated_sum["Field Name"]==field_name, "Comment"].iloc[0]
-            st.session_state.value_dist_df.loc[st.session_state.value_dist_df["Field Name"]==field_name, "Comment"] = comment_for_field
-            st.session_state.pop_comp_df.loc[st.session_state.pop_comp_df["Field Name"]==field_name, "Comment"] = comment_for_field
-        sel_sum = sum_res.get("selectedRows", [])
-        if sel_sum:
-            new_field = sel_sum[0].get("Field Name")
-            if new_field != st.session_state.active_field:
-                st.session_state.active_field = new_field
-                st.experimental_rerun()
         
-        # ---- Value Distribution Grid with in-table hyperlink column ----
+        # ---- Value Distribution Grid ----
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         active_val = st.session_state.active_field if st.session_state.active_field in val_fields else (val_fields[0] if val_fields else None)
@@ -260,31 +250,13 @@ def main():
             key="val_field_select")
         st.session_state.active_field = selected_val_field
         filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==selected_val_field].copy()
-        # Add a dummy "Action" column that will become a hyperlink
-        filtered_val["Action"] = ""
         if "Comment" not in filtered_val.columns:
             filtered_val["Comment"] = ""
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-        gb_val.configure_default_column(editable=False,
+        gb_val.configure_default_column(editable=True,
             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-        # Configure the Action column to be a hyperlink.
-        gb_val.configure_column(
-            "Action",
-            headerName="Action",
-            cellRenderer=JsCode("""
-                function(params) {
-                    // Create a query string containing the row data (for demo purposes, using JSON.stringify)
-                    var rowData = encodeURIComponent(JSON.stringify(params.data));
-                    // Create a hyperlink that reloads the app with the selected row data as a query parameter
-                    var url = window.location.origin + window.location.pathname + '?selected_row=' + rowData;
-                    return `<a href="${url}">Set SQL</a>`;
-                }
-            """),
-            editable=False,
-            suppressMenu=True,
-            width=150, minWidth=100, maxWidth=200
-        )
+        # (Removed the dummy "Action" column and its cellRenderer)
         val_opts = gb_val.build()
         if isinstance(val_opts, list):
             val_opts = {"columnDefs": val_opts}
@@ -308,7 +280,34 @@ def main():
         updated_val = pd.DataFrame(val_res["data"])
         st.session_state.value_dist_df.update(updated_val)
         
-        st.text_area("SQL Logic (Value Dist)", st.session_state.get("sql_logic_value", ""), key="sql_logic_area_val", height=150)
+        # ---- View SQL Logic (Value Distribution) ----
+        st.subheader("View SQL Logic (Value Distribution)")
+        val_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="value_dist"]
+        val_orig_field = val_orig[val_orig["field_name"]==selected_val_field]
+        val_val_labels = val_orig_field["value_label"].dropna().unique().tolist()
+        if not val_val_labels:
+            st.write("No Value Labels available for SQL Logic (Value Distribution).")
+        else:
+            default_val_val = st.session_state.get("preselect_val_label_val", None)
+            if default_val_val not in val_val_labels:
+                default_val_val = val_val_labels[0]
+            sel_val_val_label = st.selectbox("Select Value Label (Value Distribution)", val_val_labels,
+                index=val_val_labels.index(default_val_val) if default_val_val else 0,
+                key="val_sql_val_label")
+            months_val = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
+            months_val = sorted(months_val, reverse=True)
+            month_options_val = [m.strftime("%Y-%m") for m in months_val]
+            sel_val_month = st.selectbox("Select Month (Value Distribution)", month_options_val, key="val_sql_month")
+            if st.button("Show SQL Logic (Value Distribution)"):
+                matches_val = val_orig_field[
+                    (val_orig_field["value_label"]==sel_val_val_label) &
+                    (val_orig_field["filemonth_dt"].dt.strftime("%Y-%m")==sel_val_month)
+                ]
+                sql_vals_val = matches_val["value_sql_logic"].dropna().unique()
+                if sql_vals_val.size > 0:
+                    st.text_area("Value SQL Logic (Value Distribution)", "\n".join(sql_vals_val), height=150)
+                else:
+                    st.text_area("Value SQL Logic (Value Distribution)", "No SQL Logic found", height=150)
         
         # ---- Population Comparison Grid ----
         st.subheader("Population Comparison")
@@ -322,7 +321,7 @@ def main():
         if "Comment" not in filtered_pop.columns:
             filtered_pop["Comment"] = ""
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
-        gb_pop.configure_default_column(editable=False,
+        gb_pop.configure_default_column(editable=True,
             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_pop.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
         gb_pop.configure_selection("single", use_checkbox=True, suppressRowClickSelection=True)
@@ -376,10 +375,34 @@ def main():
                     (pop_orig_field["filemonth_dt"].dt.strftime("%Y-%m")==sel_pop_month)
                 ]
                 sql_vals = matches["value_sql_logic"].dropna().unique()
-                if sql_vals.size>0:
+                if sql_vals.size > 0:
                     st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
                 else:
                     st.text_area("Value SQL Logic (Pop Comp)","No SQL Logic found",height=150)
+        
+        # ---- Aggregate Comments into Summary ----
+        # Instead of copying from summary to detail tables, we now collect comments
+        # from both Value Distribution and Population Comparison and update the Summary.
+        updated_sum = st.session_state.summary_df.copy()
+        for field in updated_sum["Field Name"].unique():
+            notes = []
+            # From Value Distribution
+            field_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==field]
+            for idx, row in field_val.iterrows():
+                comment = row.get("Comment", "")
+                value_label = row.get("Value Label", "")
+                if pd.notna(comment) and comment.strip():
+                    notes.append(f"{value_label} - {comment}")
+            # From Population Comparison
+            field_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"]==field]
+            for idx, row in field_pop.iterrows():
+                comment = row.get("Comment", "")
+                value_label = row.get("Value Label", "")
+                if pd.notna(comment) and comment.strip():
+                    notes.append(f"{value_label} - {comment}")
+            aggregated_note = "\n".join(notes)
+            updated_sum.loc[updated_sum["Field Name"]==field, "Comment"] = aggregated_note
+        st.session_state.summary_df = updated_sum
         
         # ---- Excel Download with Summary Comments as Cell Notes ----
         out_buf = BytesIO()
@@ -407,6 +430,3 @@ def main():
 
 if __name__=="__main__":
     main()
-
-1. I should be able toa dd comments in value distribution and population comparison table. And when i add comments in value distribution and population comparison those should be added as notes in summary table. Those two tables have the same filed name multiple times, so if different comments are added for the same field names in different rows of value distribution and population comparison tables it should be added as notes in the format “<value_label> - <comment>” seperated by a new line. Those should be seen as notes in excel and as comment in comment column of summary table.
-2. Remove cdll_clicked atteibute and just add drop down for both tables to choose from value label and month
