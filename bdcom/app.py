@@ -222,16 +222,15 @@ def main():
         st.session_state.active_val_field = None
         st.session_state.active_pop_field = None
         st.session_state["sql_logic_value"] = ""
-    
+
     if "df_data" in st.session_state:
         # Update aggregated comments in the summary before rendering
         update_summary_comments()
-        
-        # Optional button to manually refresh the summary grid
+
+        # Provide a manual refresh button (no experimental_rerun)
         if st.button("Refresh Summary"):
             update_summary_comments()
-            st.experimental_rerun()
-        
+
         st.title("FRY14M Field Analysis Summary Report")
         st.write(f"**Folder:** {st.session_state.folder}")
         st.write(f"**File:** {st.session_state.selected_file}")
@@ -402,28 +401,27 @@ def main():
                     st.text_area("Value SQL Logic (Pop Comp)", "No SQL Logic found", height=150)
         
         # ---- Excel Download with Aggregated Summary Comments as Cell Notes ----
-        agg_comments = {}
-        for field in st.session_state.summary_df["Field Name"].unique():
-            agg_comments[field] = aggregate_comments(field, st.session_state.value_dist_df, st.session_state.pop_comp_df)
-        updated_sum = st.session_state.summary_df.copy()
-        updated_sum["Comment"] = updated_sum["Field Name"].map(agg_comments)
-        st.session_state.summary_df = updated_sum
-        
+        # First, capture the aggregated comments from the summary
+        comments = st.session_state.summary_df["Comment"]
+        # Create a copy and clear the "Comment" column for export
+        export_sum = st.session_state.summary_df.copy()
+        # Ensure the "Comment" column exists so we know its position
+        if "Comment" not in export_sum.columns:
+            export_sum["Comment"] = ""
+        # Replace its content with empty strings so that the cell itself appears empty
+        export_sum["Comment"] = ""
         out_buf = BytesIO()
         with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
-            export_sum = st.session_state.summary_df.copy()
-            comments = export_sum["Comment"]
-            export_sum.drop(columns=["Comment"], inplace=True, errors="ignore")
             export_sum.to_excel(writer, index=False, sheet_name="Summary")
             st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
             st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
             workbook  = writer.book
             sheet = writer.sheets["Summary"]
+            # Get the column index for the "Comment" column (1-indexed)
+            comment_col_index = list(export_sum.columns).index("Comment") + 1
             for i, comm in comments.items():
-                excel_row = i + 2
-                excel_col = export_sum.shape[1]
-                cell = sheet.cell(row=excel_row, column=excel_col)
                 if str(comm).strip():
+                    cell = sheet.cell(row=i+2, column=comment_col_index)
                     cell.comment = Comment(str(comm), "User")
         st.download_button(
             "Download Report as Excel",
