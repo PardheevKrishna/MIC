@@ -1,126 +1,70 @@
-import logging
-import numpy as np
 import pandas as pd
-import saspy
+import numpy as np
+import logging
 from time import time
+import pyreadstat
 
-###############################################################################
-# 1. SASPy CONFIGURATION (IOM on Windows)
-###############################################################################
-# We'll define a configuration dictionary inline and tell SASPy to use it.
-# Update the paths to match your local environment!
-
-my_configs = {
-    'SAS_config_names': ['winlocal'],
-
-    'winlocal': {
-        # Path to your local Java runtime
-        'java': r'C:\Program Files\Java\jre1.8.0_251\bin\java.exe',  # <-- Update!
-
-        # For a local SAS install on Windows, usually 'localhost' and port 8591
-        'iomhost': 'localhost',
-        'iomport': 8591,
-
-        # Classpath entries pointing to the JAR files in your SASPy 'java' directory
-        'classpath': [
-            r'C:\path\to\saspy\java\sas.core.jar',     # <-- Update!
-            r'C:\path\to\saspy\java\saspyiom.jar',     # <-- Update!
-            r'C:\path\to\saspy\java\log4j.jar'         # <-- Update!
-        ],
-
-        # Common encoding on Windows
-        'encoding': 'windows-1252',
-
-        # Increase if needed for large data
-        'timeout': 9999
-    }
-}
-
-###############################################################################
-# 2. LOGGING SETUP
-###############################################################################
+# Configure logging to display debug messages with timestamps.
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-###############################################################################
-# 3. START THE SAS SESSION
-###############################################################################
-# Pass the config dictionary and the name of the config we want to use
-logging.debug("Starting SAS session via SASPy (IOM on Windows).")
-sas = saspy.SASsession(cfgdict=my_configs, cfgname='winlocal')
-logging.debug("SAS session started successfully (if no errors above).")
-
-###############################################################################
-# 4. GENERATE DUMMY DATA (1M rows, 200 columns)
-###############################################################################
-# Let's split them into 100 numerical and 100 categorical for variety.
+# Parameters for dummy data generation
 num_rows = 1_000_000
-num_numerical = 100
-num_categorical = 100
-chunk_size = 100_000
+num_numerical = 100       # Number of numerical columns
+num_categorical = 100     # Number of categorical columns
+chunk_size = 100_000      # Number of rows per chunk
 categories = ['A', 'B', 'C', 'D', 'E']
 
-logging.debug("Generating dummy data: 1 million rows, 200 columns in chunks.")
+logging.debug(f"Starting dummy data generation: {num_rows} rows with {num_numerical + num_categorical} columns "
+              f"({num_numerical} numerical, {num_categorical} categorical) in chunks of {chunk_size} rows.")
 
+# List to store DataFrame chunks
 df_chunks = []
 num_chunks = num_rows // chunk_size
 
 start_time = time()
+# Generate data in chunks
 for chunk_index in range(num_chunks):
-    logging.debug(f"Generating chunk {chunk_index+1}/{num_chunks}")
-    # Numerical data
+    logging.debug(f"Generating chunk {chunk_index + 1}/{num_chunks}")
+    
+    # Generate numerical data: random floats between 0 and 1
     numerical_data = np.random.rand(chunk_size, num_numerical)
-    # Categorical data
+    # Generate categorical data: random selections from the provided categories
     categorical_data = np.random.choice(categories, size=(chunk_size, num_categorical))
-
-    # Build chunk DataFrames
-    df_num = pd.DataFrame(numerical_data, columns=[f'num_{i+1}' for i in range(num_numerical)])
-    df_cat = pd.DataFrame(categorical_data, columns=[f'cat_{i+1}' for i in range(num_categorical)])
-    df_chunk = pd.concat([df_num, df_cat], axis=1)
+    
+    # Create DataFrames for each type of data
+    df_numerical = pd.DataFrame(numerical_data, columns=[f'num_{i+1}' for i in range(num_numerical)])
+    df_categorical = pd.DataFrame(categorical_data, columns=[f'cat_{i+1}' for i in range(num_categorical)])
+    
+    # Concatenate numerical and categorical DataFrames side-by-side
+    df_chunk = pd.concat([df_numerical, df_categorical], axis=1)
     df_chunks.append(df_chunk)
 
-# Handle remainder if rows not multiple of chunk_size
+# Handle any remaining rows if num_rows is not an exact multiple of chunk_size
 remainder = num_rows % chunk_size
 if remainder > 0:
-    logging.debug(f"Generating remainder chunk with {remainder} rows.")
+    logging.debug(f"Generating remainder chunk with {remainder} rows")
     numerical_data = np.random.rand(remainder, num_numerical)
     categorical_data = np.random.choice(categories, size=(remainder, num_categorical))
-
-    df_num = pd.DataFrame(numerical_data, columns=[f'num_{i+1}' for i in range(num_numerical)])
-    df_cat = pd.DataFrame(categorical_data, columns=[f'cat_{i+1}' for i in range(num_categorical)])
-    df_chunk = pd.concat([df_num, df_cat], axis=1)
+    
+    df_numerical = pd.DataFrame(numerical_data, columns=[f'num_{i+1}' for i in range(num_numerical)])
+    df_categorical = pd.DataFrame(categorical_data, columns=[f'cat_{i+1}' for i in range(num_categorical)])
+    df_chunk = pd.concat([df_numerical, df_categorical], axis=1)
     df_chunks.append(df_chunk)
 
-# Concatenate all chunks
+# Concatenate all chunks into one DataFrame
 df = pd.concat(df_chunks, ignore_index=True)
-logging.debug(f"Dummy data generated. Shape: {df.shape}")
+logging.debug(f"Dummy data generation complete. DataFrame shape: {df.shape}")
 
 end_time = time()
 logging.debug(f"Data generation took {end_time - start_time:.2f} seconds.")
 
-###############################################################################
-# 5. TRANSFER THE DATAFRAME TO SAS (WORK LIBRARY)
-###############################################################################
-logging.debug("Transferring DataFrame to SAS WORK library as 'dummy_data'.")
-sas.df2sd(df, table='dummy_data', libref='work')
-logging.debug("Transfer complete.")
+# Save the DataFrame as a SAS XPORT file (SAS transport file)
+output_filename = 'dummy_data.xpt'
+logging.debug(f"Writing DataFrame to SAS XPORT file: {output_filename}")
+pyreadstat.write_xport(df, output_filename)
+logging.debug("SAS XPORT file written successfully.")
 
-###############################################################################
-# 6. SAVE DATA PERMANENTLY AS A .sas7bdat FILE
-###############################################################################
-# We'll define a library pointing to a directory on your machine. Update the path!
-libref = 'mylib'
-output_path = r'C:\path\to\output'  # <-- Change to a valid directory for SAS
-sas_code = f"""
-libname {libref} '{output_path}';
-data {libref}.dummy_data;
-    set work.dummy_data;
-run;
-"""
-logging.debug("Submitting SAS code to define library and copy dataset.")
-sas.submit(sas_code)
-logging.debug("SAS dataset creation complete.")
-
-print("Data exported as a native SAS dataset (.sas7bdat) successfully.")
+print("Dummy data generation complete. SAS XPORT file created:", output_filename)
