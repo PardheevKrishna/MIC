@@ -1,6 +1,7 @@
 import time
 import logging
 import pyreadstat
+from tqdm import tqdm
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import avg, col
 
@@ -13,123 +14,146 @@ logging.basicConfig(
 )
 
 ###############################################################################
-# START RUNTIME MEASUREMENT
+# STEP 0: SETUP & GLOBALS
 ###############################################################################
-script_start = time.time()
-logging.debug("Script started. Initializing PySpark job...")
+XPT_FILE_PATH = 'dummy_data.xpt'  # Adjust if needed
 
-###############################################################################
-# 1. READ THE SAS XPORT FILE INTO A PANDAS DATAFRAME
-###############################################################################
-xpt_file_path = 'dummy_data.xpt'
-logging.debug(f"Reading XPT file from: {xpt_file_path}")
-df, meta = pyreadstat.read_xport(xpt_file_path)
-logging.debug(f"Successfully loaded DataFrame from XPT. Shape: {df.shape}")
+def read_xpt_file():
+    """
+    Reads the SAS XPORT file (dummy_data.xpt) into a Pandas DataFrame.
+    """
+    logging.debug(f"Reading XPT file from: {XPT_FILE_PATH}")
+    df, meta = pyreadstat.read_xport(XPT_FILE_PATH)
+    logging.debug(f"XPT file loaded. DataFrame shape: {df.shape}")
+    return df
 
-###############################################################################
-# 2. START A SPARK SESSION AND CONVERT TO SPARK DATAFRAME
-###############################################################################
-spark_start = time.time()
-logging.debug("Starting SparkSession...")
-spark = SparkSession.builder.appName("ComplexTasksDebug").getOrCreate()
-logging.debug("SparkSession started.")
+def create_spark_df(pandas_df):
+    """
+    Creates a SparkSession and converts the Pandas DataFrame to a Spark DataFrame.
+    """
+    logging.debug("Starting SparkSession...")
+    spark = SparkSession.builder.appName("ComplexTasksWithTQDM").getOrCreate()
+    logging.debug("SparkSession started. Converting Pandas DataFrame to Spark DataFrame...")
+    spark_df = spark.createDataFrame(pandas_df)
+    logging.debug("Conversion to Spark DataFrame complete.")
+    # Optional: Check row/column count (can be expensive for large data)
+    row_count = spark_df.count()
+    col_count = len(spark_df.columns)
+    logging.debug(f"Spark DataFrame row count: {row_count}, column count: {col_count}")
+    return spark, spark_df
 
-logging.debug("Converting Pandas DataFrame to Spark DataFrame...")
-spark_df = spark.createDataFrame(df)
-logging.debug("Conversion complete. Spark DataFrame created.")
+def task_group_aggregation(spark_df):
+    """
+    Task 1: Group Aggregation - Compute average of num_1..num_100 grouped by cat_1.
+    """
+    logging.debug("Task 1: Group Aggregation started.")
+    agg_exprs = [avg(col(f"num_{i}")).alias(f"avg_num_{i}") for i in range(1, 101)]
+    group_means = spark_df.groupBy("cat_1").agg(*agg_exprs)
+    logging.debug("Task 1 complete. (group_means DataFrame created)")
+    return group_means
 
-# (Optional) Count the rows for a sanity check (can be expensive for large data)
-row_count = spark_df.count()
-col_count = len(spark_df.columns)
-logging.debug(f"Spark DataFrame row count: {row_count}, column count: {col_count}")
+def task_join(spark_df, group_means):
+    """
+    Task 2: Join - Join avg_num_1 back to the main DataFrame.
+    """
+    logging.debug("Task 2: Join started.")
+    # Select only cat_1 and avg_num_1 from group_means to reduce data volume
+    subset = group_means.select("cat_1", "avg_num_1")
+    joined_df = spark_df.join(subset, on="cat_1", how="left")
+    logging.debug("Task 2 complete. (joined_df created)")
+    return joined_df
 
-spark_end = time.time()
-logging.debug(f"Spark session init + DataFrame creation took {spark_end - spark_start:.2f} seconds.")
+def task_transform(joined_df):
+    """
+    Task 3: Data Transformation - Create new columns doubling num_1..num_10.
+    We use tqdm to show progress for each column.
+    """
+    logging.debug("Task 3: Data Transformation started.")
+    transformed_df = joined_df
+    for i in tqdm(range(1, 11), desc="Doubling columns"):
+        col_name = f"num_{i}"
+        new_col = f"double_num_{i}"
+        transformed_df = transformed_df.withColumn(new_col, col(col_name) * 2)
+    logging.debug("Task 3 complete. (transformed_df created)")
+    return transformed_df
 
-###############################################################################
-# 3. TASK 1: GROUP AGGREGATION (COMPUTE AVERAGE OF NUM_1 - NUM_100 BY CAT_1)
-###############################################################################
-task1_start = time.time()
-logging.debug("Starting Task 1: Group Aggregation (num_1 to num_100) by cat_1...")
+def task_sort(transformed_df):
+    """
+    Task 4: Sorting - Sort by num_1.
+    """
+    logging.debug("Task 4: Sorting started.")
+    sorted_df = transformed_df.orderBy("num_1")
+    logging.debug("Task 4 complete. (sorted_df created)")
+    return sorted_df
 
-agg_exprs = [avg(col(f"num_{i}")).alias(f"avg_num_{i}") for i in range(1, 101)]
-group_means = spark_df.groupBy("cat_1").agg(*agg_exprs)
+def task_pivot(spark_df):
+    """
+    Task 5: Pivoting - Example pivot of num_1 by cat_1.
+    """
+    logging.debug("Task 5: Pivoting started.")
+    pivot_df = spark_df.groupBy("cat_1").pivot("cat_1").agg(avg("num_1"))
+    logging.debug("Task 5 complete. (pivot_df created)")
+    return pivot_df
 
-logging.debug("Task 1 complete. Sample of group_means schema:")
-group_means.printSchema()
+def main():
+    # Start timing
+    script_start = time.time()
 
-task1_end = time.time()
-logging.debug(f"Task 1 duration: {task1_end - task1_start:.2f} seconds.")
+    # Read XPT file
+    pandas_df = read_xpt_file()
 
-###############################################################################
-# 4. TASK 2: JOIN THE AVERAGE OF NUM_1 BACK TO THE MAIN DATAFRAME
-###############################################################################
-task2_start = time.time()
-logging.debug("Starting Task 2: Joining avg_num_1 back to main DataFrame...")
+    # Create Spark DF
+    spark, spark_df = create_spark_df(pandas_df)
 
-# Select only cat_1 and avg_num_1 from group_means to reduce data for the join
-group_subset = group_means.select("cat_1", "avg_num_1")
+    # Define our tasks in a list so we can iterate with tqdm
+    tasks = [
+        ("Task 1: Group Aggregation", lambda: task_group_aggregation(spark_df)),
+        ("Task 2: Join", None),            # We'll fill in once we have the result from Task 1
+        ("Task 3: Transform", None),
+        ("Task 4: Sort", None),
+        ("Task 5: Pivot", lambda: task_pivot(spark_df))
+    ]
 
-joined_df = spark_df.join(group_subset, on="cat_1", how="left")
+    # We'll store intermediate results in a dict to pass between tasks
+    results = {}
 
-logging.debug("Task 2 complete. Joined DataFrame schema:")
-joined_df.printSchema()
+    # Run Task 1 separately, store result
+    name, func = tasks[0]
+    logging.debug(f"Starting {name}")
+    group_means = func()  # group_aggregation(spark_df)
+    results["group_means"] = group_means
+    logging.debug(f"Completed {name}")
 
-task2_end = time.time()
-logging.debug(f"Task 2 duration: {task2_end - task2_start:.2f} seconds.")
+    # Now we update the lambda for Task 2 with the actual function call
+    tasks[1] = ("Task 2: Join", lambda: task_join(spark_df, results["group_means"]))
+    # Then tasks for transform and sort
+    tasks[2] = ("Task 3: Transform", lambda: task_transform(results["task2"]))
+    tasks[3] = ("Task 4: Sort", lambda: task_sort(results["task3"]))
 
-###############################################################################
-# 5. TASK 3: DATA TRANSFORMATION (DOUBLE num_1 - num_10)
-###############################################################################
-task3_start = time.time()
-logging.debug("Starting Task 3: Creating new columns (double_num_1 to double_num_10)...")
+    # Iterate over tasks 2..5 with a tqdm progress bar
+    for (task_name, task_func) in tqdm(tasks[1:], desc="Main Steps"):
+        logging.debug(f"Starting {task_name}")
+        step_result = task_func()
+        # Save step result in results dict with a short key
+        short_key = task_name.lower().split()[1]  # e.g. "join", "transform", "sort", "pivot"
+        results[f"task{short_key}"] = step_result
+        logging.debug(f"Completed {task_name}")
 
-transformed_df = joined_df
-for i in range(1, 11):
-    col_name = f"num_{i}"
-    new_col = f"double_num_{i}"
-    transformed_df = transformed_df.withColumn(new_col, col(col_name) * 2)
+    # Show a sample of the final sorted data
+    sorted_df = results["tasksort"]
+    logging.debug("Showing sample of the final sorted DataFrame (first 5 rows):")
+    sorted_df.show(5)
 
-logging.debug("Task 3 complete. Sample of transformed DataFrame schema:")
-transformed_df.printSchema()
+    # Also show sample of the pivot
+    pivot_df = results["taskpivot"]
+    logging.debug("Showing sample of pivoted DataFrame (first 5 rows):")
+    pivot_df.show(5)
 
-task3_end = time.time()
-logging.debug(f"Task 3 duration: {task3_end - task3_start:.2f} seconds.")
+    # Stop Spark
+    spark.stop()
 
-###############################################################################
-# 6. TASK 4: SORT THE DATA BY num_1
-###############################################################################
-task4_start = time.time()
-logging.debug("Starting Task 4: Sorting by num_1...")
+    script_end = time.time()
+    logging.debug(f"Total script runtime (seconds): {script_end - script_start:.2f}")
 
-sorted_df = transformed_df.orderBy("num_1")
-
-logging.debug("Task 4 complete. Showing first 5 rows of sorted data for debug:")
-sorted_df.show(5)
-
-task4_end = time.time()
-logging.debug(f"Task 4 duration: {task4_end - task4_start:.2f} seconds.")
-
-###############################################################################
-# 7. TASK 5: PIVOTING (EXAMPLE: PIVOT num_1 BY cat_1)
-###############################################################################
-task5_start = time.time()
-logging.debug("Starting Task 5: Pivoting (e.g., average of num_1 pivoted by cat_1)...")
-
-pivot_df = spark_df.groupBy("cat_1").pivot("cat_1").agg(avg("num_1"))
-
-logging.debug("Task 5 complete. Pivoted DataFrame schema:")
-pivot_df.printSchema()
-
-task5_end = time.time()
-logging.debug(f"Task 5 duration: {task5_end - task5_start:.2f} seconds.")
-
-###############################################################################
-# FINAL RUNTIME REPORT
-###############################################################################
-script_end = time.time()
-total_elapsed = script_end - script_start
-logging.debug(f"Total script runtime (seconds): {total_elapsed:.2f}")
-
-logging.debug("Done. Stopping SparkSession.")
-spark.stop()
+if __name__ == "__main__":
+    main()
