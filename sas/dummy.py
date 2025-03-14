@@ -1,8 +1,9 @@
 import pandas as pd
 import numpy as np
 import logging
-from time import time
+from time import time, sleep
 import pyreadstat
+import threading
 
 # Configure logging to display debug messages with timestamps.
 logging.basicConfig(
@@ -10,7 +11,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# Parameters for dummy data generation
+###############################################################################
+# PARAMETERS FOR DUMMY DATA GENERATION
+###############################################################################
 num_rows = 1_000_000
 num_numerical = 100       # Number of numerical columns
 num_categorical = 100     # Number of categorical columns
@@ -20,12 +23,13 @@ categories = ['A', 'B', 'C', 'D', 'E']
 logging.debug(f"Starting dummy data generation: {num_rows} rows with {num_numerical + num_categorical} columns "
               f"({num_numerical} numerical, {num_categorical} categorical) in chunks of {chunk_size} rows.")
 
-# List to store DataFrame chunks
+###############################################################################
+# GENERATE DUMMY DATA IN CHUNKS
+###############################################################################
 df_chunks = []
 num_chunks = num_rows // chunk_size
 
 start_time = time()
-# Generate data in chunks
 for chunk_index in range(num_chunks):
     logging.debug(f"Generating chunk {chunk_index + 1}/{num_chunks}")
     
@@ -34,7 +38,7 @@ for chunk_index in range(num_chunks):
     # Generate categorical data: random selections from the provided categories
     categorical_data = np.random.choice(categories, size=(chunk_size, num_categorical))
     
-    # Create DataFrames for each type of data
+    # Create DataFrames for each set of data
     df_numerical = pd.DataFrame(numerical_data, columns=[f'num_{i+1}' for i in range(num_numerical)])
     df_categorical = pd.DataFrame(categorical_data, columns=[f'cat_{i+1}' for i in range(num_categorical)])
     
@@ -61,10 +65,34 @@ logging.debug(f"Dummy data generation complete. DataFrame shape: {df.shape}")
 end_time = time()
 logging.debug(f"Data generation took {end_time - start_time:.2f} seconds.")
 
-# Save the DataFrame as a SAS XPORT file (SAS transport file)
+###############################################################################
+# WRITE DATAFRAME TO A SAS XPORT FILE WITH A PROGRESS SPINNER
+###############################################################################
 output_filename = 'dummy_data.xpt'
-logging.debug(f"Writing DataFrame to SAS XPORT file: {output_filename}")
-pyreadstat.write_xport(df, output_filename)
-logging.debug("SAS XPORT file written successfully.")
+logging.debug(f"Starting to write DataFrame to SAS XPORT file: {output_filename}")
 
+# Create a flag and a spinner function to show progress during the write operation.
+progress_done = False
+
+def progress_spinner():
+    spinner_chars = ['-', '\\', '|', '/']
+    i = 0
+    while not progress_done:
+        print(f"Writing to XPT file... {spinner_chars[i % len(spinner_chars)]}\r", end="", flush=True)
+        i += 1
+        sleep(0.5)
+    print("Writing to XPT file... done!         ")
+
+# Start the spinner thread.
+spinner_thread = threading.Thread(target=progress_spinner)
+spinner_thread.start()
+
+# Write the DataFrame to a SAS XPORT file.
+pyreadstat.write_xport(df, output_filename)
+
+# Signal the spinner to stop and wait for the thread to finish.
+progress_done = True
+spinner_thread.join()
+
+logging.debug("SAS XPORT file written successfully.")
 print("Dummy data generation complete. SAS XPORT file created:", output_filename)
