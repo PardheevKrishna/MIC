@@ -17,6 +17,7 @@ def complex_calculation(*cols):
     total = 0.0
     for x in cols:
         temp = x
+        # Perform 50 iterations of complex functions
         for _ in range(50):
             temp = math.sin(temp) * math.cos(temp) + math.log(abs(temp) + 1)
         total += temp
@@ -33,10 +34,13 @@ start_time = time.time()
 # Apply the UDF to compute a new column "complex_calc"
 df_complex = df.withColumn("complex_calc", complex_udf(*columns))
 
-# Force evaluation by performing an action (here, counting rows)
-df_complex.select("complex_calc").count()
+# Force evaluation by counting rows
+row_count = df_complex.select("complex_calc").count()
 
 # Record the end time
 end_time = time.time()
 
 print("Total PySpark computation time: {:.2f} seconds".format(end_time - start_time))
+
+# Print first 5 rows for verification
+df_complex.select("complex_calc").show(5)
