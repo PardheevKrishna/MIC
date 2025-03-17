@@ -26,18 +26,20 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     rows = []
     for field in fields:
-        mask_miss_d1 = ((df_data['analysis_type'] == 'value_dist') &
-                        (df_data['field_name'] == field) &
-                        (df_data['filemonth_dt'] == date1) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_miss_d1 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_d1 = df_data.loc[mask_miss_d1, 'value_records'].sum()
-        
-        mask_miss_d2 = ((df_data['analysis_type'] == 'value_dist') &
-                        (df_data['field_name'] == field) &
-                        (df_data['filemonth_dt'] == date2) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+        mask_miss_d2 = (
+            (df_data['analysis_type'] == 'value_dist') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].str.contains("Missing", case=False, na=False))
+        )
         missing_d2 = df_data.loc[mask_miss_d2, 'value_records'].sum()
-        
         phrases = [
             "1\\)   CF Loan - Both Pop, Diff Values",
             "2\\)   CF Loan - Prior Null, Current Pop",
@@ -48,21 +50,21 @@ def generate_summary_df(df_data, date1, date2):
                 if pd.notna(x) and re.search(pat, x):
                     return True
             return False
-        
-        mask_pop_d1 = ((df_data['analysis_type'] == 'pop_comp') &
-                       (df_data['field_name'] == field) &
-                       (df_data['filemonth_dt'] == date1) &
-                       (df_data['value_label'].apply(contains_phrase)))
+        mask_pop_d1 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date1) &
+            (df_data['value_label'].apply(contains_phrase))
+        )
         pop_d1 = df_data.loc[mask_pop_d1, 'value_records'].sum()
-        
-        mask_pop_d2 = ((df_data['analysis_type'] == 'pop_comp') &
-                       (df_data['field_name'] == field) &
-                       (df_data['filemonth_dt'] == date2) &
-                       (df_data['value_label'].apply(contains_phrase)))
+        mask_pop_d2 = (
+            (df_data['analysis_type'] == 'pop_comp') &
+            (df_data['field_name'] == field) &
+            (df_data['filemonth_dt'] == date2) &
+            (df_data['value_label'].apply(contains_phrase))
+        )
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
-        
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
-    
     df = pd.DataFrame(rows, columns=[
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
@@ -70,26 +72,15 @@ def generate_summary_df(df_data, date1, date2):
         f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})",
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ])
-    
     m1 = f"Missing Values ({date1.strftime('%Y-%m-%d')})"
     m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
     d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
-    
     df["Missing % Change"] = df.apply(lambda r: ((r[m1]-r[m2]) / r[m2] * 100) if r[m2]!=0 else None, axis=1)
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
-    
-    new_order = [
-        "Field Name",
-        m1,
-        m2,
-        "Missing % Change",
-        d1,
-        d2,
-        "Month-to-Month % Change"
-    ]
+    new_order = [ "Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change" ]
     df = df[new_order]
-    df["Comment"] = ""  # To store aggregated current notes
+    df["Comment"] = ""
     return df
 
 def generate_distribution_df(df, analysis_type, date1):
@@ -153,11 +144,6 @@ def load_report_data(file_path, date1, date2):
 #####################################
 
 def cache_previous_comments(current_folder):
-    """
-    Scans the folder "previous/<current_folder>" for .xlsx files,
-    extracts cell comments from the "Summary" sheet (from a header that contains "month to month"),
-    and writes a CSV file "previous_comments.csv" with columns: Field Name, Month, Comment.
-    """
     data = []
     prev_folder = os.path.join(os.getcwd(), "previous", current_folder)
     if not os.path.exists(prev_folder):
@@ -177,7 +163,6 @@ def cache_previous_comments(current_folder):
                 continue
             ws = wb["Summary"]
             header_row = None
-            # Check first three rows for header containing "month to month"
             for r in range(1, 4):
                 headers = [cell.value for cell in ws[r] if cell.value is not None]
                 if any("month to month" in str(val).lower() for val in headers):
@@ -194,10 +179,10 @@ def cache_previous_comments(current_folder):
             if col_index is None:
                 continue
             for row in ws.iter_rows(min_row=header_row+1):
-                field_cell = row[0]  # Assume "Field Name" is in first column
+                field_cell = row[0]
                 if field_cell.value:
                     field_name = str(field_cell.value).strip()
-                    cell = row[col_index - 1]  # 0-indexed
+                    cell = row[col_index - 1]
                     comment_text = cell.comment.text if (cell.comment and cell.comment.text is not None) else ""
                     data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
     df = pd.DataFrame(data)
@@ -214,10 +199,6 @@ def get_cached_previous_comments(current_folder):
         return pd.DataFrame(columns=["Field Name", "Month", "Comment"])
 
 def pivot_previous_comments(df):
-    """
-    Pivots the previous comments DataFrame so that each Field Name gets columns:
-    comment_<Month> with the aggregated comments (all converted to strings) for that month.
-    """
     if df.empty:
         return pd.DataFrame()
     grouped = df.groupby(["Field Name", "Month"])["Comment"].apply(
@@ -249,7 +230,7 @@ def main():
     date1 = datetime.datetime.combine(selected_date, datetime.datetime.min.time())
     date2 = date1 - relativedelta(months=1)
     
-    # Immediately cache previous comments for the selected folder.
+    # Cache previous comments immediately
     prev_comments_df = get_cached_previous_comments(folder)
     if prev_comments_df.empty:
         prev_comments_df = cache_previous_comments(folder)
@@ -271,9 +252,14 @@ def main():
 
     st.write("Working Directory:", os.getcwd())
     
-    # ---------------------------
-    # Display Value Distribution Grid
     if "df_data" in st.session_state:
+        st.title("FRY14M Field Analysis Summary Report")
+        st.write(f"**Folder:** {st.session_state.folder}")
+        st.write(f"**File:** {st.session_state.selected_file}")
+        st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
+        
+        # ---------------------------
+        # Display Value Distribution Grid
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         if not val_fields:
@@ -308,6 +294,34 @@ def main():
                              height=val_height,
                              use_container_width=True)
             st.session_state.value_dist_df = pd.DataFrame(val_res["data"]).copy()
+            
+            # View SQL Logic for Value Distribution
+            st.subheader("View SQL Logic (Value Distribution)")
+            val_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="value_dist"]
+            val_orig_field = val_orig[val_orig["field_name"]==selected_val_field]
+            val_val_labels = val_orig_field["value_label"].dropna().unique().tolist()
+            if val_val_labels:
+                default_val_val = st.session_state.get("preselect_val_label_val", None)
+                if default_val_val not in val_val_labels:
+                    default_val_val = val_val_labels[0]
+                sel_val_val_label = st.selectbox("Select Value Label (Value Dist)",
+                                                 val_val_labels,
+                                                 index=val_val_labels.index(default_val_val) if default_val_val else 0,
+                                                 key="val_sql_val_label")
+                months_val = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
+                months_val = sorted(months_val, reverse=True)
+                month_options_val = [m.strftime("%Y-%m") for m in months_val]
+                sel_val_month = st.selectbox("Select Month (Value Dist)", month_options_val, key="val_sql_month")
+                if st.button("Show SQL Logic (Value Dist)"):
+                    matches_val = val_orig_field[
+                        (val_orig_field["value_label"]==sel_val_val_label) &
+                        (val_orig_field["filemonth_dt"].dt.strftime("%Y-%m")==sel_val_month)
+                    ]
+                    sql_vals_val = matches_val["value_sql_logic"].dropna().unique()
+                    if sql_vals_val.size > 0:
+                        st.text_area("Value SQL Logic (Value Dist)", "\n".join(sql_vals_val), height=150)
+                    else:
+                        st.text_area("Value SQL Logic (Value Dist)", "No SQL Logic found", height=150)
         
         # ---------------------------
         # Display Population Comparison Grid
@@ -346,6 +360,34 @@ def main():
                              height=pop_height,
                              use_container_width=True)
             st.session_state.pop_comp_df = pd.DataFrame(pop_res["data"]).copy()
+            
+            # View SQL Logic for Population Comparison
+            st.subheader("View SQL Logic (Population Comparison)")
+            pop_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="pop_comp"]
+            pop_orig_field = pop_orig[pop_orig["field_name"]==selected_pop_field]
+            pop_val_labels = pop_orig_field["value_label"].dropna().unique().tolist()
+            if pop_val_labels:
+                default_pop_val = st.session_state.get("preselect_val_label_pop", None)
+                if default_pop_val not in pop_val_labels:
+                    default_pop_val = pop_val_labels[0]
+                sel_pop_val_label = st.selectbox("Select Value Label (Pop Comp)",
+                                                 pop_val_labels,
+                                                 index=pop_val_labels.index(default_pop_val) if default_pop_val else 0,
+                                                 key="pop_sql_val_label")
+                months = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
+                months = sorted(months, reverse=True)
+                month_options = [m.strftime("%Y-%m") for m in months]
+                sel_pop_month = st.selectbox("Select Month (Pop Comp)", month_options, key="pop_sql_month")
+                if st.button("Show SQL Logic (Pop Comp)"):
+                    matches = pop_orig_field[
+                        (pop_orig_field["value_label"]==sel_pop_val_label) &
+                        (pop_orig_field["filemonth_dt"].dt.strftime("%Y-%m")==sel_pop_month)
+                    ]
+                    sql_vals = matches["value_sql_logic"].dropna().unique()
+                    if sql_vals.size > 0:
+                        st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
+                    else:
+                        st.text_area("Value SQL Logic (Pop Comp)", "No SQL Logic found", height=150)
         
         # ---------------------------
         # Aggregate current grid comments into Summary
@@ -384,7 +426,7 @@ def main():
             selected_prev = None
         
         # ---------------------------
-        # Display the updated Summary Grid (including previous comment columns)
+        # Display updated Summary Grid
         st.subheader("Summary")
         sum_df = st.session_state.summary_df.copy()
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
@@ -435,7 +477,6 @@ def main():
                 export_sum.drop(columns=["Comment"], inplace=True, errors="ignore")
                 export_sum.to_excel(writer, index=False, sheet_name="Summary")
                 summary_sheet = writer.sheets["Summary"]
-                
                 d1_col_name = f"Month-to-Month Diff ({st.session_state.date1.strftime('%Y-%m-%d')})"
                 sum_cols = export_sum.columns.tolist()
                 try:
@@ -443,7 +484,7 @@ def main():
                 except ValueError:
                     d1_col_index = export_sum.shape[1]
                 for idx, comm in enumerate(sum_comments):
-                    excel_row = idx + 2  # header is row 1
+                    excel_row = idx + 2
                     if str(comm).strip():
                         cell = summary_sheet.cell(row=excel_row, column=d1_col_index)
                         com_obj = Comment(str(comm), "User")
