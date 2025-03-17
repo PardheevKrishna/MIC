@@ -79,7 +79,6 @@ def generate_summary_df(df_data, date1, date2):
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ])
 
-    # Calculate percentage changes:
     m1 = f"Missing Values ({date1.strftime('%Y-%m-%d')})"
     m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
     d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
@@ -88,7 +87,6 @@ def generate_summary_df(df_data, date1, date2):
     df["Missing % Change"] = df.apply(lambda r: ((r[m1]-r[m2]) / r[m2] * 100) if r[m2]!=0 else None, axis=1)
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     
-    # New column order as requested:
     new_order = [
         "Field Name",
         m1,
@@ -99,7 +97,7 @@ def generate_summary_df(df_data, date1, date2):
         "Month-to-Month % Change"
     ]
     df = df[new_order]
-    df["Comment"] = ""  # This column will store the aggregated comments
+    df["Comment"] = ""  # This will store aggregated current notes
     return df
 
 def generate_distribution_df(df, analysis_type, date1):
@@ -165,8 +163,8 @@ def load_report_data(file_path, date1, date2):
 def cache_previous_comments(current_folder):
     """
     Scans the folder "previous/<current_folder>" for .xlsx files,
-    extracts the cell comment from the "Summary" sheet (from the column whose header starts with "Month-to-Month Diff"),
-    and saves a CSV file "previous_comments.csv" with columns: Field Name, Month, Comment.
+    extracts cell comments from the "Summary" sheet (from the column whose header starts with "Month-to-Month Diff"),
+    and writes a CSV file "previous_comments.csv" with columns: Field Name, Month, Comment.
     """
     data = []
     prev_folder = os.path.join(os.getcwd(), "previous", current_folder)
@@ -198,7 +196,7 @@ def cache_previous_comments(current_folder):
                 field_cell = row[0]
                 if field_cell.value:
                     field_name = str(field_cell.value).strip()
-                    cell = row[col_index - 1]  # 0-indexed
+                    cell = row[col_index - 1]
                     comment_text = cell.comment.text if cell.comment else ""
                     data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
     df = pd.DataFrame(data)
@@ -206,15 +204,19 @@ def cache_previous_comments(current_folder):
     return df
 
 def get_cached_previous_comments(current_folder):
-    if os.path.exists("previous_comments.csv"):
-        return pd.read_csv("previous_comments.csv")
-    else:
-        return cache_previous_comments(current_folder)
+    try:
+        df = pd.read_csv("previous_comments.csv")
+        # If CSV exists but is empty, return an empty DataFrame with columns.
+        if df.empty:
+            return pd.DataFrame(columns=["Field Name", "Month", "Comment"])
+        return df
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=["Field Name", "Month", "Comment"])
 
 def pivot_previous_comments(df):
     """
-    Pivots the previous comments DataFrame so that each Field Name has columns:
-    comment_<Month> containing the aggregated comments for that month.
+    Pivots the previous comments DataFrame so that each Field Name gets columns:
+    comment_<Month> with the aggregated comment for that month.
     """
     if df.empty:
         return pd.DataFrame()
@@ -247,7 +249,9 @@ def main():
     
     # Immediately cache previous comments for the selected folder.
     prev_comments_df = get_cached_previous_comments(folder)
-    st.write("Cached previous comments (from CSV):")
+    if prev_comments_df.empty:
+        prev_comments_df = cache_previous_comments(folder)
+    st.write("Cached previous comments:")
     st.dataframe(prev_comments_df)
     
     if st.sidebar.button("Generate Report"):
@@ -272,7 +276,7 @@ def main():
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
         # ---------------------------
-        # (Assume your AgGrid code for Value Distribution, Population Comparison, and Summary grids goes here)
+        # (Assume your AgGrid code for Value Distribution, Population Comparison, and Summary grids goes here.)
         # For brevity, we assume st.session_state.value_dist_df and st.session_state.pop_comp_df
         # have been updated via AgGrid.
         # ---------------------------
@@ -303,7 +307,8 @@ def main():
 
         aggregate_comments_into_summary()
         
-        # Merge cached previous comments (pivoted) into the summary.
+        # ---------------------------
+        # Merge previous cached comments into the summary.
         pivot_prev = pivot_previous_comments(prev_comments_df)
         if not pivot_prev.empty:
             st.session_state.summary_df = st.session_state.summary_df.merge(pivot_prev, on="Field Name", how="left")
