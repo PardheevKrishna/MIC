@@ -89,7 +89,6 @@ def generate_summary_df(df_data, date1, date2):
     df["Missing % Change"] = df.apply(lambda r: ((r[m1]-r[m2]) / r[m2] * 100) if r[m2]!=0 else None, axis=1)
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     
-    # New column order as requested
     new_order = [
         "Field Name",
         m1,
@@ -100,7 +99,7 @@ def generate_summary_df(df_data, date1, date2):
         "Month-to-Month % Change"
     ]
     df = df[new_order]
-    df["Comment"] = ""  # This column will later hold the aggregated current notes
+    df["Comment"] = ""  # To store aggregated current comments
     return df
 
 def generate_distribution_df(df, analysis_type, date1):
@@ -156,20 +155,19 @@ def load_report_data(file_path, date1, date2):
     return df_data, summary_df, val_dist_df, pop_comp_df
 
 #########################################
-# New Functions for Caching Previous Comments
+# Functions for Caching Previous Comments
 #########################################
 
 def cache_previous_comments(current_folder):
     """
-    Scan the folder "previous/<current_folder>" for .xlsx files,
-    read each file's "Summary" sheet, extract cell comments from the column
-    whose header starts with "Month-to-Month Diff", and return a DataFrame
-    with columns: Field Name, Month, Comment.
+    Scan folder "previous/<current_folder>" for .xlsx files,
+    extract cell comments from the Summary sheet (from the column starting with "Month-to-Month Diff"),
+    and save a CSV with columns: Field Name, Month, Comment.
     """
     data = []
     prev_folder = os.path.join(os.getcwd(), "previous", current_folder)
     if not os.path.exists(prev_folder):
-        st.warning("Previous months folder not found.")
+        st.warning("Previous months folder not found in " + prev_folder)
         return pd.DataFrame(columns=["Field Name", "Month", "Comment"])
     for file in os.listdir(prev_folder):
         if file.lower().endswith('.xlsx'):
@@ -179,12 +177,11 @@ def cache_previous_comments(current_folder):
             try:
                 wb = load_workbook(file_path, data_only=True)
             except Exception as e:
-                st.error(f"Error opening {file}: {e}")
+                st.error(f"Error opening previous file {file}: {e}")
                 continue
             if "Summary" not in wb.sheetnames:
                 continue
             ws = wb["Summary"]
-            # Assume header is in row 1; look for first column that starts with "Month-to-Month Diff"
             header = [cell.value for cell in ws[1]]
             col_index = None
             for i, col_name in enumerate(header, start=1):
@@ -193,12 +190,11 @@ def cache_previous_comments(current_folder):
                     break
             if col_index is None:
                 continue
-            # Assume "Field Name" is in column 1
             for row in ws.iter_rows(min_row=2):
                 field_cell = row[0]
                 if field_cell.value:
                     field_name = str(field_cell.value).strip()
-                    cell = row[col_index - 1]  # 0-indexed list
+                    cell = row[col_index - 1]  # adjust for 0-index
                     comment_text = cell.comment.text if cell.comment else ""
                     data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
     df = pd.DataFrame(data)
@@ -214,12 +210,11 @@ def get_cached_previous_comments(current_folder):
 
 def pivot_previous_comments(df):
     """
-    Pivot the DataFrame so that for each Field Name you have columns:
-    comment_<Month> (with the aggregated comments for that month).
+    Pivot the cached previous comments so that for each Field Name, 
+    each Month becomes a column (named "comment_<Month>").
     """
     if df.empty:
         return pd.DataFrame()
-    # Group by Field Name and Month, joining multiple comments with newline if needed.
     grouped = df.groupby(["Field Name", "Month"])["Comment"].apply(lambda x: "\n".join(x)).unstack(fill_value="")
     grouped = grouped.rename(columns=lambda x: f"comment_{x}")
     grouped.reset_index(inplace=True)
@@ -237,6 +232,11 @@ def main():
     if not os.path.exists(folder_path):
         st.sidebar.error(f"Folder '{folder}' not found.")
         return
+    # Cache previous comments immediately at startup.
+    prev_comments_df = cache_previous_comments(folder)
+    st.session_state.prev_comments_df = prev_comments_df
+    st.write("Cached previous comments CSV created (if previous files exist).")
+
     # Only .xlsx files are supported for in-place update.
     all_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.xlsx')]
     if not all_files:
@@ -268,13 +268,12 @@ def main():
         st.write(f"**Folder:** {st.session_state.folder}")
         st.write(f"**File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
-        
-        # --------------
-        # (Grid display code – assume your AgGrid sections for Value Distribution,
-        # Population Comparison, and Summary are here.)
+
+        # ---------------------------
+        # (Assume AgGrid code for displaying and updating Value Distribution, Population Comparison, and Summary)
         # For brevity, we assume that st.session_state.value_dist_df and st.session_state.pop_comp_df
-        # have been updated by AgGrid (as in your previous version).
-        # --------------
+        # have been updated by the grids.
+        # ---------------------------
         
         # ---------------------------
         # Aggregate current grid comments into Summary
@@ -303,14 +302,11 @@ def main():
         aggregate_comments_into_summary()
         
         # ---------------------------
-        # Retrieve and pivot previous months’ comments (cached in CSV)
-        prev_comments_df = get_cached_previous_comments(st.session_state.folder)
-        pivot_prev = pivot_previous_comments(prev_comments_df)
+        # Retrieve and pivot previous comments from the cached CSV
+        prev_df = get_cached_previous_comments(st.session_state.folder)
+        pivot_prev = pivot_previous_comments(prev_df)
         if not pivot_prev.empty:
-            # Merge the pivoted previous comments with the current summary (on Field Name)
             st.session_state.summary_df = st.session_state.summary_df.merge(pivot_prev, on="Field Name", how="left")
-        
-            # Create a dropdown to select a previous month from the cached comments
             prev_months = sorted(pivot_prev.columns.drop("Field Name").tolist())
             selected_prev = st.selectbox("Select Previous Month", options=prev_months, format_func=lambda x: x.replace("comment_", ""), key="prev_month")
         else:
@@ -324,7 +320,6 @@ def main():
         gb_sum.configure_default_column(editable=False,
                                         cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
         gb_sum.configure_column("Comment", editable=False, width=250, minWidth=100, maxWidth=300)
-        # Also add formatting for any previous comment columns (they are strings)
         for col in sum_df.columns:
             if col not in ["Field Name", "Comment"] and not col.startswith("comment_"):
                 if "Change" in col:
@@ -341,7 +336,6 @@ def main():
                         valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')",
                         width=150, minWidth=100, maxWidth=200
                     )
-        # For previous comment columns, leave as plain text.
         sum_opts = gb_sum.build()
         if isinstance(sum_opts, list):
             sum_opts = {"columnDefs": sum_opts}
@@ -360,33 +354,26 @@ def main():
                height=sum_height,
                use_container_width=True)
         
-        # ---------------------------
-        # (Optional) If a previous month is selected, update the current value distribution/population grids.
-        # For example, fill in the "Comment" column in those grids from the merged previous comment column.
+        # (Optionally, if a previous month is selected, update the detail grids with those comments.)
         if selected_prev:
-            prev_col = selected_prev  # e.g. "comment_2024-12"
-            # For each row in value distribution, if its field exists in summary with that previous comment, update.
+            prev_col = selected_prev  # e.g., "comment_2024-12"
             vd = st.session_state.value_dist_df.copy()
             vd["Comment"] = vd["Field Name"].apply(lambda x: st.session_state.summary_df.loc[st.session_state.summary_df["Field Name"]==x, prev_col].values[0] if prev_col in st.session_state.summary_df.columns else "")
             st.session_state.value_dist_df = vd
             pc = st.session_state.pop_comp_df.copy()
             pc["Comment"] = pc["Field Name"].apply(lambda x: st.session_state.summary_df.loc[st.session_state.summary_df["Field Name"]==x, prev_col].values[0] if prev_col in st.session_state.summary_df.columns else "")
             st.session_state.pop_comp_df = pc
-
+        
         # ---------------------------
         # In-Place Update of the Input Excel File
         try:
-            # Open the current input Excel file in append mode (replace the sheets)
             with pd.ExcelWriter(st.session_state.input_file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                 # --- Summary Sheet ---
                 export_sum = st.session_state.summary_df.copy().reset_index(drop=True)
-                # Retain the "Comment" column in session state, but drop it from the export table if desired.
                 sum_comments = export_sum["Comment"]
                 export_sum.drop(columns=["Comment"], inplace=True, errors="ignore")
                 export_sum.to_excel(writer, index=False, sheet_name="Summary")
                 summary_sheet = writer.sheets["Summary"]
-
-                # Attach aggregated note to the cell in the Month-to-Month Diff (date1) column
                 d1_col_name = f"Month-to-Month Diff ({st.session_state.date1.strftime('%Y-%m-%d')})"
                 sum_cols = export_sum.columns.tolist()
                 try:
@@ -394,7 +381,7 @@ def main():
                 except ValueError:
                     d1_col_index = export_sum.shape[1]
                 for idx, comm in enumerate(sum_comments):
-                    excel_row = idx + 2  # header is row 1
+                    excel_row = idx + 2
                     if str(comm).strip():
                         cell = summary_sheet.cell(row=excel_row, column=d1_col_index)
                         com_obj = Comment(str(comm), "User")
