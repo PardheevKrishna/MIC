@@ -1,42 +1,44 @@
 import pandas as pd
 import numpy as np
-import saspy
+import xlsxwriter
 
 # -----------------------------
-# Step 1: Generate the dummy dataset in Python
+# Step 1: Set File Name & Parameters
 # -----------------------------
-# Create a DataFrame with 1,000,000 rows and 200 columns filled with random numbers.
-n_rows = 1_000_000
-n_cols = 200
-# Generate column names: var1, var2, ..., var200
+output_file = "dummy_data.xlsx"
+n_rows = 1_000_000  # 1 million rows
+n_cols = 200        # 200 columns
+
+# Create column names: var1, var2, ..., var200
 columns = [f'var{i}' for i in range(1, n_cols + 1)]
-# Create the DataFrame using random numbers (from a normal distribution)
-df = pd.DataFrame(np.random.randn(n_rows, n_cols), columns=columns)
 
 # -----------------------------
-# Step 2: Establish a SAS session using SASPy
+# Step 2: Create an Excel File with xlsxwriter (Row-by-Row)
 # -----------------------------
-# Ensure your SASPy configuration (e.g., cfgname 'default') is properly set up.
-sas = saspy.SASsession(cfgname='default')
+# Initialize the workbook and worksheet
+workbook = xlsxwriter.Workbook(output_file)
+worksheet = workbook.add_worksheet("Sheet1")
 
-# Transfer the Pandas DataFrame to the SAS WORK library
-# This will create a temporary SAS dataset named 'dummy_data' in the WORK library.
-sas_df = sas.df2sd(df, table='dummy_data', libref='work')
+# Write the header row
+worksheet.write_row(0, 0, columns)
 
 # -----------------------------
-# Step 3: Save the dataset as a SAS7BDAT file
+# Step 3: Write Data Row-by-Row with Progress
 # -----------------------------
-# Define a libname pointing to a directory where you have write permissions.
-# SAS stores datasets in SAS7BDAT format by default.
-# Replace '/path/to/output/directory' with your desired output directory.
-sas_code = """
-libname mylib '/path/to/output/directory';
-data mylib.dummy_data;
-   set work.dummy_data;
-run;
-"""
-# Submit the SAS code to save the dataset.
-sas.submit(sas_code)
+print(f"Writing {n_rows} rows to {output_file}...")
 
-# (Optional) List the SAS log to verify that the dataset was written successfully.
-print(sas.lst)
+for row_num in range(1, n_rows + 1):
+    # Generate a row of random data
+    row_data = np.random.randn(n_cols).tolist()
+
+    # Write row to the Excel file
+    worksheet.write_row(row_num, 0, row_data)
+
+    # Print progress every 10,000 rows
+    if row_num % 10000 == 0:
+        print(f"{row_num}/{n_rows} rows written...")
+
+# Close the workbook (finalize the file)
+workbook.close()
+
+print(f"Excel file successfully created: {output_file}")
