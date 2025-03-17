@@ -22,3 +22,8 @@ run;
 
 /* Compute and print the elapsed time in seconds */
 %put NOTE: Total SAS runtime in seconds: %sysevalf(&end_time - &start_time);
+
+/* Print first 5 rows for verification */
+proc print data=complex_calcs (obs=5);
+   title "Sample Output from complex_calcs Dataset";
+run;
