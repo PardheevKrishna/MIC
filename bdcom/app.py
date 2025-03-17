@@ -97,7 +97,7 @@ def generate_summary_df(df_data, date1, date2):
         "Month-to-Month % Change"
     ]
     df = df[new_order]
-    df["Comment"] = ""  # This column will store the aggregated comments
+    df["Comment"] = ""
     return df
 
 def generate_distribution_df(df, analysis_type, date1):
@@ -140,8 +140,7 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
-                      for col in df.columns.values]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -163,7 +162,7 @@ def load_report_data(file_path, date1, date2):
 def cache_previous_comments(current_folder):
     """
     Scans the folder "previous/<current_folder>" for .xlsx files,
-    extracts cell comments from the "Summary" sheet (from the column whose header contains "month to month"),
+    extracts cell comments from the "Summary" sheet (from a header that contains "month to month"),
     and writes a CSV file "previous_comments.csv" with columns: Field Name, Month, Comment.
     """
     data = []
@@ -184,12 +183,12 @@ def cache_previous_comments(current_folder):
             if "Summary" not in wb.sheetnames:
                 continue
             ws = wb["Summary"]
-            # Try rows 1-3 to locate header that contains "month to month" (case-insensitive)
             header_row = None
-            for row_num in range(1, 4):
-                headers = [cell.value for cell in ws[row_num] if cell.value is not None]
+            # Check first three rows for header containing "month to month"
+            for r in range(1, 4):
+                headers = [cell.value for cell in ws[r] if cell.value is not None]
                 if any("month to month" in str(val).lower() for val in headers):
-                    header_row = row_num
+                    header_row = r
                     break
             if header_row is None:
                 continue
@@ -202,11 +201,11 @@ def cache_previous_comments(current_folder):
             if col_index is None:
                 continue
             for row in ws.iter_rows(min_row=header_row+1):
-                field_cell = row[0]  # Assume "Field Name" is in the first column
+                field_cell = row[0]  # Assume "Field Name" is in first column
                 if field_cell.value:
                     field_name = str(field_cell.value).strip()
-                    cell = row[col_index - 1]  # 0-indexed
-                    comment_text = cell.comment.text if cell.comment and cell.comment.text else ""
+                    cell = row[col_index - 1]
+                    comment_text = cell.comment.text if (cell.comment and cell.comment.text is not None) else ""
                     data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
     df = pd.DataFrame(data)
     df.to_csv("previous_comments.csv", index=False)
@@ -224,11 +223,13 @@ def get_cached_previous_comments(current_folder):
 def pivot_previous_comments(df):
     """
     Pivots the previous comments DataFrame so that each Field Name gets columns:
-    comment_<Month> containing the aggregated comments for that month.
+    comment_<Month> with the aggregated comments (all converted to strings) for that month.
     """
     if df.empty:
         return pd.DataFrame()
-    grouped = df.groupby(["Field Name", "Month"])["Comment"].apply(lambda x: "\n".join(x)).unstack(fill_value="")
+    grouped = df.groupby(["Field Name", "Month"])["Comment"].apply(
+        lambda x: "\n".join([str(item) for item in x if pd.notnull(item)])
+    ).unstack(fill_value="")
     grouped = grouped.rename(columns=lambda x: f"comment_{x}")
     grouped.reset_index(inplace=True)
     return grouped
@@ -385,7 +386,7 @@ def main():
                 except ValueError:
                     d1_col_index = export_sum.shape[1]
                 for idx, comm in enumerate(sum_comments):
-                    excel_row = idx + 2  # header is row 1
+                    excel_row = idx + 2
                     if str(comm).strip():
                         cell = summary_sheet.cell(row=excel_row, column=d1_col_index)
                         com_obj = Comment(str(comm), "User")
@@ -445,7 +446,7 @@ def main():
                             com_obj.visible = True
                             cell.comment = com_obj
 
-                # No need to call writer.save() when using a context manager
+                # No explicit writer.save() is needed with the context manager.
             st.success("The input Excel file has been updated successfully!")
         except Exception as e:
             st.error(f"Error updating the Excel file: {e}")
