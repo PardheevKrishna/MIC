@@ -97,7 +97,7 @@ def generate_summary_df(df_data, date1, date2):
         "Month-to-Month % Change"
     ]
     df = df[new_order]
-    df["Comment"] = ""  # This will store aggregated current notes
+    df["Comment"] = ""  # This column will store the aggregated comments
     return df
 
 def generate_distribution_df(df, analysis_type, date1):
@@ -163,7 +163,7 @@ def load_report_data(file_path, date1, date2):
 def cache_previous_comments(current_folder):
     """
     Scans the folder "previous/<current_folder>" for .xlsx files,
-    extracts cell comments from the "Summary" sheet (from the column whose header starts with "Month-to-Month Diff"),
+    extracts cell comments from the "Summary" sheet (from the column whose header contains "month to month"),
     and writes a CSV file "previous_comments.csv" with columns: Field Name, Month, Comment.
     """
     data = []
@@ -184,20 +184,29 @@ def cache_previous_comments(current_folder):
             if "Summary" not in wb.sheetnames:
                 continue
             ws = wb["Summary"]
-            header = [cell.value for cell in ws[1]]
+            # Try rows 1-3 to locate header that contains "month to month" (case-insensitive)
+            header_row = None
+            for row_num in range(1, 4):
+                headers = [cell.value for cell in ws[row_num] if cell.value is not None]
+                if any("month to month" in str(val).lower() for val in headers):
+                    header_row = row_num
+                    break
+            if header_row is None:
+                continue
+            header = [cell.value for cell in ws[header_row]]
             col_index = None
             for i, col_name in enumerate(header, start=1):
-                if col_name and str(col_name).startswith("Month-to-Month Diff"):
+                if col_name and "month to month" in str(col_name).lower():
                     col_index = i
                     break
             if col_index is None:
                 continue
-            for row in ws.iter_rows(min_row=2):
-                field_cell = row[0]
+            for row in ws.iter_rows(min_row=header_row+1):
+                field_cell = row[0]  # Assume "Field Name" is in the first column
                 if field_cell.value:
                     field_name = str(field_cell.value).strip()
-                    cell = row[col_index - 1]
-                    comment_text = cell.comment.text if cell.comment else ""
+                    cell = row[col_index - 1]  # 0-indexed
+                    comment_text = cell.comment.text if cell.comment and cell.comment.text else ""
                     data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
     df = pd.DataFrame(data)
     df.to_csv("previous_comments.csv", index=False)
@@ -206,7 +215,6 @@ def cache_previous_comments(current_folder):
 def get_cached_previous_comments(current_folder):
     try:
         df = pd.read_csv("previous_comments.csv")
-        # If CSV exists but is empty, return an empty DataFrame with columns.
         if df.empty:
             return pd.DataFrame(columns=["Field Name", "Month", "Comment"])
         return df
@@ -216,7 +224,7 @@ def get_cached_previous_comments(current_folder):
 def pivot_previous_comments(df):
     """
     Pivots the previous comments DataFrame so that each Field Name gets columns:
-    comment_<Month> with the aggregated comment for that month.
+    comment_<Month> containing the aggregated comments for that month.
     """
     if df.empty:
         return pd.DataFrame()
@@ -276,7 +284,7 @@ def main():
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
         # ---------------------------
-        # (Assume your AgGrid code for Value Distribution, Population Comparison, and Summary grids goes here.)
+        # (Assume your AgGrid code for Value Distribution, Population Comparison, and Summary grids goes here)
         # For brevity, we assume st.session_state.value_dist_df and st.session_state.pop_comp_df
         # have been updated via AgGrid.
         # ---------------------------
@@ -377,7 +385,7 @@ def main():
                 except ValueError:
                     d1_col_index = export_sum.shape[1]
                 for idx, comm in enumerate(sum_comments):
-                    excel_row = idx + 2
+                    excel_row = idx + 2  # header is row 1
                     if str(comm).strip():
                         cell = summary_sheet.cell(row=excel_row, column=d1_col_index)
                         com_obj = Comment(str(comm), "User")
@@ -437,7 +445,7 @@ def main():
                             com_obj.visible = True
                             cell.comment = com_obj
 
-                writer.save()
+                # No need to call writer.save() when using a context manager
             st.success("The input Excel file has been updated successfully!")
         except Exception as e:
             st.error(f"Error updating the Excel file: {e}")
