@@ -1,28 +1,42 @@
-# test_saspy.py
+import time
+import math
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import rand, udf
+from pyspark.sql.types import DoubleType
 
-import saspy
+# Initialize the Spark session
+spark = SparkSession.builder.appName("ComplexCalculations").getOrCreate()
 
-# Create a SAS session using the 'default' config in sascfg_personal.py
-sas = saspy.SASsession(cfgname='default')
+# Generate the dummy dataset with 1,000,000 rows and 200 random columns.
+df = spark.range(0, 1000000)
+for i in range(1, 201):
+    df = df.withColumn(f"col_{i}", rand())
 
-# Print the SAS version info to verify the connection
-print("SAS Session Initialized.")
-print("SAS Version Info:")
-print(sas.sasproductlevels())
+# Define the UDF for the complex calculation
+def complex_calculation(*cols):
+    total = 0.0
+    for x in cols:
+        temp = x
+        for _ in range(50):
+            temp = math.sin(temp) * math.cos(temp) + math.log(abs(temp) + 1)
+        total += temp
+    return total
 
-# Run a test procedure (PROC MEANS) on sashelp.class
-print("\nRunning PROC MEANS on sashelp.class...")
-result = sas.submit("""
-proc means data=sashelp.class;
-run;
-""")
+complex_udf = udf(complex_calculation, DoubleType())
 
-# Print the LOG and LST output
-print("\n--- SAS LOG ---")
-print(result['LOG'])
+# List of column names corresponding to col_1, col_2, …, col_200
+columns = [f"col_{i}" for i in range(1, 201)]
 
-print("\n--- SAS LISTING ---")
-print(result['LST'])
+# Record the start time
+start_time = time.time()
 
-# End the SAS session
-sas._endsas()
+# Apply the UDF to compute a new column "complex_calc"
+df_complex = df.withColumn("complex_calc", complex_udf(*columns))
+
+# Force evaluation by performing an action (here, counting rows)
+df_complex.select("complex_calc").count()
+
+# Record the end time
+end_time = time.time()
+
+print("Total PySpark computation time: {:.2f} seconds".format(end_time - start_time))
