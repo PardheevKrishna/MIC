@@ -72,7 +72,7 @@ def generate_summary_df(df_data, date1, date2):
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     new_order = [ "Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change" ]
     df = df[new_order]
-    # Add two extra columns: one for current grid aggregated comments and one for editable Approval Comments.
+    # Add two extra columns: one for current aggregated comments and one for editable Approval Comments.
     df["Comment"] = ""
     df["Approval Comments"] = ""
     return df
@@ -140,9 +140,9 @@ def load_report_data(file_path, date1, date2):
 def cache_previous_comments(current_folder):
     """
     Scans "previous/<current_folder>" for .xlsx files.
-    Uses a regex to extract the month-year from the filename (e.g. "202412" or "2024-12")
+    Extracts the month-year from the filename (e.g. "202412" or "2024-12")
     and uses that as the Month. Then extracts cell comments from the "Summary" sheet
-    (from a header that contains "month to month") and writes a CSV with columns: Field Name, Month, Comment.
+    (using a header that contains "month to month") and writes a CSV with columns: Field Name, Month, Comment.
     """
     data = []
     prev_folder = os.path.join(os.getcwd(), "previous", current_folder)
@@ -186,7 +186,7 @@ def cache_previous_comments(current_folder):
                 field_cell = row[0]  # Assume "Field Name" is in the first column
                 if field_cell.value:
                     field_name = str(field_cell.value).strip()
-                    cell = row[col_index - 1]  # 0-indexed
+                    cell = row[col_index - 1]
                     comment_text = cell.comment.text if (cell.comment and cell.comment.text is not None) else ""
                     data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
     df = pd.DataFrame(data)
@@ -269,7 +269,7 @@ def main():
     
     if st.sidebar.button("Generate Report"):
         df_data, summary_df, val_dist_df, pop_comp_df = load_report_data(input_file_path, date1, date2)
-        # Preserve existing comments from input Excel file.
+        # Preserve existing comments from the input Excel file.
         summary_df = preserve_summary_comments(input_file_path, summary_df)
         st.session_state.df_data = df_data
         st.session_state.summary_df = summary_df
@@ -291,21 +291,21 @@ def main():
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
         # ---------------------------
-        # Display Value Distribution Grid with Prev Comments Column
+        # Display Value Distribution Grid with "Prev Comments" Column
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         if not val_fields:
             st.warning("No Value Distribution data available.")
         else:
             active_val = st.session_state.active_field if st.session_state.active_field in val_fields else val_fields[0]
-            selected_val_field = st.selectbox("Select Field (Value Dist)",
-                                              val_fields,
-                                              index=val_fields.index(active_val),
-                                              key="val_field_select")
+            selected_val_field = st.selectbox("Select Field (Value Dist)", val_fields, index=val_fields.index(active_val), key="val_field_select")
             st.session_state.active_field = selected_val_field
             filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
             if "Comment" not in filtered_val.columns:
                 filtered_val["Comment"] = ""
+            # Drop existing Prev Comments column if present to avoid duplicates.
+            if "Prev Comments" in filtered_val.columns:
+                filtered_val = filtered_val.drop(columns=["Prev Comments"])
             pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
             if not pivot_prev.empty:
                 filtered_val = filtered_val.merge(pivot_prev, on="Field Name", how="left")
@@ -313,8 +313,7 @@ def main():
             else:
                 filtered_val["Prev Comments"] = ""
             gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-            gb_val.configure_default_column(editable=True,
-                                            cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
+            gb_val.configure_default_column(editable=True, cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
             gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
             gb_val.configure_column("Prev Comments", editable=False, width=150, minWidth=100, maxWidth=200)
             val_opts = gb_val.build()
@@ -343,10 +342,7 @@ def main():
                 default_val_val = st.session_state.get("preselect_val_label_val", None)
                 if default_val_val not in val_val_labels:
                     default_val_val = val_val_labels[0]
-                sel_val_val_label = st.selectbox("Select Value Label (Value Dist)",
-                                                 val_val_labels,
-                                                 index=val_val_labels.index(default_val_val) if default_val_val else 0,
-                                                 key="val_sql_val_label")
+                sel_val_val_label = st.selectbox("Select Value Label (Value Dist)", val_val_labels, index=val_val_labels.index(default_val_val) if default_val_val else 0, key="val_sql_val_label")
                 months_val = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
                 months_val = sorted(months_val, reverse=True)
                 month_options_val = [m.strftime("%Y-%m") for m in months_val]
@@ -363,21 +359,20 @@ def main():
                         st.text_area("Value SQL Logic (Value Dist)", "No SQL Logic found", height=150)
         
         # ---------------------------
-        # Display Population Comparison Grid with Prev Comments Column
+        # Display Population Comparison Grid with "Prev Comments" Column
         st.subheader("Population Comparison")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         if not pop_fields:
             st.warning("No Population Comparison data available.")
         else:
             active_pop = st.session_state.active_field if st.session_state.active_field in pop_fields else pop_fields[0]
-            selected_pop_field = st.selectbox("Select Field (Pop Comp)",
-                                              pop_fields,
-                                              index=pop_fields.index(active_pop) if active_pop in pop_fields else 0,
-                                              key="pop_field_select")
+            selected_pop_field = st.selectbox("Select Field (Pop Comp)", pop_fields, index=pop_fields.index(active_pop) if active_pop in pop_fields else 0, key="pop_field_select")
             st.session_state.active_field = selected_pop_field
             filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
             if "Comment" not in filtered_pop.columns:
                 filtered_pop["Comment"] = ""
+            if "Prev Comments" in filtered_pop.columns:
+                filtered_pop = filtered_pop.drop(columns=["Prev Comments"])
             pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
             if not pivot_prev.empty:
                 filtered_pop = filtered_pop.merge(pivot_prev, on="Field Name", how="left")
@@ -385,8 +380,7 @@ def main():
             else:
                 filtered_pop["Prev Comments"] = ""
             gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
-            gb_pop.configure_default_column(editable=True,
-                                            cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
+            gb_pop.configure_default_column(editable=True, cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
             gb_pop.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
             gb_pop.configure_column("Prev Comments", editable=False, width=150, minWidth=100, maxWidth=200)
             gb_pop.configure_selection("single", use_checkbox=True, suppressRowClickSelection=True)
@@ -416,10 +410,7 @@ def main():
                 default_pop_val = st.session_state.get("preselect_val_label_pop", None)
                 if default_pop_val not in pop_val_labels:
                     default_pop_val = pop_val_labels[0]
-                sel_pop_val_label = st.selectbox("Select Value Label (Pop Comp)",
-                                                 pop_val_labels,
-                                                 index=pop_val_labels.index(default_pop_val) if default_pop_val else 0,
-                                                 key="pop_sql_val_label")
+                sel_pop_val_label = st.selectbox("Select Value Label (Pop Comp)", pop_val_labels, index=pop_val_labels.index(default_pop_val) if default_pop_val else 0, key="pop_sql_val_label")
                 months = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
                 months = sorted(months, reverse=True)
                 month_options = [m.strftime("%Y-%m") for m in months]
