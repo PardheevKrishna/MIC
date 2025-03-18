@@ -1,0 +1,41 @@
+proc sql;
+  /* First, aggregate sbl.validation_14m_sbl_2502 */
+  create table aggA as
+    select 
+      AccountOriginationDate,
+      count(distinct acc_id) as NewOriginations,
+      sum(CycleEndingBalancePromotional) as CM_Prom
+    from sbl.validation_14m_sbl_2502
+    where exclude = 'No'
+    group by AccountOriginationDate
+    having sum(CycleEndingBalancePromotional) > 0
+  ;
+
+  /* Then, aggregate sbl.validation_14m_sbl_2501 */
+  create table aggB as
+    select 
+      AccountOriginationDate,
+      count(distinct acc_id) as PP_NewOriginations,
+      sum(CycleEndingBalancePromotional) as PP_Prom
+    from sbl.validation_14m_sbl_2501
+    where exclude = 'No'
+    group by AccountOriginationDate
+    having sum(CycleEndingBalancePromotional) > 0
+  ;
+quit;
+
+/* Now join the two aggregated tables by date */
+proc sql;
+  create table Cycle_promotion3 as
+    select
+      coalesce(put(a.AccountOriginationDate, yymmnd6.),
+               put(b.AccountOriginationDate, yymmnd6.)) as OriginationDate format=$6.,
+      a.NewOriginations         as CM_NewOriginations,
+      a.CM_Prom,
+      b.PP_NewOriginations,
+      b.PP_Prom
+    from aggA a
+    full join aggB b
+      on a.AccountOriginationDate = b.AccountOriginationDate
+  ;
+quit;
