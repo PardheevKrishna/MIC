@@ -117,8 +117,7 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
-                      for col in df.columns.values]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -186,7 +185,7 @@ def cache_previous_comments(current_folder):
                 field_cell = row[0]  # Assume "Field Name" is in the first column
                 if field_cell.value:
                     field_name = str(field_cell.value).strip()
-                    cell = row[col_index - 1]
+                    cell = row[col_index - 1]  # 0-indexed
                     comment_text = cell.comment.text if (cell.comment and cell.comment.text is not None) else ""
                     data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
     df = pd.DataFrame(data)
@@ -303,7 +302,6 @@ def main():
             filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
             if "Comment" not in filtered_val.columns:
                 filtered_val["Comment"] = ""
-            # Drop existing Prev Comments column if present to avoid duplicates.
             if "Prev Comments" in filtered_val.columns:
                 filtered_val = filtered_val.drop(columns=["Prev Comments"])
             pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
@@ -471,7 +469,7 @@ def main():
         aggregate_current_comments()
         
         # ---------------------------
-        # Reorder Summary columns so that Approval Comments comes immediately after current Comment.
+        # Reorder Summary columns so that Approval Comments comes immediately after Comment.
         sum_df = st.session_state.summary_df.copy()
         cols = list(sum_df.columns)
         cols.remove("Approval Comments")
