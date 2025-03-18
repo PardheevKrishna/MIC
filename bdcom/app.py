@@ -72,7 +72,7 @@ def generate_summary_df(df_data, date1, date2):
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     new_order = [ "Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change" ]
     df = df[new_order]
-    # Add two extra columns: one for current aggregated comments and one for editable Approval Comments.
+    # Add two extra columns: one for aggregated current grid comments and one for editable Approval Comments.
     df["Comment"] = ""
     df["Approval Comments"] = ""
     return df
@@ -117,7 +117,8 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
+                      for col in df.columns.values]
     return df
 
 def load_report_data(file_path, date1, date2):
@@ -182,10 +183,10 @@ def cache_previous_comments(current_folder):
             if col_index is None:
                 continue
             for row in ws.iter_rows(min_row=header_row+1):
-                field_cell = row[0]  # Assume "Field Name" is in the first column
+                field_cell = row[0]
                 if field_cell.value:
                     field_name = str(field_cell.value).strip()
-                    cell = row[col_index - 1]  # 0-indexed
+                    cell = row[col_index - 1]
                     comment_text = cell.comment.text if (cell.comment and cell.comment.text is not None) else ""
                     data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
     df = pd.DataFrame(data)
@@ -219,17 +220,12 @@ def pivot_previous_comments(df, target_month):
 
 def preserve_summary_comments(input_file_path, summary_df):
     try:
-        wb = load_workbook(input_file_path, data_only=True)
-        if "Summary" in wb.sheetnames:
-            existing = pd.read_excel(input_file_path, sheet_name="Summary")
-            if "Approval Comments" in existing.columns:
-                summary_df = summary_df.merge(existing[["Field Name", "Approval Comments"]], on="Field Name", how="left", suffixes=("", "_old"))
-                summary_df["Approval Comments"] = summary_df.apply(lambda r: r["Approval Comments_old"] if pd.notnull(r["Approval Comments_old"]) else r["Approval Comments"], axis=1)
-                summary_df.drop(columns=["Approval Comments_old"], inplace=True)
-            if "Comment" in existing.columns:
-                summary_df = summary_df.merge(existing[["Field Name", "Comment"]], on="Field Name", how="left", suffixes=("", "_old"))
-                summary_df["Comment"] = summary_df.apply(lambda r: r["Comment_old"] if pd.notnull(r["Comment_old"]) and r["Comment_old"] != "" else r["Comment"], axis=1)
-                summary_df.drop(columns=["Comment_old"], inplace=True)
+        existing = pd.read_excel(input_file_path, sheet_name="Summary")
+        # Use dictionary mapping based on Field Name
+        comment_dict = existing.set_index("Field Name")["Comment"].to_dict() if "Comment" in existing.columns else {}
+        approval_dict = existing.set_index("Field Name")["Approval Comments"].to_dict() if "Approval Comments" in existing.columns else {}
+        summary_df["Comment"] = summary_df["Field Name"].map(comment_dict).fillna(summary_df["Comment"])
+        summary_df["Approval Comments"] = summary_df["Field Name"].map(approval_dict).fillna(summary_df["Approval Comments"])
     except Exception as e:
         st.warning(f"Could not preserve existing summary comments: {e}")
     return summary_df
@@ -268,7 +264,7 @@ def main():
     
     if st.sidebar.button("Generate Report"):
         df_data, summary_df, val_dist_df, pop_comp_df = load_report_data(input_file_path, date1, date2)
-        # Preserve existing comments from the input Excel file.
+        # Preserve existing comments from input Excel file.
         summary_df = preserve_summary_comments(input_file_path, summary_df)
         st.session_state.df_data = df_data
         st.session_state.summary_df = summary_df
@@ -428,17 +424,12 @@ def main():
         # Preserve existing Summary comments from the input Excel file.
         summary_df = st.session_state.summary_df
         try:
-            wb = load_workbook(st.session_state.input_file_path, data_only=True)
-            if "Summary" in wb.sheetnames:
-                existing = pd.read_excel(st.session_state.input_file_path, sheet_name="Summary")
-                if "Approval Comments" in existing.columns:
-                    summary_df = summary_df.merge(existing[["Field Name", "Approval Comments"]], on="Field Name", how="left", suffixes=("", "_old"))
-                    summary_df["Approval Comments"] = summary_df.apply(lambda r: r["Approval Comments_old"] if pd.notnull(r["Approval Comments_old"]) else r["Approval Comments"], axis=1)
-                    summary_df.drop(columns=["Approval Comments_old"], inplace=True)
-                if "Comment" in existing.columns:
-                    summary_df = summary_df.merge(existing[["Field Name", "Comment"]], on="Field Name", how="left", suffixes=("", "_old"))
-                    summary_df["Comment"] = summary_df.apply(lambda r: r["Comment_old"] if pd.notnull(r["Comment_old"]) and r["Comment_old"] != "" else r["Comment"], axis=1)
-                    summary_df.drop(columns=["Comment_old"], inplace=True)
+            existing = pd.read_excel(st.session_state.input_file_path, sheet_name="Summary")
+            # Use simple dictionary mapping to preserve comments.
+            comment_dict = existing.set_index("Field Name")["Comment"].to_dict() if "Comment" in existing.columns else {}
+            approval_dict = existing.set_index("Field Name")["Approval Comments"].to_dict() if "Approval Comments" in existing.columns else {}
+            summary_df["Comment"] = summary_df["Field Name"].map(comment_dict).fillna(summary_df["Comment"])
+            summary_df["Approval Comments"] = summary_df["Field Name"].map(approval_dict).fillna(summary_df["Approval Comments"])
         except Exception as e:
             st.warning(f"Could not preserve existing summary comments: {e}")
         st.session_state.summary_df = summary_df
@@ -519,7 +510,7 @@ def main():
                use_container_width=True)
         
         # ---------------------------
-        # In-Place Update of the Input Excel File with Timestamp Message
+        # In-Place Excel Update with Timestamp Message
         try:
             with pd.ExcelWriter(st.session_state.input_file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                 # --- Summary Sheet ---
