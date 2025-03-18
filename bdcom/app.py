@@ -72,7 +72,7 @@ def generate_summary_df(df_data, date1, date2):
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     new_order = [ "Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change" ]
     df = df[new_order]
-    # Add columns for aggregated current grid comments and editable Approval Comments.
+    # Add two extra columns: one for current aggregated comments and one for editable Approval Comments.
     df["Comment"] = ""
     df["Approval Comments"] = ""
     return df
@@ -117,7 +117,8 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
+                      for col in df.columns.values]
     return df
 
 # --- New load_report_data: If sheets exist in the input Excel, load them; otherwise, generate.
@@ -229,11 +230,11 @@ def pivot_previous_comments(df, target_month):
 def preserve_summary_comments(input_file_path, summary_df):
     try:
         existing = pd.read_excel(input_file_path, sheet_name="Summary")
-        # Use dictionary mapping to preserve existing comments.
+        # Create dictionary mappings, replacing any nan with an empty string.
         comment_dict = existing.set_index("Field Name")["Comment"].to_dict() if "Comment" in existing.columns else {}
         approval_dict = existing.set_index("Field Name")["Approval Comments"].to_dict() if "Approval Comments" in existing.columns else {}
-        summary_df["Comment"] = summary_df["Field Name"].map(comment_dict).fillna("")
-        summary_df["Approval Comments"] = summary_df["Field Name"].map(approval_dict).fillna("")
+        summary_df["Comment"] = summary_df["Field Name"].map(lambda x: "" if pd.isna(comment_dict.get(x)) else comment_dict.get(x))
+        summary_df["Approval Comments"] = summary_df["Field Name"].map(lambda x: "" if pd.isna(approval_dict.get(x)) else approval_dict.get(x))
     except Exception as e:
         st.warning(f"Could not preserve existing summary comments: {e}")
     return summary_df
@@ -272,7 +273,7 @@ def main():
     
     if st.sidebar.button("Generate Report"):
         df_data, summary_df, val_dist_df, pop_comp_df = load_report_data(input_file_path, date1, date2)
-        # Preserve existing summary comments.
+        # Preserve existing summary comments from the input Excel file.
         summary_df = preserve_summary_comments(input_file_path, summary_df)
         st.session_state.df_data = df_data
         st.session_state.summary_df = summary_df
@@ -434,13 +435,13 @@ def main():
             existing = pd.read_excel(st.session_state.input_file_path, sheet_name="Summary")
             comment_dict = existing.set_index("Field Name")["Comment"].to_dict() if "Comment" in existing.columns else {}
             approval_dict = existing.set_index("Field Name")["Approval Comments"].to_dict() if "Approval Comments" in existing.columns else {}
-            st.session_state.summary_df["Comment"] = st.session_state.summary_df["Field Name"].map(comment_dict).fillna("")
-            st.session_state.summary_df["Approval Comments"] = st.session_state.summary_df["Field Name"].map(approval_dict).fillna("")
+            st.session_state.summary_df["Comment"] = st.session_state.summary_df["Field Name"].map(lambda x: "" if pd.isna(comment_dict.get(x)) else comment_dict.get(x))
+            st.session_state.summary_df["Approval Comments"] = st.session_state.summary_df["Field Name"].map(lambda x: "" if pd.isna(approval_dict.get(x)) else approval_dict.get(x))
         except Exception as e:
             st.warning(f"Could not preserve existing summary comments: {e}")
         
         # ---------------------------
-        # Aggregate current grid comments into Summary (only non-empty values are aggregated)
+        # Aggregate current grid comments into Summary (only non-empty values)
         def aggregate_current_comments():
             sum_df = st.session_state.summary_df.copy()
             for field in sum_df["Field Name"].unique():
@@ -514,7 +515,7 @@ def main():
                          key="sum_grid",
                          height=sum_height,
                          use_container_width=True)
-        # Capture the updated summary data (including edited Approval Comments).
+        # Capture updated summary data (including edited Approval Comments).
         st.session_state.summary_df = pd.DataFrame(sum_res["data"]).copy()
         
         # ---------------------------
