@@ -22,6 +22,7 @@ def compute_grid_height(df, row_height=40, header_height=80):
 def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
+# --- Generate sheets from scratch if needed ---
 def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
     rows = []
@@ -72,7 +73,7 @@ def generate_summary_df(df_data, date1, date2):
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     new_order = [ "Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change" ]
     df = df[new_order]
-    # Add two extra columns: one for aggregated current grid comments and one for editable Approval Comments.
+    # Add two extra columns: one for current aggregated comments and one for editable Approval Comments.
     df["Comment"] = ""
     df["Approval Comments"] = ""
     return df
@@ -117,20 +118,30 @@ def generate_distribution_df(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
-                      for col in df.columns.values]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
     return df
 
+# --- New load_report_data: if sheets already exist, load them from the Excel file ---
 def load_report_data(file_path, date1, date2):
-    engine = get_excel_engine(file_path)
-    if engine:
-        df_data = pd.read_excel(file_path, sheet_name="Data", engine=engine)
-    else:
-        df_data = pd.read_excel(file_path, sheet_name="Data")
+    # Always load the raw Data sheet.
+    df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
-    summary_df = generate_summary_df(df_data, date1, date2)
-    val_dist_df = generate_distribution_df(df_data, "value_dist", date1)
-    pop_comp_df = generate_distribution_df(df_data, "pop_comp", date1)
+    wb = load_workbook(file_path, data_only=True)
+    # For Summary, if sheet exists, load it; otherwise compute.
+    if "Summary" in wb.sheetnames:
+        summary_df = pd.read_excel(file_path, sheet_name="Summary")
+    else:
+        summary_df = generate_summary_df(df_data, date1, date2)
+    # For Value Distribution.
+    if "Value Distribution" in wb.sheetnames:
+        val_dist_df = pd.read_excel(file_path, sheet_name="Value Distribution")
+    else:
+        val_dist_df = generate_distribution_df(df_data, "value_dist", date1)
+    # For Population Comparison.
+    if "Population Comparison" in wb.sheetnames:
+        pop_comp_df = pd.read_excel(file_path, sheet_name="Population Comparison")
+    else:
+        pop_comp_df = generate_distribution_df(df_data, "pop_comp", date1)
     return df_data, summary_df, val_dist_df, pop_comp_df
 
 #############################################
@@ -183,10 +194,10 @@ def cache_previous_comments(current_folder):
             if col_index is None:
                 continue
             for row in ws.iter_rows(min_row=header_row+1):
-                field_cell = row[0]
+                field_cell = row[0]  # Assume "Field Name" is in the first column
                 if field_cell.value:
                     field_name = str(field_cell.value).strip()
-                    cell = row[col_index - 1]
+                    cell = row[col_index - 1]  # 0-indexed
                     comment_text = cell.comment.text if (cell.comment and cell.comment.text is not None) else ""
                     data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
     df = pd.DataFrame(data)
@@ -221,7 +232,7 @@ def pivot_previous_comments(df, target_month):
 def preserve_summary_comments(input_file_path, summary_df):
     try:
         existing = pd.read_excel(input_file_path, sheet_name="Summary")
-        # Use dictionary mapping based on Field Name
+        # Use dictionary mapping to preserve comments.
         comment_dict = existing.set_index("Field Name")["Comment"].to_dict() if "Comment" in existing.columns else {}
         approval_dict = existing.set_index("Field Name")["Approval Comments"].to_dict() if "Approval Comments" in existing.columns else {}
         summary_df["Comment"] = summary_df["Field Name"].map(comment_dict).fillna(summary_df["Comment"])
@@ -264,7 +275,7 @@ def main():
     
     if st.sidebar.button("Generate Report"):
         df_data, summary_df, val_dist_df, pop_comp_df = load_report_data(input_file_path, date1, date2)
-        # Preserve existing comments from input Excel file.
+        # Preserve existing comments from the input Excel file.
         summary_df = preserve_summary_comments(input_file_path, summary_df)
         st.session_state.df_data = df_data
         st.session_state.summary_df = summary_df
@@ -425,7 +436,6 @@ def main():
         summary_df = st.session_state.summary_df
         try:
             existing = pd.read_excel(st.session_state.input_file_path, sheet_name="Summary")
-            # Use simple dictionary mapping to preserve comments.
             comment_dict = existing.set_index("Field Name")["Comment"].to_dict() if "Comment" in existing.columns else {}
             approval_dict = existing.set_index("Field Name")["Approval Comments"].to_dict() if "Approval Comments" in existing.columns else {}
             summary_df["Comment"] = summary_df["Field Name"].map(comment_dict).fillna(summary_df["Comment"])
