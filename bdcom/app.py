@@ -72,8 +72,8 @@ def generate_summary_df(df_data, date1, date2):
     df["Month-to-Month % Change"] = df.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     new_order = [ "Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change" ]
     df = df[new_order]
-    # Add an editable column for Approval Comments AFTER the computed "Comment" column.
-    df["Comment"] = ""  # This will be populated with aggregated current grid comments.
+    # Add two extra columns: current grid aggregated Comment and an editable Approval Comments column.
+    df["Comment"] = ""
     df["Approval Comments"] = ""
     return df
 
@@ -182,10 +182,10 @@ def cache_previous_comments(current_folder):
             if col_index is None:
                 continue
             for row in ws.iter_rows(min_row=header_row+1):
-                field_cell = row[0]  # Assume Field Name is in the first column
+                field_cell = row[0]  # Assume "Field Name" is in the first column
                 if field_cell.value:
                     field_name = str(field_cell.value).strip()
-                    cell = row[col_index - 1]
+                    cell = row[col_index - 1]  # 0-indexed
                     comment_text = cell.comment.text if (cell.comment and cell.comment.text is not None) else ""
                     data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
     df = pd.DataFrame(data)
@@ -223,12 +223,10 @@ def preserve_existing_summary_comments(input_file_path, summary_df):
         if "Summary" in wb.sheetnames:
             existing = pd.read_excel(input_file_path, sheet_name="Summary")
             if "Approval Comments" in existing.columns:
-                # Merge existing Approval Comments into summary_df based on Field Name.
                 summary_df = summary_df.merge(existing[["Field Name", "Approval Comments"]], on="Field Name", how="left", suffixes=("", "_old"))
                 summary_df["Approval Comments"] = summary_df.apply(lambda r: r["Approval Comments_old"] if pd.notnull(r["Approval Comments_old"]) else r["Approval Comments"], axis=1)
                 summary_df.drop(columns=["Approval Comments_old"], inplace=True)
             if "Comment" in existing.columns:
-                # Also preserve any existing current Comment values.
                 summary_df = summary_df.merge(existing[["Field Name", "Comment"]], on="Field Name", how="left", suffixes=("", "_old"))
                 summary_df["Comment"] = summary_df.apply(lambda r: r["Comment_old"] if pd.notnull(r["Comment_old"]) and r["Comment_old"] != "" else r["Comment"], axis=1)
                 summary_df.drop(columns=["Comment_old"], inplace=True)
@@ -270,7 +268,7 @@ def main():
     
     if st.sidebar.button("Generate Report"):
         df_data, summary_df, val_dist_df, pop_comp_df = load_report_data(input_file_path, date1, date2)
-        # Preserve any previously saved comments from the input Excel file.
+        # Preserve any existing comments in the input Excel file.
         summary_df = preserve_existing_summary_comments(input_file_path, summary_df)
         st.session_state.df_data = df_data
         st.session_state.summary_df = summary_df
@@ -292,7 +290,7 @@ def main():
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
         
         # ---------------------------
-        # Display Value Distribution Grid
+        # Display Value Distribution Grid with "Prev Comments" Column
         st.subheader("Value Distribution")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         if not val_fields:
@@ -307,11 +305,10 @@ def main():
             filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
             if "Comment" not in filtered_val.columns:
                 filtered_val["Comment"] = ""
-            # Merge previous month comments into value distribution grid as new column "Prev Comments"
+            # Merge previous month comments as "Prev Comments"
             pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
             if not pivot_prev.empty:
                 filtered_val = filtered_val.merge(pivot_prev, on="Field Name", how="left")
-                # Rename the column to "Prev Comments"
                 filtered_val.rename(columns={f"comment_{target_prev_month}": "Prev Comments"}, inplace=True)
             else:
                 filtered_val["Prev Comments"] = ""
@@ -366,7 +363,7 @@ def main():
                         st.text_area("Value SQL Logic (Value Dist)", "No SQL Logic found", height=150)
         
         # ---------------------------
-        # Display Population Comparison Grid
+        # Display Population Comparison Grid with "Prev Comments" Column
         st.subheader("Population Comparison")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         if not pop_fields:
@@ -381,7 +378,6 @@ def main():
             filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
             if "Comment" not in filtered_pop.columns:
                 filtered_pop["Comment"] = ""
-            # Merge previous month comments into population comparison grid as new column "Prev Comments"
             pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
             if not pivot_prev.empty:
                 filtered_pop = filtered_pop.merge(pivot_prev, on="Field Name", how="left")
@@ -440,7 +436,7 @@ def main():
                         st.text_area("Value SQL Logic (Pop Comp)", "No SQL Logic found", height=150)
         
         # ---------------------------
-        # Preserve existing Summary comments (if any) from the input Excel file.
+        # Preserve existing Summary comments from the input Excel file
         def preserve_existing_summary_comments(input_file_path, summary_df):
             try:
                 wb = load_workbook(input_file_path, data_only=True)
@@ -487,28 +483,21 @@ def main():
         aggregate_comments_into_summary()
         
         # ---------------------------
-        # Display updated Summary Grid
-        st.subheader("Summary")
+        # Reorder Summary columns so that Approval Comments comes immediately after current Comment.
         sum_df = st.session_state.summary_df.copy()
-        # Reorder columns so that Approval Comments comes after current Comment.
         cols = list(sum_df.columns)
-        # Remove Approval Comments and Comment from list
+        # Remove "Approval Comments" and "Comment" from current order.
         cols.remove("Approval Comments")
         cols.remove("Comment")
-        # Insert Comment then Approval Comments after the last current metric column.
-        # We assume the order is: Field Name, (metrics...), then Comment, then Approval Comments.
-        # For simplicity, we reconstruct the order:
-        new_order = [col for col in cols if col != "Field Name"]  # metrics in order (they are computed)
-        # Prepend Field Name
-        new_order.insert(0, "Field Name")
-        # Append Comment then Approval Comments
-        new_order.append("Comment")
-        new_order.append("Approval Comments")
+        # Assume the metric columns are in order and we want to append "Comment" then "Approval Comments" at the end.
+        new_order = ["Field Name"] + cols[1:] + ["Comment", "Approval Comments"]
         sum_df = sum_df[new_order]
+        
+        # Display updated Summary Grid (UI shows current metrics and editable Approval Comments)
+        st.subheader("Summary")
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
         gb_sum.configure_default_column(editable=False,
                                         cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
-        # Make Approval Comments editable.
         gb_sum.configure_column("Approval Comments", editable=True, width=250, minWidth=100, maxWidth=300)
         gb_sum.configure_column("Comment", editable=False, width=250, minWidth=100, maxWidth=300)
         for col in sum_df.columns:
@@ -559,7 +548,7 @@ def main():
                     d1_col_index = sum_cols.index(d1_col_name) + 1
                 except ValueError:
                     d1_col_index = export_sum.shape[1]
-                # Add previous month comment as cell comment for each row.
+                # For each row, add the previous month comment (for target_prev_month) as a cell comment in the d1 column.
                 pivot_prev = pivot_previous_comments(get_cached_previous_comments(st.session_state.folder), target_prev_month)
                 for idx, row in export_sum.iterrows():
                     field = row["Field Name"]
@@ -631,7 +620,6 @@ def main():
                                     com_obj = Comment(prev_comment_str, "Prev")
                                     com_obj.visible = True
                                     cell.comment = com_obj
-            # Show update timestamp message.
             update_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             st.success(f"The input Excel file was last updated at {update_time}.")
         except Exception as e:
