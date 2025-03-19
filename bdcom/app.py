@@ -24,7 +24,7 @@ def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
 def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "Value Label"}):
-    # Strip whitespace from column names and then rename according to mapping
+    # Strip whitespace from column names and rename according to mapping
     df.columns = [str(col).strip() for col in df.columns]
     for orig, new in mapping.items():
         for col in df.columns:
@@ -33,20 +33,22 @@ def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "V
     return df
 
 def flatten_dataframe(df):
+    """Flatten MultiIndex columns and ensure a column named 'Field Name' exists."""
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip() 
-                      for col in df.columns.values]
-    # Ensure expected columns exist
-    if "field_name" in df.columns and "Field Name" not in df.columns:
-        df.rename(columns={"field_name": "Field Name"}, inplace=True)
-    if "value_label" in df.columns and "Value Label" not in df.columns:
-        df.rename(columns={"value_label": "Value Label"}, inplace=True)
-    # If first column is unnamed, assume it's "Field Name"
+        df.columns = [
+            " ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip()
+            for col in df.columns.values
+        ]
+    # If "Field Name" not present, try to use the first column (after converting to string)
     if "Field Name" not in df.columns:
         first_col = df.columns[0]
-        if first_col.lower().startswith("unnamed") or first_col.strip() == "":
-            df.rename(columns={first_col: "Field Name"}, inplace=True)
+        if isinstance(first_col, tuple):
+            first_col_str = " ".join(map(str, first_col)).strip()
+        else:
+            first_col_str = str(first_col).strip()
+        if first_col_str.lower().startswith("unnamed") or first_col_str == "":
+            df.rename(columns={df.columns[0]: "Field Name"}, inplace=True)
     return df
 
 #############################################
@@ -317,7 +319,6 @@ def preserve_summary_comments(input_file_path, summary_df):
                 return str(val)
             summary_df["Comment"] = summary_df["Field Name"].map(safe_comment)
             summary_df["Approval Comments"] = summary_df["Field Name"].map(safe_approval)
-        # If Approval Comments column is missing, create it.
         if "Approval Comments" not in summary_df.columns:
             summary_df["Approval Comments"] = ""
     except Exception as e:
@@ -497,7 +498,7 @@ def main():
 
         aggregate_current_comments()
 
-        # Ensure "Approval Comments" column exists
+        # Ensure that both "Approval Comments" and "Comment" columns exist
         if "Approval Comments" not in st.session_state.summary_df.columns:
             st.session_state.summary_df["Approval Comments"] = ""
         if "Comment" not in st.session_state.summary_df.columns:
