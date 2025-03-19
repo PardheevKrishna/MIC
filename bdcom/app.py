@@ -32,12 +32,25 @@ def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "V
                 df.rename(columns={col: new}, inplace=True)
     return df
 
+def flatten_dataframe(df):
+    """Flatten a MultiIndex DataFrame and ensure a column named 'Field Name' exists."""
+    if isinstance(df.columns, pd.MultiIndex):
+        df = df.reset_index()
+        # Join multi-index levels with a space and strip extra spaces
+        df.columns = [" ".join([str(c).strip() for c in col if c]).strip() if isinstance(col, tuple) else str(col).strip() 
+                      for col in df.columns.values]
+    # If 'Field Name' is still not present, try to rename the first column if it looks like an index
+    if "Field Name" not in df.columns:
+        first_col = df.columns[0]
+        if first_col.lower().startswith("unnamed") or first_col.strip() == "":
+            df.rename(columns={first_col: "Field Name"}, inplace=True)
+    return df
+
 #############################################
 # Generate Summary Sheet from Data
 #############################################
 
 def generate_summary_df(df_data, date1, date2):
-    # Normalize columns so that we have "Field Name" and "Value Label"
     df_data = normalize_columns(df_data)
     fields = sorted(df_data["Field Name"].unique())
     rows = []
@@ -93,11 +106,10 @@ def generate_summary_df(df_data, date1, date2):
     return summary
 
 #############################################
-# Generate Distribution / Population Comparison with Monthly Comment Columns
+# Generate Distribution/Population Comparison with Monthly Comment Columns
 #############################################
 
 def generate_dist_with_comments(df, analysis_type, date1):
-    # Normalize columns first.
     df = normalize_columns(df)
     months = [(date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
     months = sorted(months, reverse=True)
@@ -172,12 +184,17 @@ def generate_dist_with_comments(df, analysis_type, date1):
 def flatten_dataframe(df):
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip() 
                       for col in df.columns.values]
     if "field_name" in df.columns and "Field Name" not in df.columns:
         df.rename(columns={"field_name": "Field Name"}, inplace=True)
     if "value_label" in df.columns and "Value Label" not in df.columns:
         df.rename(columns={"value_label": "Value Label"}, inplace=True)
+    # If first column is unnamed, assume it is Field Name:
+    if "Field Name" not in df.columns:
+        first_col = df.columns[0]
+        if first_col.lower().startswith("unnamed") or first_col.strip() == "":
+            df.rename(columns={first_col: "Field Name"}, inplace=True)
     return df
 
 #############################################
@@ -502,7 +519,8 @@ def main():
 
         st.subheader("Summary")
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(editable=False, cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+        gb_sum.configure_default_column(editable=False,
+            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_sum.configure_column("Approval Comments", editable=True, width=250, minWidth=100, maxWidth=300)
         gb_sum.configure_column("Comment", editable=False, width=250, minWidth=100, maxWidth=300)
         for c in sum_df.columns:
@@ -532,7 +550,7 @@ def main():
         st.session_state.summary_df = pd.DataFrame(sum_res["data"]).copy()
 
         ##############################
-        # Write results back to Excel
+        # Write Results Back to Excel
         ##############################
         try:
             with pd.ExcelWriter(st.session_state.input_file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
