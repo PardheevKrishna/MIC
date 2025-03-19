@@ -23,17 +23,13 @@ def compute_grid_height(df, row_height=40, header_height=80):
 def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
-def normalize_columns(df):
-    """
-    Normalize column names by stripping whitespace and forcing lower‐case keys.
-    In particular, if a column named "field_name" exists, rename it to "Field Name"
-    and if "value_label" exists, rename it to "Value Label".
-    """
+def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "Value Label"}):
+    # Strip whitespace from column names and rename according to mapping.
     df.columns = [str(col).strip() for col in df.columns]
-    if "field_name" in df.columns:
-        df.rename(columns={"field_name": "Field Name"}, inplace=True)
-    if "value_label" in df.columns:
-        df.rename(columns={"value_label": "Value Label"}, inplace=True)
+    for orig, new in mapping.items():
+        for col in df.columns:
+            if col.lower() == orig.lower() and col != new:
+                df.rename(columns={col: new}, inplace=True)
     return df
 
 def flatten_dataframe(df):
@@ -42,16 +38,13 @@ def flatten_dataframe(df):
         df = df.reset_index()
         df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip()
                       for col in df.columns.values]
-    # If "Field Name" is still missing and "field_name" exists, rename it.
+    # If "Field Name" is missing but "field_name" exists, rename it.
     if "Field Name" not in df.columns and "field_name" in df.columns:
         df.rename(columns={"field_name": "Field Name"}, inplace=True)
-    # Also ensure "Value Label" exists.
-    if "Value Label" not in df.columns and "value_label" in df.columns:
-        df.rename(columns={"value_label": "Value Label"}, inplace=True)
-    # If still missing, attempt to rename the first column if it appears unnamed.
+    # If still missing, try renaming the first column if it appears unnamed.
     if "Field Name" not in df.columns:
         first_col = df.columns[0]
-        # Convert tuple to string if necessary.
+        # If first_col is a tuple, join its parts.
         if isinstance(first_col, tuple):
             first_col_str = " ".join(map(str, first_col)).strip()
         else:
@@ -202,6 +195,8 @@ def generate_dist_with_comments(df, analysis_type, date1):
 def load_report_data(file_path, date1, date2):
     df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
+    # Normalize Data sheet columns right after reading
+    df_data = normalize_columns(df_data)
     wb = load_workbook(file_path, data_only=True)
     if "Summary" in wb.sheetnames:
         summary_df = pd.read_excel(file_path, sheet_name="Summary")
@@ -398,8 +393,9 @@ def main():
         try:
             val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         except KeyError:
-            val_fields = st.session_state.df_data["field_name"].unique().tolist()
-            st.warning("Column 'Field Name' not found in Value Distribution data; using raw data field names.")
+            # Fall back to the normalized Data sheet (should already be normalized)
+            val_fields = st.session_state.df_data["Field Name"].unique().tolist()
+            st.warning("Column 'Field Name' not found in Value Distribution data; using Data sheet.")
         if not val_fields:
             st.warning("No Value Distribution data available.")
         else:
@@ -432,8 +428,8 @@ def main():
         try:
             pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         except KeyError:
-            pop_fields = st.session_state.df_data["field_name"].unique().tolist()
-            st.warning("Column 'Field Name' not found in Population Comparison data; using raw data field names.")
+            pop_fields = st.session_state.df_data["Field Name"].unique().tolist()
+            st.warning("Column 'Field Name' not found in Population Comparison data; using Data sheet.")
         if not pop_fields:
             st.warning("No Population Comparison data available.")
         else:
@@ -507,7 +503,7 @@ def main():
 
         aggregate_current_comments()
 
-        # Ensure "Approval Comments" and "Comment" columns exist
+        # Ensure that both "Approval Comments" and "Comment" columns exist
         if "Approval Comments" not in st.session_state.summary_df.columns:
             st.session_state.summary_df["Approval Comments"] = ""
         if "Comment" not in st.session_state.summary_df.columns:
