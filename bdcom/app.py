@@ -24,7 +24,7 @@ def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
 def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "Value Label"}):
-    # Strip whitespace from column names and rename according to mapping.
+    # Strip whitespace from column names and rename columns based on the mapping.
     df.columns = [str(col).strip() for col in df.columns]
     for orig, new in mapping.items():
         for col in df.columns:
@@ -38,13 +38,12 @@ def flatten_dataframe(df):
         df = df.reset_index()
         df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip()
                       for col in df.columns.values]
-    # If "Field Name" is missing but "field_name" exists, rename it.
+    # If "Field Name" is missing but a lowercase version exists, rename it.
     if "Field Name" not in df.columns and "field_name" in df.columns:
         df.rename(columns={"field_name": "Field Name"}, inplace=True)
-    # If still missing, try renaming the first column if it appears unnamed.
+    # If still missing, check if the first column is unnamed and rename it.
     if "Field Name" not in df.columns:
         first_col = df.columns[0]
-        # If first_col is a tuple, join its parts.
         if isinstance(first_col, tuple):
             first_col_str = " ".join(map(str, first_col)).strip()
         else:
@@ -195,7 +194,7 @@ def generate_dist_with_comments(df, analysis_type, date1):
 def load_report_data(file_path, date1, date2):
     df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
-    # Normalize Data sheet columns right after reading
+    # Normalize Data sheet immediately so that "Field Name" is available.
     df_data = normalize_columns(df_data)
     wb = load_workbook(file_path, data_only=True)
     if "Summary" in wb.sheetnames:
@@ -393,7 +392,6 @@ def main():
         try:
             val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         except KeyError:
-            # Fall back to the normalized Data sheet (should already be normalized)
             val_fields = st.session_state.df_data["Field Name"].unique().tolist()
             st.warning("Column 'Field Name' not found in Value Distribution data; using Data sheet.")
         if not val_fields:
@@ -503,7 +501,7 @@ def main():
 
         aggregate_current_comments()
 
-        # Ensure that both "Approval Comments" and "Comment" columns exist
+        # Ensure "Approval Comments" and "Comment" columns exist
         if "Approval Comments" not in st.session_state.summary_df.columns:
             st.session_state.summary_df["Approval Comments"] = ""
         if "Comment" not in st.session_state.summary_df.columns:
@@ -521,7 +519,8 @@ def main():
 
         st.subheader("Summary")
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(editable=False, cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+        gb_sum.configure_default_column(editable=False,
+            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_sum.configure_column("Approval Comments", editable=True, width=250, minWidth=100, maxWidth=300)
         gb_sum.configure_column("Comment", editable=False, width=250, minWidth=100, maxWidth=300)
         for c in sum_df.columns:
