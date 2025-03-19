@@ -24,9 +24,8 @@ def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
 def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "Value Label"}):
-    # Strip whitespace from column names
+    # Strip whitespace from column names and then rename according to mapping
     df.columns = [str(col).strip() for col in df.columns]
-    # Rename using the provided mapping if needed
     for orig, new in mapping.items():
         for col in df.columns:
             if col.lower() == orig.lower() and col != new:
@@ -43,18 +42,16 @@ def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["Field Name"].unique())
     rows = []
     for field in fields:
-        # For missing values from the value distribution analysis
         mask_miss_d1 = ((df_data['analysis_type'] == 'value_dist') &
                         (df_data['Field Name'] == field) &
                         (df_data['filemonth_dt'] == date1) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+                        (df_data['Value Label'].str.contains("Missing", case=False, na=False)))
         missing_d1 = df_data.loc[mask_miss_d1, 'value_records'].sum()
         mask_miss_d2 = ((df_data['analysis_type'] == 'value_dist') &
                         (df_data['Field Name'] == field) &
                         (df_data['filemonth_dt'] == date2) &
-                        (df_data['value_label'].str.contains("Missing", case=False, na=False)))
+                        (df_data['Value Label'].str.contains("Missing", case=False, na=False)))
         missing_d2 = df_data.loc[mask_miss_d2, 'value_records'].sum()
-        # For population comparison, use a set of phrases
         phrases = [
             "1\\)   CF Loan - Both Pop, Diff Values",
             "2\\)   CF Loan - Prior Null, Current Pop",
@@ -68,12 +65,12 @@ def generate_summary_df(df_data, date1, date2):
         mask_pop_d1 = ((df_data['analysis_type'] == 'pop_comp') &
                        (df_data['Field Name'] == field) &
                        (df_data['filemonth_dt'] == date1) &
-                       (df_data['value_label'].apply(contains_phrase)))
+                       (df_data['Value Label'].apply(contains_phrase)))
         pop_d1 = df_data.loc[mask_pop_d1, 'value_records'].sum()
         mask_pop_d2 = ((df_data['analysis_type'] == 'pop_comp') &
                        (df_data['Field Name'] == field) &
                        (df_data['filemonth_dt'] == date2) &
-                       (df_data['value_label'].apply(contains_phrase)))
+                       (df_data['Value Label'].apply(contains_phrase)))
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
     summary = pd.DataFrame(rows, columns=[
@@ -96,7 +93,7 @@ def generate_summary_df(df_data, date1, date2):
     return summary
 
 #############################################
-# Generate Distribution/Population Comparison from Data
+# Generate Distribution / Population Comparison with Monthly Comment Columns
 #############################################
 
 def generate_dist_with_comments(df, analysis_type, date1):
@@ -109,26 +106,31 @@ def generate_dist_with_comments(df, analysis_type, date1):
     sub = sub[sub['month'].isin(months)]
     if 'value_comment' not in sub.columns:
         sub['value_comment'] = ""
-    # Numeric pivot: group by Field Name, Value Label and Month.
-    grouped = sub.groupby(['Field Name', 'value_label', 'month'])['value_records'].sum().reset_index()
+    grouped = sub.groupby(['Field Name', 'Value Label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
         return pd.DataFrame()
-    pivot_num = grouped.pivot_table(index=['Field Name', 'value_label'],
-                                    columns='month', values='value_records',
-                                    fill_value=0, aggfunc='sum')
+    pivot_num = grouped.pivot_table(
+        index=['Field Name', 'Value Label'],
+        columns='month',
+        values='value_records',
+        fill_value=0,
+        aggfunc='sum'
+    )
     pivot_num = pivot_num.reindex(columns=months, fill_value=0)
-    # Comment pivot using a custom aggregator.
     def first_non_empty(vals):
         for v in vals:
             if pd.notna(v) and str(v).strip().lower() != "nan" and str(v).strip() != "":
                 return v
         return ""
-    grouped_cmt = sub.groupby(['Field Name', 'value_label', 'month'])['value_comment'].apply(first_non_empty).reset_index()
-    pivot_cmt = grouped_cmt.pivot_table(index=['Field Name', 'value_label'],
-                                        columns='month', values='value_comment',
-                                        fill_value="", aggfunc='first')
+    grouped_cmt = sub.groupby(['Field Name', 'Value Label', 'month'])['value_comment'].apply(first_non_empty).reset_index()
+    pivot_cmt = grouped_cmt.pivot_table(
+        index=['Field Name', 'Value Label'],
+        columns='month',
+        values='value_comment',
+        fill_value="",
+        aggfunc='first'
+    )
     pivot_cmt = pivot_cmt.reindex(columns=months, fill_value="")
-    # Combine the two pivots.
     frames = []
     for field, num_subdf in pivot_num.groupby(level=0):
         num_subdf = num_subdf.droplevel(0)
@@ -172,7 +174,6 @@ def flatten_dataframe(df):
         df = df.reset_index()
         df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
                       for col in df.columns.values]
-    # Ensure the expected columns exist.
     if "field_name" in df.columns and "Field Name" not in df.columns:
         df.rename(columns={"field_name": "Field Name"}, inplace=True)
     if "value_label" in df.columns and "Value Label" not in df.columns:
@@ -329,7 +330,7 @@ def main():
         st.sidebar.error(f"Folder '{folder}' not found.")
         return
 
-    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx','.xlsb'))]
+    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx', '.xlsb'))]
     if not all_files:
         st.sidebar.error(f"No Excel files found in folder '{folder}'.")
         return
@@ -353,6 +354,7 @@ def main():
     if st.sidebar.button("Generate Report"):
         df_data, summary_df, val_dist_df, pop_comp_df = load_report_data(input_file_path, date1, date2)
         summary_df = preserve_summary_comments(input_file_path, summary_df)
+
         st.session_state.df_data = df_data
         st.session_state.summary_df = summary_df
         st.session_state.value_dist_df = flatten_dataframe(val_dist_df.copy())
@@ -371,7 +373,7 @@ def main():
         st.write(f"**Folder:** {st.session_state.folder}")
         st.write(f"**File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
-        
+
         ##############################
         # Value Distribution Grid (Monthly Columns)
         ##############################
@@ -405,7 +407,7 @@ def main():
                              data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
                              key="val_grid", height=compute_grid_height(filtered_val), use_container_width=True)
             st.session_state.value_dist_df = pd.DataFrame(val_res["data"]).copy()
-        
+
         ##############################
         # Population Comparison Grid (Monthly Columns)
         ##############################
@@ -439,9 +441,9 @@ def main():
                              data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
                              key="pop_grid", height=compute_grid_height(filtered_pop), use_container_width=True)
             st.session_state.pop_comp_df = pd.DataFrame(pop_res["data"]).copy()
-        
+
         ##############################
-        # Aggregate Monthly Comments into Summary
+        # Aggregate Monthly Comments into Summary's "Comment" Column
         ##############################
         def aggregate_current_comments():
             sum_df = st.session_state.summary_df.copy()
@@ -530,7 +532,7 @@ def main():
         st.session_state.summary_df = pd.DataFrame(sum_res["data"]).copy()
 
         ##############################
-        # Write Results Back to Excel
+        # Write results back to Excel
         ##############################
         try:
             with pd.ExcelWriter(st.session_state.input_file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
