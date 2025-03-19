@@ -1,5 +1,5 @@
 import streamlit as st
-st.set_page_config(page_title="Final FRY14M Field Analysis", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="FRY14M Field Analysis", layout="wide", initial_sidebar_state="expanded")
 
 import pandas as pd
 import os
@@ -22,6 +22,10 @@ def compute_grid_height(df, row_height=40, header_height=80):
 
 def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
+
+#############################################
+# Generating Summary
+#############################################
 
 def generate_summary_df(df_data, date1, date2):
     fields = sorted(df_data["field_name"].unique())
@@ -88,54 +92,121 @@ def generate_summary_df(df_data, date1, date2):
     df["Approval Comments"] = ""
     return df
 
-def generate_distribution_df(df, analysis_type, date1):
+#############################################
+# Generating Dist/Pcomp with monthly comment columns
+#############################################
+
+def generate_dist_with_comments(df, analysis_type, date1):
     """
-    Creates a pivot with columns for each of the last 12 months in descending order,
-    so you'll see the newest month first (e.g. 2025-01, 2024-12, etc.).
-    Each month has two sub-columns: Sum and Percent.
+    Creates a pivot with columns for each of the last 12 months in descending order:
+      <month> Sum, <month> Percent, <month> Comment
+    We'll assume 'value_comment' is a column in the raw data for that row. If not found, we default to "".
     """
+    # Last 12 months in descending order
     months = [(date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
-    # Sort months descending so newest is first
     months = sorted(months, reverse=True)
 
+    # Filter for the correct analysis_type
     sub = df[df['analysis_type'] == analysis_type].copy()
     sub['month'] = sub['filemonth_dt'].apply(lambda d: d.replace(day=1))
     sub = sub[sub['month'].isin(months)]
 
+    # We'll store numeric data in one pivot, and comments in a separate pivot
+    # if the 'value_comment' column doesn't exist, create it as ""
+    if 'value_comment' not in sub.columns:
+        sub['value_comment'] = ""
+
+    # Create a numeric pivot
     grouped = sub.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
+        # Return an empty df if no data
         return pd.DataFrame()
 
-    pivot = grouped.pivot_table(index=['field_name', 'value_label'],
-                                columns='month', values='value_records', fill_value=0)
-    # Reindex columns in the same descending order
-    pivot = pivot.reindex(columns=months, fill_value=0)
+    pivot_num = grouped.pivot_table(index=['field_name', 'value_label'],
+                                    columns='month', values='value_records', fill_value=0)
+    pivot_num = pivot_num.reindex(columns=months, fill_value=0)
 
+    # Create a comment pivot
+    # For each (field_name, value_label, month), store the 'value_comment' (the last row if multiple?)
+    # We'll do a groupby and get the first or join them. We'll just pick the first non-empty.
+    def first_non_empty(vals):
+        for v in vals:
+            if pd.notna(v) and str(v).strip().lower() != "nan" and v != "":
+                return v
+        return ""
+
+    grouped_cmt = sub.groupby(['field_name', 'value_label', 'month'])['value_comment'].apply(first_non_empty).reset_index()
+    pivot_cmt = grouped_cmt.pivot_table(index=['field_name', 'value_label'],
+                                        columns='month', values='value_comment', fill_value="")
+    pivot_cmt = pivot_cmt.reindex(columns=months, fill_value="")
+
+    # Now we combine numeric pivot (Sum, Percent) with comment pivot
     frames = []
-    for field, sub_df in pivot.groupby(level=0):
-        sub_df = sub_df.droplevel(0)
-        total = sub_df.sum(axis=0)
-        pct = sub_df.div(total, axis=1).mul(100).round(2).fillna(0)
+    for field, num_subdf in pivot_num.groupby(level=0):
+        # numeric subdf for this field
+        num_subdf = num_subdf.droplevel(0)  # remove field name from index
+        # comment subdf for this field
+        cmt_subdf = pivot_cmt.loc[field].to_frame().T if field in pivot_cmt.index else None
+        # cmt_subdf might be a DataFrame with index= value_label, columns= months
+        if cmt_subdf is None or cmt_subdf.empty:
+            cmt_subdf = pivot_cmt.loc[[field]]  # empty?
+
+        total = num_subdf.sum(axis=0)
+        pct = num_subdf.div(total, axis=1).mul(100).round(2).fillna(0)
+
         data = {}
         for m in months:
             m_str = m.strftime('%Y-%m')
-            data[(m_str, "Sum")] = sub_df[m]
+            # numeric sums
+            data[(m_str, "Sum")] = num_subdf[m]
+            # numeric percent
             data[(m_str, "Percent")] = pct[m]
-        tmp = pd.DataFrame(data)
+            # comment
+            # we need the row index to match each value_label
+            # so let's do row by row below. We'll build a DataFrame row by row.
+        # We'll build row by row after we build the top-level columns.
+
+        # We'll create an empty DataFrame with the same row index as num_subdf
+        combined = pd.DataFrame(index=num_subdf.index)
+
+        # For each month, create 3 columns: (m_str, "Sum"), (m_str, "Percent"), (m_str, "Comment")
+        # Then fill them from num_subdf, cmt_subdf
+        for m in months:
+            m_str = m.strftime('%Y-%m')
+            combined[(m_str, "Sum")] = num_subdf[m]
+            # compute percent
+            combined[(m_str, "Percent")] = pct[m]
+            # comment
+            # For each row (value_label), get the comment from cmt_subdf
+            # cmt_subdf is shaped [value_label x months]
+            # so cmt_subdf.loc[value_label, m]
+            def get_comment(vlabel):
+                if vlabel in cmt_subdf.index:
+                    val = cmt_subdf.loc[vlabel, m]
+                    if pd.isna(val) or str(val).strip().lower() == "nan":
+                        return ""
+                    return str(val)
+                return ""
+            combined[(m_str, "Comment")] = [get_comment(vlabel) for vlabel in combined.index]
+
+        # Add total row
         tot_row = {}
         for m in months:
             m_str = m.strftime('%Y-%m')
             tot_row[(m_str, "Sum")] = total[m]
             tot_row[(m_str, "Percent")] = ""
-        tmp.loc["Current period total"] = tot_row
-        tmp.index = pd.MultiIndex.from_product([[field], tmp.index], names=["Field Name", "Value Label"])
-        frames.append(tmp)
+            tot_row[(m_str, "Comment")] = ""
+        combined.loc["Current period total"] = tot_row
+
+        # Now attach the top-level multiindex for row => (field, value_label)
+        combined.index = pd.MultiIndex.from_product([[field], combined.index],
+                                                    names=["Field Name", "Value Label"])
+        frames.append(combined)
 
     if not frames:
         return pd.DataFrame()
 
     final = pd.concat(frames)
-    final.columns = pd.MultiIndex.from_tuples(final.columns)
     return final
 
 def flatten_dataframe(df):
@@ -148,22 +219,25 @@ def flatten_dataframe(df):
 def load_report_data(file_path, date1, date2):
     df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
-    wb = load_workbook(file_path, data_only=True)
 
+    wb = load_workbook(file_path, data_only=True)
+    # summary
     if "Summary" in wb.sheetnames:
         summary_df = pd.read_excel(file_path, sheet_name="Summary")
     else:
         summary_df = generate_summary_df(df_data, date1, date2)
 
+    # Value Distribution with monthly comment columns
     if "Value Distribution" in wb.sheetnames:
         val_dist_df = pd.read_excel(file_path, sheet_name="Value Distribution")
     else:
-        val_dist_df = generate_distribution_df(df_data, "value_dist", date1)
+        val_dist_df = generate_dist_with_comments(df_data, "value_dist", date1)
 
+    # Population Comparison with monthly comment columns
     if "Population Comparison" in wb.sheetnames:
         pop_comp_df = pd.read_excel(file_path, sheet_name="Population Comparison")
     else:
-        pop_comp_df = generate_distribution_df(df_data, "pop_comp", date1)
+        pop_comp_df = generate_dist_with_comments(df_data, "pop_comp", date1)
 
     return df_data, summary_df, val_dist_df, pop_comp_df
 
@@ -268,7 +342,6 @@ def preserve_summary_comments(input_file_path, summary_df):
         if "Approval Comments" in existing.columns:
             approval_dict = existing.set_index("Field Name")["Approval Comments"].to_dict()
 
-        # If the mapped value is NaN or "nan", replace with ""
         def safe_comment(field):
             val = comment_dict.get(field, "")
             if pd.isna(val) or str(val).strip().lower() == "nan":
@@ -312,7 +385,7 @@ def main():
     date1 = datetime.datetime.combine(selected_date, datetime.datetime.min.time())
     date2 = date1 - relativedelta(months=1)
 
-    # Cache previous comments immediately.
+    # Cache previous comments immediately
     prev_comments_df = get_cached_previous_comments(folder)
     if prev_comments_df.empty:
         prev_comments_df = cache_previous_comments(folder)
@@ -324,11 +397,8 @@ def main():
 
     if st.sidebar.button("Generate Report"):
         df_data, summary_df, val_dist_df, pop_comp_df = load_report_data(input_file_path, date1, date2)
-
-        # Preserve existing summary comments from the input Excel file.
         summary_df = preserve_summary_comments(input_file_path, summary_df)
 
-        # Store in session state
         st.session_state.df_data = df_data
         st.session_state.summary_df = summary_df
         st.session_state.value_dist_df = flatten_dataframe(val_dist_df.copy())
@@ -367,23 +437,22 @@ def main():
                 st.session_state.value_dist_df["Field Name"] == selected_val_field
             ].copy()
 
-            if "Comment" not in filtered_val.columns:
-                filtered_val["Comment"] = ""
-            if "Prev Comments" in filtered_val.columns:
-                filtered_val.drop(columns=["Prev Comments"], inplace=True, errors="ignore")
-
-            pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
-            if not pivot_prev.empty:
-                filtered_val = filtered_val.merge(pivot_prev, on="Field Name", how="left")
-                filtered_val.rename(columns={f"comment_{target_prev_month}": "Prev Comments"}, inplace=True)
-            else:
-                filtered_val["Prev Comments"] = ""
+            # We might have monthly columns like: "2025-01 Sum", "2025-01 Percent", "2025-01 Comment", ...
+            # We'll do an example for editing. We'll skip the aggregator approach for now.
 
             gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-            gb_val.configure_default_column(editable=True,
-                cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
-            gb_val.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-            gb_val.configure_column("Prev Comments", editable=False, width=150, minWidth=100, maxWidth=200)
+            gb_val.configure_default_column(
+                editable=True,
+                cellStyle={'white-space': 'normal','line-height':'1.2em','width':150}
+            )
+
+            # We'll detect columns that end with "Comment" and make them editable
+            for c in filtered_val.columns:
+                if c.endswith("Comment"):
+                    gb_val.configure_column(c, editable=True, width=200)
+                elif c.endswith("Sum") or c.endswith("Percent"):
+                    gb_val.configure_column(c, editable=False, width=120)
+
             val_opts = gb_val.build()
             if isinstance(val_opts, list):
                 val_opts = {"columnDefs": val_opts}
@@ -402,34 +471,6 @@ def main():
                 use_container_width=True
             )
             st.session_state.value_dist_df = pd.DataFrame(val_res["data"]).copy()
-
-            # View SQL Logic (Value Dist)
-            st.subheader("View SQL Logic (Value Dist)")
-            val_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="value_dist"]
-            val_orig_field = val_orig[val_orig["field_name"]==selected_val_field]
-            val_val_labels = val_orig_field["value_label"].dropna().unique().tolist()
-            if val_val_labels:
-                default_val_val = st.session_state.get("preselect_val_label_val", None)
-                if default_val_val not in val_val_labels:
-                    default_val_val = val_val_labels[0]
-                sel_val_val_label = st.selectbox("Select Value Label (Value Dist)",
-                                                 val_val_labels,
-                                                 index=val_val_labels.index(default_val_val) if default_val_val else 0,
-                                                 key="val_sql_val_label")
-                months_val = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
-                months_val = sorted(months_val, reverse=True)
-                month_options_val = [m.strftime("%Y-%m") for m in months_val]
-                sel_val_month = st.selectbox("Select Month (Value Dist)", month_options_val, key="val_sql_month")
-                if st.button("Show SQL Logic (Value Dist)"):
-                    matches_val = val_orig_field[
-                        (val_orig_field["value_label"]==sel_val_val_label) &
-                        (val_orig_field["filemonth_dt"].dt.strftime("%Y-%m")==sel_val_month)
-                    ]
-                    sql_vals_val = matches_val["value_sql_logic"].dropna().unique()
-                    if sql_vals_val.size > 0:
-                        st.text_area("Value SQL Logic (Value Dist)", "\n".join(sql_vals_val), height=150)
-                    else:
-                        st.text_area("Value SQL Logic (Value Dist)", "No SQL Logic found", height=150)
 
         ##############################
         # Population Comparison Grid
@@ -450,24 +491,18 @@ def main():
                 st.session_state.pop_comp_df["Field Name"] == selected_pop_field
             ].copy()
 
-            if "Comment" not in filtered_pop.columns:
-                filtered_pop["Comment"] = ""
-            if "Prev Comments" in filtered_pop.columns:
-                filtered_pop.drop(columns=["Prev Comments"], inplace=True, errors="ignore")
-
-            pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
-            if not pivot_prev.empty:
-                filtered_pop = filtered_pop.merge(pivot_prev, on="Field Name", how="left")
-                filtered_pop.rename(columns={f"comment_{target_prev_month}": "Prev Comments"}, inplace=True)
-            else:
-                filtered_pop["Prev Comments"] = ""
-
             gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
-            gb_pop.configure_default_column(editable=True,
-                cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
-            gb_pop.configure_column("Comment", editable=True, width=150, minWidth=100, maxWidth=200)
-            gb_pop.configure_column("Prev Comments", editable=False, width=150, minWidth=100, maxWidth=200)
-            gb_pop.configure_selection("single", use_checkbox=True, suppressRowClickSelection=True)
+            gb_pop.configure_default_column(
+                editable=True,
+                cellStyle={'white-space': 'normal','line-height':'1.2em','width':150}
+            )
+
+            for c in filtered_pop.columns:
+                if c.endswith("Comment"):
+                    gb_pop.configure_column(c, editable=True, width=200)
+                elif c.endswith("Sum") or c.endswith("Percent"):
+                    gb_pop.configure_column(c, editable=False, width=120)
+
             pop_opts = gb_pop.build()
             if isinstance(pop_opts, list):
                 pop_opts = {"columnDefs": pop_opts}
@@ -487,75 +522,50 @@ def main():
             )
             st.session_state.pop_comp_df = pd.DataFrame(pop_res["data"]).copy()
 
-            # View SQL Logic (Pop Comp)
-            st.subheader("View SQL Logic (Pop Comp)")
-            pop_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="pop_comp"]
-            pop_orig_field = pop_orig[pop_orig["field_name"]==selected_pop_field]
-            pop_val_labels = pop_orig_field["value_label"].dropna().unique().tolist()
-            if pop_val_labels:
-                default_pop_val = st.session_state.get("preselect_val_label_pop", None)
-                if default_pop_val not in pop_val_labels:
-                    default_pop_val = pop_val_labels[0]
-                sel_pop_val_label = st.selectbox("Select Value Label (Pop Comp)",
-                                                 pop_val_labels,
-                                                 index=pop_val_labels.index(default_pop_val) if default_pop_val else 0,
-                                                 key="pop_sql_val_label")
-                months = [(st.session_state.date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
-                months = sorted(months, reverse=True)
-                month_options = [m.strftime("%Y-%m") for m in months]
-                sel_pop_month = st.selectbox("Select Month (Pop Comp)", month_options, key="pop_sql_month")
-                if st.button("Show SQL Logic (Pop Comp)"):
-                    matches = pop_orig_field[
-                        (pop_orig_field["value_label"]==sel_pop_val_label) &
-                        (pop_orig_field["filemonth_dt"].dt.strftime("%Y-%m")==sel_pop_month)
-                    ]
-                    sql_vals = matches["value_sql_logic"].dropna().unique()
-                    if sql_vals.size > 0:
-                        st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
-                    else:
-                        st.text_area("Value SQL Logic (Pop Comp)", "No SQL Logic found", height=150)
-
-        # Aggregate current grid comments into Summary, skipping any lines that are 'nan'
+        # aggregator skipping "nan"
         def aggregate_current_comments():
             """
-            Builds the 'Comment' column in summary_df by aggregating only
-            non-empty, non-nan comments from Value Dist & Pop Comp.
-            Entire line is skipped if comment is 'nan' or empty.
+            We'll parse each monthly comment column in Value Dist & Pop Comp,
+            skipping lines if comment is 'nan' or empty, then join them into
+            the Summary's 'Comment' column.
             """
             sum_df = st.session_state.summary_df.copy()
+            # For each field in summary, gather lines from the monthly comment columns
             for field in sum_df["Field Name"].unique():
                 notes = []
-                # From Value Distribution
-                if "Value Label" in st.session_state.value_dist_df.columns:
-                    dist_df = st.session_state.value_dist_df[
-                        st.session_state.value_dist_df["Field Name"] == field
-                    ]
-                    for _, row in dist_df.iterrows():
-                        raw_comment = str(row.get("Comment", "")).strip()
-                        val_label   = str(row.get("Value Label", "")).strip()
 
-                        # skip line if raw_comment is 'nan' or empty
+                # 1) From Value Dist
+                vdist = st.session_state.value_dist_df[
+                    st.session_state.value_dist_df["Field Name"] == field
+                ]
+                # monthly columns end with "Comment"
+                cmt_cols = [c for c in vdist.columns if c.endswith("Comment")]
+                for _, row in vdist.iterrows():
+                    val_label = row.get("Value Label", "")
+                    for c in cmt_cols:
+                        raw_comment = str(row.get(c, "")).strip()
                         if raw_comment.lower() == "nan" or raw_comment == "":
                             continue
-                        if val_label.lower() == "nan":
-                            val_label = ""
-                        line = f"{val_label} - {raw_comment}".strip(" -")
+                        # e.g. "2025-01 Comment"
+                        # we can parse out the month
+                        month_name = c.replace(" Comment","").strip()
+                        # Build line
+                        line = f"{val_label} ({month_name}) - {raw_comment}".strip(" -")
                         notes.append(line)
 
-                # From Population Comparison
-                if "Value Label" in st.session_state.pop_comp_df.columns:
-                    pop_df = st.session_state.pop_comp_df[
-                        st.session_state.pop_comp_df["Field Name"] == field
-                    ]
-                    for _, row in pop_df.iterrows():
-                        raw_comment = str(row.get("Comment", "")).strip()
-                        val_label   = str(row.get("Value Label", "")).strip()
-
+                # 2) From Pop Comp
+                pcomp = st.session_state.pop_comp_df[
+                    st.session_state.pop_comp_df["Field Name"] == field
+                ]
+                cmt_cols2 = [c for c in pcomp.columns if c.endswith("Comment")]
+                for _, row in pcomp.iterrows():
+                    val_label = row.get("Value Label", "")
+                    for c in cmt_cols2:
+                        raw_comment = str(row.get(c, "")).strip()
                         if raw_comment.lower() == "nan" or raw_comment == "":
                             continue
-                        if val_label.lower() == "nan":
-                            val_label = ""
-                        line = f"{val_label} - {raw_comment}".strip(" -")
+                        month_name = c.replace(" Comment","").strip()
+                        line = f"{val_label} ({month_name}) - {raw_comment}".strip(" -")
                         notes.append(line)
 
                 aggregated_note = "\n".join(notes).strip()
@@ -566,13 +576,11 @@ def main():
 
         aggregate_current_comments()
 
-        # Reorder columns so that "Approval Comments" is after "Comment"
+        # Reorder summary columns
         sum_df = st.session_state.summary_df.copy()
         cols = list(sum_df.columns)
-        # remove "Approval Comments" and "Comment" from that list
         cols.remove("Approval Comments")
         cols.remove("Comment")
-        # place them at the end
         new_order = ["Field Name"] + cols[1:] + ["Comment", "Approval Comments"]
         sum_df = sum_df[new_order]
 
@@ -580,27 +588,26 @@ def main():
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
         gb_sum.configure_default_column(
             editable=False,
-            cellStyle={'white-space': 'normal','line-height':'1.2em','width':150}
+            cellStyle={'white-space':'normal','line-height':'1.2em','width':150}
         )
         gb_sum.configure_column("Approval Comments", editable=True, width=250, minWidth=100, maxWidth=300)
         gb_sum.configure_column("Comment", editable=False, width=250, minWidth=100, maxWidth=300)
-        for col in sum_df.columns:
-            if col not in ["Field Name", "Comment", "Approval Comments"]:
-                if "Change" in col:
+        for c in sum_df.columns:
+            if c not in ["Field Name", "Comment", "Approval Comments"]:
+                if "Change" in c:
                     gb_sum.configure_column(
-                        col,
+                        c,
                         type=["numericColumn"],
                         valueFormatter="(params.value != null ? params.value.toFixed(2)+'%' : '')",
                         width=150, minWidth=100, maxWidth=200
                     )
                 else:
                     gb_sum.configure_column(
-                        col,
+                        c,
                         type=["numericColumn"],
                         valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')",
                         width=150, minWidth=100, maxWidth=200
                     )
-
         sum_opts = gb_sum.build()
         if isinstance(sum_opts, list):
             sum_opts = {"columnDefs": sum_opts}
@@ -621,10 +628,9 @@ def main():
             height=sum_height,
             use_container_width=True
         )
-        # Capture user edits to the summary, e.g. Approval Comments
         st.session_state.summary_df = pd.DataFrame(sum_res["data"]).copy()
 
-        # Now do the in-place update
+        # Now in-place update
         try:
             with pd.ExcelWriter(st.session_state.input_file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                 # Summary
@@ -632,7 +638,7 @@ def main():
                 export_sum.to_excel(writer, index=False, sheet_name="Summary")
                 summary_sheet = writer.sheets["Summary"]
 
-                # Insert previous-month comment in "Month-to-Month Diff (date1)" column
+                # Insert prev-month comment in "Month-to-Month Diff (date1)" column
                 d1_col_name = f"Month-to-Month Diff ({st.session_state.date1.strftime('%Y-%m-%d')})"
                 sum_cols = export_sum.columns.tolist()
                 try:
