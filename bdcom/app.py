@@ -24,7 +24,7 @@ def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
 #############################################
-# Generating Summary Sheet
+# Generate Summary Sheet
 #############################################
 
 def generate_summary_df(df_data, date1, date2):
@@ -91,14 +91,14 @@ def generate_summary_df(df_data, date1, date2):
     return df
 
 #############################################
-# Generating Value Distribution / Population Comparison with Monthly Comment Columns
+# Generate Distribution/Pop Comparison with Monthly Comment Columns
 #############################################
 
 def generate_dist_with_comments(df, analysis_type, date1):
     """
-    Creates a pivot with columns for each of the last 12 months (in descending order)
-    for numeric data (Sum, Percent) and for comments.
-    Assumes a column 'value_comment' exists; if not, creates it as empty.
+    Creates a pivot table with, for each of the last 12 months (descending):
+      <month> Sum, <month> Percent, <month> Comment
+    If a column 'value_comment' does not exist, it defaults to an empty string.
     """
     months = [(date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
     months = sorted(months, reverse=True)
@@ -113,7 +113,6 @@ def generate_dist_with_comments(df, analysis_type, date1):
     grouped = sub.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
         return pd.DataFrame()
-
     pivot_num = grouped.pivot_table(
         index=['field_name', 'value_label'],
         columns='month',
@@ -139,7 +138,7 @@ def generate_dist_with_comments(df, analysis_type, date1):
     )
     pivot_cmt = pivot_cmt.reindex(columns=months, fill_value="")
 
-    # Combine numeric and comment pivots
+    # Combine numeric and comment pivots row-by-row
     frames = []
     for field, num_subdf in pivot_num.groupby(level=0):
         num_subdf = num_subdf.droplevel(0)
@@ -166,6 +165,7 @@ def generate_dist_with_comments(df, analysis_type, date1):
                     return str(val)
                 return ""
             combined[(m_str, "Comment")] = [get_comment(vlabel) for vlabel in combined.index]
+
         tot_row = {}
         for m in months:
             m_str = m.strftime('%Y-%m')
@@ -393,14 +393,15 @@ def main():
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
 
         ##############################
-        # Value Distribution Grid
+        # Value Distribution Grid with Monthly Columns
         ##############################
         st.subheader("Value Distribution (Monthly Columns)")
         try:
             val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         except KeyError:
-            # Fallback: use raw data's field names if missing
+            # Fallback if not present: use raw data
             val_fields = st.session_state.df_data["field_name"].unique().tolist()
+            st.warning("Column 'Field Name' not found in Value Distribution data; falling back to raw data field names.")
         if not val_fields:
             st.warning("No Value Distribution data available.")
         else:
@@ -419,7 +420,6 @@ def main():
                     gb_val.configure_column(c, editable=True, width=180)
                 elif c.endswith("Sum") or c.endswith("Percent"):
                     gb_val.configure_column(c, editable=False, width=120)
-
             val_opts = gb_val.build()
             if isinstance(val_opts, list):
                 val_opts = {"columnDefs": val_opts}
@@ -431,19 +431,18 @@ def main():
             val_res = AgGrid(filtered_val, gridOptions=val_opts,
                              update_mode=GridUpdateMode.VALUE_CHANGED,
                              data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-                             key="val_grid",
-                             height=val_height,
-                             use_container_width=True)
+                             key="val_grid", height=val_height, use_container_width=True)
             st.session_state.value_dist_df = pd.DataFrame(val_res["data"]).copy()
 
         ##############################
-        # Population Comparison Grid
+        # Population Comparison Grid with Monthly Columns
         ##############################
         st.subheader("Population Comparison (Monthly Columns)")
         try:
             pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         except KeyError:
             pop_fields = st.session_state.df_data["field_name"].unique().tolist()
+            st.warning("Column 'Field Name' not found in Population Comparison data; falling back to raw data field names.")
         if not pop_fields:
             st.warning("No Population Comparison data available.")
         else:
@@ -462,7 +461,6 @@ def main():
                     gb_pop.configure_column(c, editable=True, width=180)
                 elif c.endswith("Sum") or c.endswith("Percent"):
                     gb_pop.configure_column(c, editable=False, width=120)
-
             pop_opts = gb_pop.build()
             if isinstance(pop_opts, list):
                 pop_opts = {"columnDefs": pop_opts}
@@ -474,9 +472,7 @@ def main():
             pop_res = AgGrid(filtered_pop, gridOptions=pop_opts,
                              update_mode=GridUpdateMode.VALUE_CHANGED,
                              data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-                             key="pop_grid",
-                             height=pop_height,
-                             use_container_width=True)
+                             key="pop_grid", height=pop_height, use_container_width=True)
             st.session_state.pop_comp_df = pd.DataFrame(pop_res["data"]).copy()
 
         ##############################
@@ -495,7 +491,6 @@ def main():
                         raw_comment = str(row.get(c, "")).strip()
                         if raw_comment.lower() == "nan" or raw_comment == "":
                             continue
-                        # Parse month name from the column name; for example, "2025-01 Comment" becomes "2025-01"
                         month_name = c.replace(" Comment", "").strip()
                         line = f"{val_label} ({month_name}) - {raw_comment}".strip(" -")
                         notes.append(line)
@@ -518,7 +513,7 @@ def main():
 
         aggregate_current_comments()
 
-        # Reorder summary columns so that "Approval Comments" comes after "Comment"
+        # Reorder summary columns so that "Approval Comments" is after "Comment"
         sum_df = st.session_state.summary_df.copy()
         cols = list(sum_df.columns)
         if "Approval Comments" in cols: cols.remove("Approval Comments")
@@ -529,7 +524,7 @@ def main():
         st.subheader("Summary")
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
         gb_sum.configure_default_column(editable=False,
-                                        cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_sum.configure_column("Approval Comments", editable=True, width=250, minWidth=100, maxWidth=300)
         gb_sum.configure_column("Comment", editable=False, width=250, minWidth=100, maxWidth=300)
         for c in sum_df.columns:
@@ -554,6 +549,7 @@ def main():
         sum_opts["rowHeight"] = 40
         sum_opts["headerHeight"] = 80
         sum_height = compute_grid_height(sum_df, 40, 80)
+
         sum_res = AgGrid(sum_df, gridOptions=sum_opts,
                          update_mode=GridUpdateMode.VALUE_CHANGED,
                          data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
@@ -561,11 +557,11 @@ def main():
         st.session_state.summary_df = pd.DataFrame(sum_res["data"]).copy()
 
         ##############################
-        # In-Place Excel Update
+        # In-Place Update of the Input Excel File
         ##############################
         try:
             with pd.ExcelWriter(st.session_state.input_file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                # Summary
+                # Summary Sheet
                 export_sum = st.session_state.summary_df.copy().reset_index(drop=True)
                 export_sum.to_excel(writer, index=False, sheet_name="Summary")
                 summary_sheet = writer.sheets["Summary"]
@@ -577,6 +573,7 @@ def main():
                 except ValueError:
                     d1_col_index = export_sum.shape[1]
 
+                # Pivot previous comments for target_prev_month; column name will be e.g. "2025-01 m- Comments"
                 pivoted = pivot_previous_comments(get_cached_previous_comments(st.session_state.folder), target_prev_month)
                 for idx, row in export_sum.iterrows():
                     field = row["Field Name"]
@@ -590,7 +587,7 @@ def main():
                                 com_obj.visible = True
                                 cell.comment = com_obj
 
-                # Value Distribution
+                # Value Distribution Sheet
                 vd_df = st.session_state.value_dist_df.copy().reset_index(drop=True)
                 vd_df.to_excel(writer, index=False, sheet_name="Value Distribution")
                 vd_sheet = writer.sheets["Value Distribution"]
@@ -621,7 +618,7 @@ def main():
                                     com_obj.visible = True
                                     cell.comment = com_obj
 
-                # Population Comparison
+                # Population Comparison Sheet
                 pop_df = st.session_state.pop_comp_df.copy().reset_index(drop=True)
                 pop_df.to_excel(writer, index=False, sheet_name="Population Comparison")
                 pop_sheet = writer.sheets["Population Comparison"]
