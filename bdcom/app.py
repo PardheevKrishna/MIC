@@ -33,13 +33,16 @@ def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "V
     return df
 
 def flatten_dataframe(df):
-    """Flatten a MultiIndex DataFrame and ensure a column named 'Field Name' exists."""
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        # Join multi-index levels with a space and strip extra spaces
-        df.columns = [" ".join([str(c).strip() for c in col if c]).strip() if isinstance(col, tuple) else str(col).strip() 
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip() 
                       for col in df.columns.values]
-    # If 'Field Name' is still not present, try to rename the first column if it looks like an index
+    # Ensure expected columns exist
+    if "field_name" in df.columns and "Field Name" not in df.columns:
+        df.rename(columns={"field_name": "Field Name"}, inplace=True)
+    if "value_label" in df.columns and "Value Label" not in df.columns:
+        df.rename(columns={"value_label": "Value Label"}, inplace=True)
+    # If first column is unnamed, assume it's "Field Name"
     if "Field Name" not in df.columns:
         first_col = df.columns[0]
         if first_col.lower().startswith("unnamed") or first_col.strip() == "":
@@ -181,22 +184,6 @@ def generate_dist_with_comments(df, analysis_type, date1):
     final = pd.concat(frames)
     return final
 
-def flatten_dataframe(df):
-    if isinstance(df.columns, pd.MultiIndex):
-        df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip() 
-                      for col in df.columns.values]
-    if "field_name" in df.columns and "Field Name" not in df.columns:
-        df.rename(columns={"field_name": "Field Name"}, inplace=True)
-    if "value_label" in df.columns and "Value Label" not in df.columns:
-        df.rename(columns={"value_label": "Value Label"}, inplace=True)
-    # If first column is unnamed, assume it is Field Name:
-    if "Field Name" not in df.columns:
-        first_col = df.columns[0]
-        if first_col.lower().startswith("unnamed") or first_col.strip() == "":
-            df.rename(columns={first_col: "Field Name"}, inplace=True)
-    return df
-
 #############################################
 # Load or Generate Report Data
 #############################################
@@ -330,6 +317,9 @@ def preserve_summary_comments(input_file_path, summary_df):
                 return str(val)
             summary_df["Comment"] = summary_df["Field Name"].map(safe_comment)
             summary_df["Approval Comments"] = summary_df["Field Name"].map(safe_approval)
+        # If Approval Comments column is missing, create it.
+        if "Approval Comments" not in summary_df.columns:
+            summary_df["Approval Comments"] = ""
     except Exception as e:
         st.warning(f"Could not preserve existing summary comments: {e}")
     return summary_df
@@ -347,7 +337,7 @@ def main():
         st.sidebar.error(f"Folder '{folder}' not found.")
         return
 
-    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx', '.xlsb'))]
+    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx','.xlsb'))]
     if not all_files:
         st.sidebar.error(f"No Excel files found in folder '{folder}'.")
         return
@@ -507,6 +497,12 @@ def main():
 
         aggregate_current_comments()
 
+        # Ensure "Approval Comments" column exists
+        if "Approval Comments" not in st.session_state.summary_df.columns:
+            st.session_state.summary_df["Approval Comments"] = ""
+        if "Comment" not in st.session_state.summary_df.columns:
+            st.session_state.summary_df["Comment"] = ""
+
         # Reorder Summary columns so that "Approval Comments" comes after "Comment"
         sum_df = st.session_state.summary_df.copy()
         cols = list(sum_df.columns)
@@ -519,8 +515,7 @@ def main():
 
         st.subheader("Summary")
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(editable=False,
-            cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+        gb_sum.configure_default_column(editable=False, cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_sum.configure_column("Approval Comments", editable=True, width=250, minWidth=100, maxWidth=300)
         gb_sum.configure_column("Comment", editable=False, width=250, minWidth=100, maxWidth=300)
         for c in sum_df.columns:
