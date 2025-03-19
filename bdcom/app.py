@@ -26,7 +26,7 @@ def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
 #############################################
-# Generate Summary
+# Generating Summary
 #############################################
 
 def generate_summary_df(df_data, date1, date2):
@@ -49,7 +49,7 @@ def generate_summary_df(df_data, date1, date2):
         )
         missing_d2 = df_data.loc[mask_miss_d2, 'value_records'].sum()
 
-        # We do something similar for phrases
+        # Check pop phrases
         phrases = [
             "1\\)   CF Loan - Both Pop, Diff Values",
             "2\\)   CF Loan - Prior Null, Current Pop",
@@ -148,7 +148,7 @@ def generate_dist_with_comments(df, analysis_type, date1):
         columns='month',
         values='value_records',
         fill_value=0,
-        aggfunc='sum'  # ensure aggregator doesn't fail
+        aggfunc='sum'  # aggregator is 'sum' to avoid aggregator errors
     )
     pivot_num = pivot_num.reindex(columns=months, fill_value=0)
 
@@ -159,7 +159,6 @@ def generate_dist_with_comments(df, analysis_type, date1):
                 return v
         return ""
 
-    # We'll groupby 'value_comment'
     grouped_cmt = sub.groupby(['field_name', 'value_label', 'month'])['value_comment'].apply(first_non_empty).reset_index()
     pivot_cmt = grouped_cmt.pivot_table(
         index=['field_name', 'value_label'],
@@ -180,11 +179,10 @@ def generate_dist_with_comments(df, analysis_type, date1):
         else:
             cmt_subdf = pd.DataFrame()
 
-        # If cmt_subdf is a Series, we want a DataFrame
         if isinstance(cmt_subdf, pd.Series):
             cmt_subdf = cmt_subdf.to_frame().T
-        if cmt_subdf.empty or isinstance(cmt_subdf, pd.Series):
-            pass  # might be empty
+        if cmt_subdf.empty:
+            pass
 
         total = num_subdf.sum(axis=0)
         pct = num_subdf.div(total, axis=1).mul(100).round(2).fillna(0)
@@ -195,10 +193,9 @@ def generate_dist_with_comments(df, analysis_type, date1):
             combined[(m_str, "Sum")] = num_subdf[m]
             combined[(m_str, "Percent")] = pct[m]
 
-            # We'll fetch the comment from cmt_subdf if it exists
             def get_comment(vlabel):
-                if vlabel in cmt_subdf.index:
-                    val = cmt_subdf.loc[vlabel, m] if m in cmt_subdf.columns else ""
+                if vlabel in cmt_subdf.index and m in cmt_subdf.columns:
+                    val = cmt_subdf.loc[vlabel, m]
                     if pd.isna(val) or str(val).strip().lower() == "nan":
                         return ""
                     return str(val)
@@ -227,15 +224,22 @@ def flatten_dataframe(df):
     """Flatten multi-index columns into single strings."""
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
-                      for col in df.columns.values]
+        df.columns = [
+            " ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
+            for col in df.columns.values
+        ]
     return df
 
+#############################################
+# load_report_data
+#############################################
+
 def load_report_data(file_path, date1, date2):
-    """Load or generate Summary, Value Distribution, and Population Comparison."""
+    """
+    If Summary/Value Dist/Pop Comp exist, load them. Otherwise generate them from scratch.
+    """
     df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
-
     wb = load_workbook(file_path, data_only=True)
 
     # summary
@@ -244,13 +248,13 @@ def load_report_data(file_path, date1, date2):
     else:
         summary_df = generate_summary_df(df_data, date1, date2)
 
-    # Value Distribution with monthly comment columns
+    # Value Distribution
     if "Value Distribution" in wb.sheetnames:
         val_dist_df = pd.read_excel(file_path, sheet_name="Value Distribution")
     else:
         val_dist_df = generate_dist_with_comments(df_data, "value_dist", date1)
 
-    # Population Comparison with monthly comment columns
+    # Population Comparison
     if "Population Comparison" in wb.sheetnames:
         pop_comp_df = pd.read_excel(file_path, sheet_name="Population Comparison")
     else:
@@ -325,6 +329,7 @@ def cache_previous_comments(current_folder):
     return df
 
 def get_cached_previous_comments(current_folder):
+    """Load previous_comments.csv if it exists, or empty DF if not found."""
     try:
         df = pd.read_csv("previous_comments.csv")
         if df.empty:
@@ -335,25 +340,29 @@ def get_cached_previous_comments(current_folder):
 
 def pivot_previous_comments(df, target_month):
     """
-    For the target month, gather all comments into one column (the older approach).
-    If you want a separate column per month, you can do a pivot of all months.
+    For the target month, gather all comments into one column.
+    We'll rename that column to f"{target_month} m- Comments" so we don't see 'Prev Comments'.
     """
     if df.empty:
         return pd.DataFrame()
     df_target = df[df["Month"] == target_month]
     if df_target.empty:
         return pd.DataFrame()
+
     grouped = df_target.groupby(["Field Name"])["Comment"].apply(
         lambda x: "\n".join(
             str(item) for item in x
-            if pd.notnull(item) and str(item).strip().lower() != "nan"
+            if pd.notnull(item) and str(item).strip().lower() != "nan" and item.strip() != ""
         )
     ).reset_index()
-    grouped = grouped.rename(columns={"Comment": f"comment_{target_month}"})
+
+    # Instead of "comment_{target_month}", rename to "<month> m- Comments"
+    colname = f"{target_month} m- Comments"
+    grouped = grouped.rename(columns={"Comment": colname})
     return grouped
 
 #############################################
-# Function to Preserve Existing Summary Comments
+# Preserve Existing Summary Comments
 #############################################
 
 def preserve_summary_comments(input_file_path, summary_df):
@@ -424,7 +433,9 @@ def main():
     target_prev_month = (date1 - relativedelta(months=1)).strftime("%Y-%m")
 
     if st.sidebar.button("Generate Report"):
+        # If the sheets don't exist, we generate them. If they do, we load them.
         df_data, summary_df, val_dist_df, pop_comp_df = load_report_data(input_file_path, date1, date2)
+        # Preserve existing summary comments
         summary_df = preserve_summary_comments(input_file_path, summary_df)
 
         st.session_state.df_data = df_data
@@ -446,7 +457,9 @@ def main():
         st.write(f"**File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
 
-        # 1) Show Value Distribution with monthly columns
+        ##############################
+        # Value Distribution Grid
+        ##############################
         st.subheader("Value Distribution (Monthly Columns)")
         val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         if not val_fields:
@@ -466,10 +479,10 @@ def main():
             gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
             gb_val.configure_default_column(
                 editable=True,
-                cellStyle={'white-space': 'normal','line-height':'1.2em','width':150}
+                cellStyle={'white-space':'normal','line-height':'1.2em','width':150}
             )
 
-            # Mark monthly comment columns as editable
+            # We'll detect columns that end with "Comment" and make them editable
             for c in filtered_val.columns:
                 if c.endswith("Comment"):
                     gb_val.configure_column(c, editable=True, width=180)
@@ -495,7 +508,9 @@ def main():
             )
             st.session_state.value_dist_df = pd.DataFrame(val_res["data"]).copy()
 
-        # 2) Show Population Comparison with monthly columns
+        ##############################
+        # Population Comparison Grid
+        ##############################
         st.subheader("Population Comparison (Monthly Columns)")
         pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         if not pop_fields:
@@ -515,7 +530,7 @@ def main():
             gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
             gb_pop.configure_default_column(
                 editable=True,
-                cellStyle={'white-space': 'normal','line-height':'1.2em','width':150}
+                cellStyle={'white-space':'normal','line-height':'1.2em','width':150}
             )
 
             for c in filtered_pop.columns:
@@ -553,7 +568,7 @@ def main():
             sum_df = st.session_state.summary_df.copy()
             for field in sum_df["Field Name"].unique():
                 notes = []
-                # 1) from Value Dist
+                # from Value Dist
                 vdist = st.session_state.value_dist_df[
                     st.session_state.value_dist_df["Field Name"] == field
                 ]
@@ -564,12 +579,11 @@ def main():
                         raw_comment = str(row.get(c, "")).strip()
                         if raw_comment.lower() == "nan" or raw_comment == "":
                             continue
-                        # parse out the month name from c
                         month_name = c.replace(" Comment", "").strip()
                         line = f"{val_label} ({month_name}) - {raw_comment}".strip(" -")
                         notes.append(line)
 
-                # 2) from Pop Comp
+                # from Pop Comp
                 pcomp = st.session_state.pop_comp_df[
                     st.session_state.pop_comp_df["Field Name"] == field
                 ]
@@ -662,16 +676,18 @@ def main():
                 except ValueError:
                     d1_col_index = export_sum.shape[1]
 
-                pivot_prev = pivot_previous_comments(get_cached_previous_comments(st.session_state.folder), target_prev_month)
+                # rename "comment_{target_prev_month}" => "<month> m- Comments"
+                # We'll create the pivot of that single month
+                pivoted = pivot_previous_comments(get_cached_previous_comments(st.session_state.folder), target_prev_month)
                 for idx, row in export_sum.iterrows():
                     field = row["Field Name"]
-                    if target_prev_month in pivot_prev.columns:
-                        prev_comment = pivot_prev.loc[pivot_prev["Field Name"]==field, f"comment_{target_prev_month}"]
-                        if not prev_comment.empty:
-                            prev_comment_str = str(prev_comment.values[0]).strip()
-                            if prev_comment_str.lower() != "nan" and prev_comment_str != "":
+                    if not pivoted.empty and field in pivoted["Field Name"].values:
+                        val = pivoted.loc[pivoted["Field Name"]==field, f"{target_prev_month} m- Comments"]
+                        if not val.empty:
+                            txt = str(val.values[0]).strip()
+                            if txt.lower() != "nan" and txt != "":
                                 cell = summary_sheet.cell(row=idx+2, column=d1_col_index)
-                                com_obj = Comment(prev_comment_str, "Prev")
+                                com_obj = Comment(txt, "Prev")
                                 com_obj.visible = True
                                 cell.comment = com_obj
 
@@ -680,6 +696,7 @@ def main():
                 vd_df.to_excel(writer, index=False, sheet_name="Value Distribution")
                 vd_sheet = writer.sheets["Value Distribution"]
                 vd_cols = vd_df.columns.tolist()
+
                 date_str = st.session_state.date1.strftime("%Y-%m")
                 try:
                     vd_sum_col_index = vd_cols.index(date_str + " Sum") + 1
@@ -690,19 +707,19 @@ def main():
                 for idx, row in vd_df.iterrows():
                     excel_row = idx + 2
                     field = row["Field Name"]
-                    if target_prev_month in pivot_prev.columns:
-                        prev_comment = pivot_prev.loc[pivot_prev["Field Name"]==field, f"comment_{target_prev_month}"]
-                        if not prev_comment.empty:
-                            prev_comment_str = str(prev_comment.values[0]).strip()
-                            if prev_comment_str.lower() != "nan" and prev_comment_str != "":
+                    if not pivoted.empty and field in pivoted["Field Name"].values:
+                        val = pivoted.loc[pivoted["Field Name"]==field, f"{target_prev_month} m- Comments"]
+                        if not val.empty:
+                            txt = str(val.values[0]).strip()
+                            if txt.lower() != "nan" and txt != "":
                                 if vd_sum_col_index is not None:
                                     cell = vd_sheet.cell(row=excel_row, column=vd_sum_col_index)
-                                    com_obj = Comment(prev_comment_str, "Prev")
+                                    com_obj = Comment(txt, "Prev")
                                     com_obj.visible = True
                                     cell.comment = com_obj
                                 if vd_percent_col_index is not None:
                                     cell = vd_sheet.cell(row=excel_row, column=vd_percent_col_index)
-                                    com_obj = Comment(prev_comment_str, "Prev")
+                                    com_obj = Comment(txt, "Prev")
                                     com_obj.visible = True
                                     cell.comment = com_obj
 
@@ -720,19 +737,19 @@ def main():
                 for idx, row in pop_df.iterrows():
                     excel_row = idx + 2
                     field = row["Field Name"]
-                    if target_prev_month in pivot_prev.columns:
-                        prev_comment = pivot_prev.loc[pivot_prev["Field Name"]==field, f"comment_{target_prev_month}"]
-                        if not prev_comment.empty:
-                            prev_comment_str = str(prev_comment.values[0]).strip()
-                            if prev_comment_str.lower() != "nan" and prev_comment_str != "":
+                    if not pivoted.empty and field in pivoted["Field Name"].values:
+                        val = pivoted.loc[pivoted["Field Name"]==field, f"{target_prev_month} m- Comments"]
+                        if not val.empty:
+                            txt = str(val.values[0]).strip()
+                            if txt.lower() != "nan" and txt != "":
                                 if pop_sum_col_index is not None:
                                     cell = pop_sheet.cell(row=excel_row, column=pop_sum_col_index)
-                                    com_obj = Comment(prev_comment_str, "Prev")
+                                    com_obj = Comment(txt, "Prev")
                                     com_obj.visible = True
                                     cell.comment = com_obj
                                 if pop_percent_col_index is not None:
                                     cell = pop_sheet.cell(row=excel_row, column=pop_percent_col_index)
-                                    com_obj = Comment(prev_comment_str, "Prev")
+                                    com_obj = Comment(txt, "Prev")
                                     com_obj.visible = True
                                     cell.comment = com_obj
 
