@@ -1,30 +1,31 @@
-options fullstimer; /* Enables detailed timing info in the log */
+options fullstimer; /* Enables detailed timing info */
 
 /* Record start time */
 %let start = %sysfunc(datetime());
 
-data million;
-    call streaminit(123); /* Initialize random number generator */
-    do id = 1 to 1000000;
-        /* Generate random values similar to Python */
-        value1 = rand("Uniform");
-        value2 = floor(rand("Uniform") * 100);
-        
-        /* Simulate heavy computation: inner loop of 100 iterations */
-        computed = 0;
-        do j = 1 to 100;
-            computed + sin(value1) * cos(value2) / j;
-        end;
-        
-        output;
-        
-        /* Debug message every 100,000 rows */
-        if mod(id, 100000) = 0 then do;
-            put "DEBUG: Processed " id " rows";
-        end;
+/* Import the CSV file "million_rows.csv" */
+proc import datafile="million_rows.csv"
+    out=million
+    dbms=csv
+    replace;
+    guessingrows=MAX;
+run;
+
+data million_processed;
+    set million;
+    /* Initialize computed column for heavy computation */
+    computed = 0;
+    /* Simulate heavy per‑row computation with an inner loop of 100 iterations */
+    do j = 1 to 100;
+        computed + sin(value1) * cos(value2) / j;
+    end;
+    
+    /* Debug message: print progress every 100,000 rows */
+    if mod(_N_, 100000) = 0 then do;
+        put "DEBUG: Processed " _N_ " rows";
     end;
 run;
 
-/* Record end time and calculate elapsed seconds */
+/* Record end time and compute elapsed seconds */
 %let end = %sysfunc(datetime());
 %put NOTE: Elapsed time for SAS processing: %sysevalf(&end - &start) seconds;
