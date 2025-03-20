@@ -23,27 +23,8 @@ def compute_grid_height(df, row_height=40, header_height=80):
 def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
-def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "Value Label"}):
-    # Strip whitespace from column names and rename according to mapping.
-    df.columns = [str(col).strip() for col in df.columns]
-    for orig, new in mapping.items():
-        for col in df.columns:
-            if col.lower() == orig.lower() and col != new:
-                df.rename(columns={col: new}, inplace=True)
-    return df
-
-def flatten_dataframe(df):
-    if isinstance(df.columns, pd.MultiIndex):
-        df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col for col in df.columns.values]
-    return df
-
-#############################################
-# Generate Summary Sheet from Data
-#############################################
-
 def generate_summary_df(df_data, date1, date2):
-    # Using original lowercase columns from the Data sheet.
+    # Using original lowercase column names from Data sheet.
     fields = sorted(df_data["field_name"].unique())
     rows = []
     for field in fields:
@@ -93,14 +74,9 @@ def generate_summary_df(df_data, date1, date2):
     summary["Month-to-Month % Change"] = summary.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     new_order = ["Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change"]
     summary = summary[new_order]
-    # Add empty columns for comments.
     summary["Comment"] = ""
     summary["Approval Comments"] = ""
     return summary
-
-#############################################
-# Generate Distribution/Population Comparison Sheets
-#############################################
 
 def generate_distribution_df(df, analysis_type, date1):
     months = [(date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
@@ -146,10 +122,15 @@ def flatten_dataframe(df):
     return df
 
 #############################################
-# Pivot All Previous Comments by Month
+# Pivot All Previous Comments (split by month)
 #############################################
 
 def pivot_all_previous_comments(df):
+    """
+    Given a DataFrame with previous comments (columns: Field Name, Month, Comment),
+    pivot it so that each unique Month becomes a separate column (named "YYYY-MM m- Comments")
+    where comments are aggregated (joined by newline) for each Field Name.
+    """
     if df.empty:
         return pd.DataFrame()
     months = sorted(df["Month"].unique())
@@ -175,7 +156,7 @@ def pivot_all_previous_comments(df):
 def load_report_data(file_path, date1, date2):
     df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
-    # Do not normalize here; generation functions expect lowercase.
+    # Use original columns (lowercase) for generation.
     wb = load_workbook(file_path, data_only=True)
     if "Summary" in wb.sheetnames:
         summary_df = pd.read_excel(file_path, sheet_name="Summary")
@@ -291,13 +272,12 @@ def append_prev_comment(summary_df, target_month):
     pivot_prev = pivot_previous_comments(prev_df, target_month)
     if pivot_prev.empty:
         return summary_df
-    # Append the previous month's comment to the existing Comment.
     def combine_comments(row):
         orig = row["Comment"] if pd.notna(row["Comment"]) else ""
         field = row["Field Name"]
         match = pivot_prev[pivot_prev["Field Name"] == field]
         if not match.empty:
-            prev_comment = str(match.iloc[0, 1]).strip()  # second column is the comment
+            prev_comment = str(match.iloc[0, 1]).strip()
             if prev_comment:
                 if orig:
                     return orig + "\n" + prev_comment
@@ -355,7 +335,7 @@ def main():
     st.write("Working Directory:", os.getcwd())
     
     if "df_data" in st.session_state:
-        st.title("Final FRY14M Field Analysis Summary Report")
+        st.title("FRY14M Field Analysis Summary Report")
         st.write(f"**Folder:** {st.session_state.folder}")
         st.write(f"**File:** {st.session_state.selected_file}")
         st.write(f"**Date1:** {st.session_state.date1.strftime('%Y-%m-%d')} | **Date2:** {st.session_state.date2.strftime('%Y-%m-%d')}")
@@ -380,18 +360,17 @@ def main():
                                               key="val_field_select")
             st.session_state.active_field = selected_val_field
             filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
-            # Merge pivoted previous comments (all months).
+            # Merge all previous comment columns.
             pivot_prev_all = pivot_all_previous_comments(get_cached_previous_comments(st.session_state.folder))
             if not pivot_prev_all.empty:
                 filtered_val = pd.merge(filtered_val, pivot_prev_all, on="Field Name", how="left")
             gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
             gb_val.configure_default_column(editable=True, cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
-            # For the Comment column, use a simple renderer (no color) for now.
             custom_renderer = JsCode("function(params){return params.value ? params.value : '';}")
             gb_val.configure_column("Comment", editable=True, cellRenderer=custom_renderer, width=180)
             for c in filtered_val.columns:
                 if "m- Comments" in c:
-                    gb_val.configure_column(c, editable=False, width=150)
+                    gb_val.configure_column(c, editable=False, width=180)
                 elif c.endswith("Sum") or c.endswith("Percent"):
                     gb_val.configure_column(c, editable=False, width=120)
             val_opts = gb_val.build()
@@ -465,7 +444,7 @@ def main():
             gb_pop.configure_column("Comment", editable=True, width=180)
             for c in filtered_pop.columns:
                 if "m- Comments" in c:
-                    gb_pop.configure_column(c, editable=False, width=150)
+                    gb_pop.configure_column(c, editable=False, width=180)
                 elif c.endswith("Sum") or c.endswith("Percent"):
                     gb_pop.configure_column(c, editable=False, width=120)
             pop_opts = gb_pop.build()
@@ -554,13 +533,11 @@ def main():
             st.session_state.summary_df = sum_df
         aggregate_current_comments()
         
-        # Ensure columns exist
+        # Ensure columns exist and reorder Summary columns so that "Approval Comments" comes after "Comment"
         if "Approval Comments" not in st.session_state.summary_df.columns:
             st.session_state.summary_df["Approval Comments"] = ""
         if "Comment" not in st.session_state.summary_df.columns:
             st.session_state.summary_df["Comment"] = ""
-        
-        # Reorder Summary columns so that "Approval Comments" comes immediately after "Comment"
         sum_df = st.session_state.summary_df.copy()
         cols = list(sum_df.columns)
         cols.remove("Approval Comments")
@@ -569,7 +546,6 @@ def main():
         sum_df = sum_df[new_order]
         
         st.subheader("Summary")
-        # Use a custom renderer so that HTML in "Comment" is shown as plain text.
         comment_renderer = JsCode("function(params){return params.value ? params.value : '';}")
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
         gb_sum.configure_default_column(editable=False,
@@ -610,7 +586,7 @@ def main():
                 st.session_state.summary_df.to_excel(writer, index=False, sheet_name="Summary")
                 st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
                 st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
-                # Also update Summary sheet Comment cells: simply set the cell comment to the updated text.
+                # Update Summary sheet: for each row, append the previous month comment (if any) to the Comment cell.
                 summary_sheet = writer.sheets["Summary"]
                 header = [cell.value for cell in summary_sheet[1]]
                 try:
@@ -632,7 +608,7 @@ def main():
                 for idx, row in st.session_state.summary_df.iterrows():
                     field = row["Field Name"]
                     if not pivot_prev.empty and field in pivot_prev["Field Name"].values:
-                        prev_comment = str(pivot_prev[pivot_prev["Field Name"] == field].iloc[0, 1]).strip()
+                        prev_comment = str(pivot_prev[pivot_prev["Field Name"]==field].iloc[0,1]).strip()
                         if prev_comment:
                             orig_comment = row["Comment"] if row["Comment"] else ""
                             new_comment = orig_comment + "\n" + prev_comment if orig_comment else prev_comment
