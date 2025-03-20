@@ -23,31 +23,32 @@ def compute_grid_height(df, row_height=40, header_height=80):
 def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
-def normalize_columns(df):
-    """
-    Normalize column names:
-      - Strip whitespace.
-      - Rename 'field_name' (in any case) to 'Field Name'
-      - Rename 'value_label' (in any case) to 'Value Label'
-    """
-    new_cols = {}
-    for col in df.columns:
-        col_str = str(col).strip()
-        if col_str.lower() == "field_name":
-            new_cols[col] = "Field Name"
-        elif col_str.lower() == "value_label":
-            new_cols[col] = "Value Label"
-        else:
-            new_cols[col] = col_str
-    return df.rename(columns=new_cols)
+def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "Value Label"}):
+    # Strip whitespace and rename columns based on mapping.
+    df.columns = [str(col).strip() for col in df.columns]
+    for orig, new in mapping.items():
+        for col in df.columns:
+            if col.lower() == orig.lower() and col != new:
+                df.rename(columns={col: new}, inplace=True)
+    return df
 
 def flatten_dataframe(df):
-    """Flatten MultiIndex columns and ensure normalization."""
+    """Flatten MultiIndex columns and ensure a column named 'Field Name' exists."""
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip()
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip() 
                       for col in df.columns.values]
+    # Ensure normalized columns are present.
     df = normalize_columns(df)
+    # If "Field Name" is still missing, try to rename the first column if it appears unnamed.
+    if "Field Name" not in df.columns:
+        first_col = df.columns[0]
+        if isinstance(first_col, tuple):
+            first_col_str = " ".join(map(str, first_col)).strip()
+        else:
+            first_col_str = str(first_col).strip()
+        if first_col_str.lower().startswith("unnamed") or first_col_str == "":
+            df.rename(columns={df.columns[0]: "Field Name"}, inplace=True)
     return df
 
 #############################################
@@ -192,7 +193,7 @@ def generate_dist_with_comments(df, analysis_type, date1):
 def load_report_data(file_path, date1, date2):
     df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
-    df_data = normalize_columns(df_data)  # Force normalization here.
+    df_data = normalize_columns(df_data)  # Ensure normalization right away.
     wb = load_workbook(file_path, data_only=True)
     if "Summary" in wb.sheetnames:
         summary_df = pd.read_excel(file_path, sheet_name="Summary")
@@ -341,7 +342,7 @@ def main():
         st.sidebar.error(f"Folder '{folder}' not found.")
         return
 
-    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx', '.xlsb'))]
+    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx','.xlsb'))]
     if not all_files:
         st.sidebar.error(f"No Excel files found in folder '{folder}'.")
         return
@@ -389,7 +390,6 @@ def main():
         # Value Distribution Grid (Monthly Columns)
         ##############################
         st.subheader("Value Distribution (Monthly Columns)")
-        # Ensure we use the normalized column name "Field Name"
         if "Field Name" not in st.session_state.value_dist_df.columns:
             st.session_state.value_dist_df = normalize_columns(st.session_state.value_dist_df)
         try:
@@ -506,7 +506,7 @@ def main():
 
         aggregate_current_comments()
 
-        # Ensure "Approval Comments" and "Comment" columns exist
+        # Ensure that both "Approval Comments" and "Comment" columns exist
         if "Approval Comments" not in st.session_state.summary_df.columns:
             st.session_state.summary_df["Approval Comments"] = ""
         if "Comment" not in st.session_state.summary_df.columns:
@@ -555,16 +555,18 @@ def main():
         st.session_state.summary_df = pd.DataFrame(sum_res["data"]).copy()
 
         ##############################
-        # Write Results Back to Excel
+        # Create a new Excel file for download
         ##############################
-        try:
-            with pd.ExcelWriter(st.session_state.input_file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                st.session_state.summary_df.to_excel(writer, index=False, sheet_name="Summary")
-                st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
-                st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
-            st.success(f"Excel file updated successfully at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.")
-        except Exception as e:
-            st.error(f"Error updating Excel file: {e}")
+        out_buf = BytesIO()
+        with pd.ExcelWriter(out_buf, engine='openpyxl') as writer:
+            st.session_state.summary_df.to_excel(writer, index=False, sheet_name="Summary")
+            st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
+            st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
+        out_buf.seek(0)
+        st.download_button("Download Report as Excel",
+                           data=out_buf.getvalue(),
+                           file_name="FRY14M_Field_Analysis_Report.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 if __name__ == "__main__":
     main()
