@@ -23,27 +23,31 @@ def compute_grid_height(df, row_height=40, header_height=80):
 def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
-def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "Value Label"}):
-    # Strip whitespace from column names and rename columns based on the mapping.
-    df.columns = [str(col).strip() for col in df.columns]
-    for orig, new in mapping.items():
-        for col in df.columns:
-            if col.lower() == orig.lower() and col != new:
-                df.rename(columns={col: new}, inplace=True)
-    return df
+def normalize_columns(df):
+    """
+    Normalize column names:
+      - Strip whitespace.
+      - Rename 'field_name' (in any case) to 'Field Name'
+      - Rename 'value_label' (in any case) to 'Value Label'
+    """
+    new_cols = {}
+    for col in df.columns:
+        col_str = str(col).strip()
+        if col_str.lower() == "field_name":
+            new_cols[col] = "Field Name"
+        elif col_str.lower() == "value_label":
+            new_cols[col] = "Value Label"
+        else:
+            new_cols[col] = col_str
+    return df.rename(columns=new_cols)
 
 def flatten_dataframe(df):
-    """Flatten MultiIndex columns and ensure a column named 'Field Name' exists."""
+    """Flatten MultiIndex columns and ensure normalization."""
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
         df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip()
                       for col in df.columns.values]
-    # If "Field Name" is missing, try to rename a lower-case column.
-    if "Field Name" not in df.columns:
-        if "field_name" in df.columns:
-            df.rename(columns={"field_name": "Field Name"}, inplace=True)
-        elif df.index.name == "Field Name":
-            df = df.reset_index()
+    df = normalize_columns(df)
     return df
 
 #############################################
@@ -188,18 +192,21 @@ def generate_dist_with_comments(df, analysis_type, date1):
 def load_report_data(file_path, date1, date2):
     df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
-    df_data = normalize_columns(df_data)  # ensure normalization right away
+    df_data = normalize_columns(df_data)  # Force normalization here.
     wb = load_workbook(file_path, data_only=True)
     if "Summary" in wb.sheetnames:
         summary_df = pd.read_excel(file_path, sheet_name="Summary")
+        summary_df = normalize_columns(summary_df)
     else:
         summary_df = generate_summary_df(df_data, date1, date2)
     if "Value Distribution" in wb.sheetnames:
         val_dist_df = pd.read_excel(file_path, sheet_name="Value Distribution")
+        val_dist_df = normalize_columns(val_dist_df)
     else:
         val_dist_df = generate_dist_with_comments(df_data, "value_dist", date1)
     if "Population Comparison" in wb.sheetnames:
         pop_comp_df = pd.read_excel(file_path, sheet_name="Population Comparison")
+        pop_comp_df = normalize_columns(pop_comp_df)
     else:
         pop_comp_df = generate_dist_with_comments(df_data, "pop_comp", date1)
     return df_data, summary_df, val_dist_df, pop_comp_df
@@ -334,7 +341,7 @@ def main():
         st.sidebar.error(f"Folder '{folder}' not found.")
         return
 
-    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx','.xlsb'))]
+    all_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.xlsx', '.xlsb'))]
     if not all_files:
         st.sidebar.error(f"No Excel files found in folder '{folder}'.")
         return
@@ -382,11 +389,9 @@ def main():
         # Value Distribution Grid (Monthly Columns)
         ##############################
         st.subheader("Value Distribution (Monthly Columns)")
-        # Try to retrieve normalized "Field Name" from the value distribution DataFrame.
+        # Ensure we use the normalized column name "Field Name"
         if "Field Name" not in st.session_state.value_dist_df.columns:
-            # Fallback: try to rename "field_name" if present.
-            if "field_name" in st.session_state.value_dist_df.columns:
-                st.session_state.value_dist_df.rename(columns={"field_name": "Field Name"}, inplace=True)
+            st.session_state.value_dist_df = normalize_columns(st.session_state.value_dist_df)
         try:
             val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         except KeyError:
@@ -422,8 +427,7 @@ def main():
         ##############################
         st.subheader("Population Comparison (Monthly Columns)")
         if "Field Name" not in st.session_state.pop_comp_df.columns:
-            if "field_name" in st.session_state.pop_comp_df.columns:
-                st.session_state.pop_comp_df.rename(columns={"field_name": "Field Name"}, inplace=True)
+            st.session_state.pop_comp_df = normalize_columns(st.session_state.pop_comp_df)
         try:
             pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         except KeyError:
