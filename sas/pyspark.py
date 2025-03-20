@@ -1,49 +1,38 @@
-import time
-import math
-import numpy as np
 import pandas as pd
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import pandas_udf
-from pyspark.sql.types import DoubleType
+import numpy as np
+import dask.dataframe as dd
+from dask.diagnostics import ProgressBar
+from numba import njit
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("ComplexCalculations_PandasUDF").getOrCreate()
+# Define a heavy computation function that operates on numpy arrays
+@njit
+def compute_array(values1, values2):
+    n = values1.shape[0]
+    result = np.empty(n)
+    for i in range(n):
+        s = 0.0
+        # Simulate heavy computation by looping 100 times per row
+        for j in range(100):
+            s += np.sin(values1[i]) * np.cos(values2[i]) / (j + 1)
+        result[i] = s
+    return result
 
-# Generate the dummy dataset with 1,000,000 rows and 200 random columns.
-df = spark.range(0, 1000000)
-for i in range(1, 201):
-    df = df.withColumn(f"col_{i}", np.random.rand())
+# Function to process each Dask partition using the numba-accelerated function
+def process_partition(df):
+    # Use the numba function on the partition’s numpy arrays
+    arr = compute_array(df['value1'].values, df['value2'].values)
+    df['computed'] = arr
+    return df
 
-# Define a vectorized function that will be applied to batches (as a Pandas DataFrame).
-def complex_calculation_vectorized(pdf: pd.DataFrame) -> pd.Series:
-    # Sum over the 200 columns after applying the complex calculation to each
-    # We assume columns are named col_1, col_2, ..., col_200
-    total = pd.Series(0.0, index=pdf.index)
-    # For each column, perform the 50 iterations on the entire column at once using numpy.
-    for col in pdf.columns:
-        temp = pdf[col].to_numpy()
-        for _ in range(50):
-            temp = np.sin(temp) * np.cos(temp) + np.log(np.abs(temp) + 1)
-        total += temp
-    return total
+# Read the pre-generated CSV using Dask (this creates a Dask DataFrame)
+ddf = dd.read_csv("million_rows.csv")
 
-# Create a Pandas UDF for vectorized operations.
-complex_udf = pandas_udf(complex_calculation_vectorized, returnType=DoubleType())
+# Map the processing function to each partition; Dask handles parallel processing.
+processed_ddf = ddf.map_partitions(process_partition)
 
-# List of column names corresponding to col_1, col_2, …, col_200
-columns = [f"col_{i}" for i in range(1, 201)]
+# Use Dask’s progress bar to monitor computation
+with ProgressBar():
+    result_df = processed_ddf.compute()
 
-# Record the start time
-start_time = time.time()
-
-# Apply the Pandas UDF on a struct of all columns.
-df_complex = df.withColumn("complex_calc", complex_udf(*columns))
-
-# Force evaluation by performing an action (e.g., counting rows)
-row_count = df_complex.select("complex_calc").count()
-
-# Record the end time
-end_time = time.time()
-
-print("Total PySpark (Pandas UDF) computation time: {:.2f} seconds".format(end_time - start_time))
-df_complex.select("complex_calc").show(5)
+# Display the first few rows of the processed DataFrame
+print(result_df.head())
