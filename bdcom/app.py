@@ -22,6 +22,11 @@ def compute_grid_height(df, row_height=40, header_height=80):
 def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
+# A simple helper to normalize a DataFrame (if needed)
+def normalize_df(df):
+    # For now, we simply return the DataFrame unchanged.
+    return df
+
 def generate_summary_df(df_data, date1, date2):
     # Here the Data sheet uses lowercase column names. We use them in our grouping.
     fields = sorted(df_data["field_name"].unique())
@@ -336,6 +341,11 @@ def main():
             if not pivot_prev_all.empty:
                 filtered_val = filtered_val.merge(pivot_prev_all, on="Field Name", how="left")
             gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
+            # Anchor (pin) the 'Field Name' and 'Value Label' columns
+            if "Field Name" in filtered_val.columns:
+                gb_val.configure_column("Field Name", pinned="left", width=180)
+            if "Value Label" in filtered_val.columns:
+                gb_val.configure_column("Value Label", pinned="left", width=180)
             gb_val.configure_default_column(editable=True, cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
             # Make the monthly comment columns non-editable
             for c in filtered_val.columns:
@@ -404,6 +414,11 @@ def main():
             if not pivot_prev_all.empty:
                 filtered_pop = filtered_pop.merge(pivot_prev_all, on="Field Name", how="left")
             gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
+            # Anchor (pin) the 'Field Name' and 'Value Label' columns if available
+            if "Field Name" in filtered_pop.columns:
+                gb_pop.configure_column("Field Name", pinned="left", width=180)
+            if "Value Label" in filtered_pop.columns:
+                gb_pop.configure_column("Value Label", pinned="left", width=180)
             gb_pop.configure_default_column(editable=True, cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
             for c in filtered_pop.columns:
                 if "m- Comments" in c:
@@ -459,6 +474,7 @@ def main():
         
         ##############################
         # Aggregate current grid comments into Summary's "Comment" Column
+        ##############################
         def aggregate_current_comments():
             sum_df = st.session_state.summary_df.copy()
             for field in sum_df["Field Name"].unique():
@@ -499,6 +515,9 @@ def main():
         
         st.subheader("Summary")
         gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
+        # Anchor (pin) the 'Field Name' column
+        if "Field Name" in sum_df.columns:
+            gb_sum.configure_column("Field Name", pinned="left", width=180)
         gb_sum.configure_default_column(editable=False,
                                         cellStyle={'white-space': 'normal','line-height':'1.2em','width':150})
         gb_sum.configure_column("Approval Comments", editable=True, width=250, minWidth=100, maxWidth=300)
