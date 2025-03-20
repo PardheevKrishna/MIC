@@ -38,18 +38,12 @@ def flatten_dataframe(df):
         df = df.reset_index()
         df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip()
                       for col in df.columns.values]
-    # If "Field Name" is missing but a lowercase version exists, rename it.
-    if "Field Name" not in df.columns and "field_name" in df.columns:
-        df.rename(columns={"field_name": "Field Name"}, inplace=True)
-    # If still missing, check if the first column is unnamed and rename it.
+    # If "Field Name" is missing, try to rename a lower-case column.
     if "Field Name" not in df.columns:
-        first_col = df.columns[0]
-        if isinstance(first_col, tuple):
-            first_col_str = " ".join(map(str, first_col)).strip()
-        else:
-            first_col_str = str(first_col).strip()
-        if first_col_str.lower().startswith("unnamed") or first_col_str == "":
-            df.rename(columns={df.columns[0]: "Field Name"}, inplace=True)
+        if "field_name" in df.columns:
+            df.rename(columns={"field_name": "Field Name"}, inplace=True)
+        elif df.index.name == "Field Name":
+            df = df.reset_index()
     return df
 
 #############################################
@@ -194,8 +188,7 @@ def generate_dist_with_comments(df, analysis_type, date1):
 def load_report_data(file_path, date1, date2):
     df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
-    # Normalize Data sheet immediately so that "Field Name" is available.
-    df_data = normalize_columns(df_data)
+    df_data = normalize_columns(df_data)  # ensure normalization right away
     wb = load_workbook(file_path, data_only=True)
     if "Summary" in wb.sheetnames:
         summary_df = pd.read_excel(file_path, sheet_name="Summary")
@@ -389,6 +382,11 @@ def main():
         # Value Distribution Grid (Monthly Columns)
         ##############################
         st.subheader("Value Distribution (Monthly Columns)")
+        # Try to retrieve normalized "Field Name" from the value distribution DataFrame.
+        if "Field Name" not in st.session_state.value_dist_df.columns:
+            # Fallback: try to rename "field_name" if present.
+            if "field_name" in st.session_state.value_dist_df.columns:
+                st.session_state.value_dist_df.rename(columns={"field_name": "Field Name"}, inplace=True)
         try:
             val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
         except KeyError:
@@ -423,6 +421,9 @@ def main():
         # Population Comparison Grid (Monthly Columns)
         ##############################
         st.subheader("Population Comparison (Monthly Columns)")
+        if "Field Name" not in st.session_state.pop_comp_df.columns:
+            if "field_name" in st.session_state.pop_comp_df.columns:
+                st.session_state.pop_comp_df.rename(columns={"field_name": "Field Name"}, inplace=True)
         try:
             pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
         except KeyError:
