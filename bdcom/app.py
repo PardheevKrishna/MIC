@@ -63,6 +63,7 @@ def generate_summary_df(df_data, date1, date2):
                        (df_data['value_label'].apply(contains_phrase)))
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
+    # Create summary DataFrame with desired column names.
     summary = pd.DataFrame(rows, columns=[
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
@@ -78,6 +79,7 @@ def generate_summary_df(df_data, date1, date2):
     summary["Month-to-Month % Change"] = summary.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     new_order = ["Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change"]
     summary = summary[new_order]
+    # Add columns for aggregated current grid comments and editable Approval Comments.
     summary["Comment"] = ""
     summary["Approval Comments"] = ""
     return summary
@@ -130,6 +132,11 @@ def flatten_dataframe(df):
 #############################################
 
 def pivot_all_previous_comments(df):
+    """
+    Given a DataFrame with previous comments (columns: Field Name, Month, Comment),
+    pivot it so that each unique Month becomes a separate column (named "YYYY-MM m- Comments")
+    where comments are aggregated (joined by newline) for each Field Name.
+    """
     if df.empty:
         return pd.DataFrame()
     months = sorted(df["Month"].unique())
@@ -298,12 +305,13 @@ def main():
         st.session_state.date1 = date1
         st.session_state.date2 = date2
         st.session_state.input_file_path = input_file_path
+        # Reset active_field if not set
         if "active_field" not in st.session_state:
             st.session_state.active_field = None
 
     st.write("Working Directory:", os.getcwd())
     
-    # Global Field Filter
+    # Global Field Filter added at the top (under working directory)
     if "df_data" in st.session_state:
         all_fields = sorted(st.session_state.df_data["field_name"].unique().tolist())
         global_field_filter = st.selectbox("Select Field (Global Filter)", options=["All"] + all_fields, index=0, key="global_field_filter")
@@ -318,20 +326,18 @@ def main():
         st.subheader("Value Distribution")
         if "Field Name" not in st.session_state.value_dist_df.columns:
             st.session_state.value_dist_df = normalize_df(st.session_state.value_dist_df)
+        # Use global filter if set; otherwise, show all rows
         if st.session_state.active_field:
             filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == st.session_state.active_field].copy()
         else:
             filtered_val = st.session_state.value_dist_df.copy()
-        # Ensure the key column exists
-        if "Field Name" not in filtered_val.columns and "field_name" in filtered_val.columns:
-            filtered_val.rename(columns={"field_name": "Field Name"}, inplace=True)
-        # Remove duplicate previous comment columns if they exist
+        # Merge previous comment columns if available; drop duplicates first
         if not pivot_prev_all.empty:
-            for col in pivot_prev_all.columns:
-                if col in filtered_val.columns:
-                    filtered_val = filtered_val.drop(columns=[col])
+            prev_comment_cols = [col for col in pivot_prev_all.columns if col != "Field Name"]
+            filtered_val = filtered_val.drop(columns=[c for c in prev_comment_cols if c in filtered_val.columns], errors='ignore')
             filtered_val = filtered_val.merge(pivot_prev_all, on="Field Name", how="left")
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
+        # Anchor (pin) key columns
         if "Field Name" in filtered_val.columns:
             gb_val.configure_column("Field Name", pinned="left", width=180)
         if "Value Label" in filtered_val.columns:
@@ -357,6 +363,7 @@ def main():
         if st.session_state.active_field:
             selected_val_field = st.session_state.active_field
         else:
+            # If no global filter, allow selection for SQL logic
             val_fields = st.session_state.df_data["field_name"].unique().tolist()
             selected_val_field = st.selectbox("Select Field (Value Dist SQL Logic)", val_fields, key="val_sql_field_select")
         val_orig_field = val_orig[val_orig["field_name"]==selected_val_field]
@@ -389,16 +396,17 @@ def main():
         st.subheader("Population Comparison")
         if "Field Name" not in st.session_state.pop_comp_df.columns:
             st.session_state.pop_comp_df = normalize_df(st.session_state.pop_comp_df)
+        # Use global filter if set; otherwise, show all rows
         if st.session_state.active_field:
             filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == st.session_state.active_field].copy()
         else:
             filtered_pop = st.session_state.pop_comp_df.copy()
         if "Prev Comments" in filtered_pop.columns:
             filtered_pop = filtered_pop.drop(columns=["Prev Comments"])
+        # Merge previous comment columns if available; drop duplicates first
         if not pivot_prev_all.empty:
-            for col in pivot_prev_all.columns:
-                if col in filtered_pop.columns:
-                    filtered_pop = filtered_pop.drop(columns=[col])
+            prev_comment_cols = [col for col in pivot_prev_all.columns if col != "Field Name"]
+            filtered_pop = filtered_pop.drop(columns=[c for c in prev_comment_cols if c in filtered_pop.columns], errors='ignore')
             filtered_pop = filtered_pop.merge(pivot_prev_all, on="Field Name", how="left")
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
         if "Field Name" in filtered_pop.columns:
@@ -460,6 +468,7 @@ def main():
             sum_df = st.session_state.summary_df[st.session_state.summary_df["Field Name"] == st.session_state.active_field].copy()
         else:
             sum_df = st.session_state.summary_df.copy()
+        # Reorder Summary columns so that "Approval Comments" comes after "Comment"
         cols = list(sum_df.columns)
         cols.remove("Approval Comments")
         cols.remove("Comment")
