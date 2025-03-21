@@ -1,22 +1,14 @@
-# sascfg_personal.py
-# ----------------------------------------------------
-# Minimal saspy configuration for local Windows SAS
-# ----------------------------------------------------
+SAS_config_names = ['winiom']
 
-SAS_config_names = ['default']
-
-default = {
-    # Path to the SAS executable (64-bit). Adjust as needed.
-    # Double up the backslashes or use raw strings in Python.
-    'saspath': 'C:\\Program Files\\SASHome\\SASFoundation\\9.4\\sas.exe',
-    
-    # Standard options for a no-interactive SAS session
-    'options': ['-nosplash', '-sysin', ' '],
-    
-    # Encoding for Windows SAS sessions (often 'windows-1252')
+winiom = {
+    # Full path to your Java executable (make sure Java is installed)
+    'java': r'C:\Program Files\Java\jre1.8.0_251\bin\java.exe',
+    # Hostname where your SAS Workspace Server is running (often 'localhost')
+    'iomhost': 'localhost',
+    # Port number for the SAS Integration Technologies server (default is usually 8591)
+    'iomport': 8591,
+    # Authentication key, if required by your setup (adjust as needed)
+    'authkey': 'your_auth_key',  # Replace with your actual key or remove if not needed
+    # Encoding setting; adjust according to your environment
     'encoding': 'windows-1252',
-    
-    # Run SAS locally on Windows
-    'mode': 'local',
-    'host': 'winlocal'
 }
