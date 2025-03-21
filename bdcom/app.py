@@ -305,13 +305,12 @@ def main():
         st.session_state.date1 = date1
         st.session_state.date2 = date2
         st.session_state.input_file_path = input_file_path
-        # Reset active_field if not set
         if "active_field" not in st.session_state:
             st.session_state.active_field = None
 
     st.write("Working Directory:", os.getcwd())
     
-    # Global Field Filter added at the top (under working directory)
+    # Global Field Filter
     if "df_data" in st.session_state:
         all_fields = sorted(st.session_state.df_data["field_name"].unique().tolist())
         global_field_filter = st.selectbox("Select Field (Global Filter)", options=["All"] + all_fields, index=0, key="global_field_filter")
@@ -326,16 +325,17 @@ def main():
         st.subheader("Value Distribution")
         if "Field Name" not in st.session_state.value_dist_df.columns:
             st.session_state.value_dist_df = normalize_df(st.session_state.value_dist_df)
-        # Use global filter if set; otherwise, show all rows
         if st.session_state.active_field:
             filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == st.session_state.active_field].copy()
         else:
             filtered_val = st.session_state.value_dist_df.copy()
-        # Merge previous comment columns if available
+        # Remove duplicate previous comment columns if they exist
         if not pivot_prev_all.empty:
+            for col in pivot_prev_all.columns:
+                if col in filtered_val.columns:
+                    filtered_val = filtered_val.drop(columns=[col])
             filtered_val = filtered_val.merge(pivot_prev_all, on="Field Name", how="left")
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-        # Anchor (pin) key columns
         if "Field Name" in filtered_val.columns:
             gb_val.configure_column("Field Name", pinned="left", width=180)
         if "Value Label" in filtered_val.columns:
@@ -361,7 +361,6 @@ def main():
         if st.session_state.active_field:
             selected_val_field = st.session_state.active_field
         else:
-            # If no global filter, allow selection for SQL logic
             val_fields = st.session_state.df_data["field_name"].unique().tolist()
             selected_val_field = st.selectbox("Select Field (Value Dist SQL Logic)", val_fields, key="val_sql_field_select")
         val_orig_field = val_orig[val_orig["field_name"]==selected_val_field]
@@ -394,7 +393,6 @@ def main():
         st.subheader("Population Comparison")
         if "Field Name" not in st.session_state.pop_comp_df.columns:
             st.session_state.pop_comp_df = normalize_df(st.session_state.pop_comp_df)
-        # Use global filter if set; otherwise, show all rows
         if st.session_state.active_field:
             filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == st.session_state.active_field].copy()
         else:
@@ -402,6 +400,9 @@ def main():
         if "Prev Comments" in filtered_pop.columns:
             filtered_pop = filtered_pop.drop(columns=["Prev Comments"])
         if not pivot_prev_all.empty:
+            for col in pivot_prev_all.columns:
+                if col in filtered_pop.columns:
+                    filtered_pop = filtered_pop.drop(columns=[col])
             filtered_pop = filtered_pop.merge(pivot_prev_all, on="Field Name", how="left")
         gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
         if "Field Name" in filtered_pop.columns:
@@ -463,7 +464,6 @@ def main():
             sum_df = st.session_state.summary_df[st.session_state.summary_df["Field Name"] == st.session_state.active_field].copy()
         else:
             sum_df = st.session_state.summary_df.copy()
-        # Reorder Summary columns so that "Approval Comments" comes after "Comment"
         cols = list(sum_df.columns)
         cols.remove("Approval Comments")
         cols.remove("Comment")
