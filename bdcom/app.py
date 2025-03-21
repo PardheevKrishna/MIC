@@ -305,32 +305,16 @@ def main():
         st.session_state.date1 = date1
         st.session_state.date2 = date2
         st.session_state.input_file_path = input_file_path
-        # Reset active_field if not set
-        if "active_field" not in st.session_state:
-            st.session_state.active_field = None
 
     st.write("Working Directory:", os.getcwd())
     
-    # Global Field Filter added at the top (under working directory)
     if "df_data" in st.session_state:
-        all_fields = sorted(st.session_state.df_data["field_name"].unique().tolist())
-        global_field_filter = st.selectbox("Select Field (Global Filter)", options=["All"] + all_fields, index=0, key="global_field_filter")
-        if global_field_filter == "All":
-            st.session_state.active_field = None
-        else:
-            st.session_state.active_field = global_field_filter
-
         ##############################
         # Value Distribution Grid
         ##############################
         st.subheader("Value Distribution")
-        if "Field Name" not in st.session_state.value_dist_df.columns:
-            st.session_state.value_dist_df = normalize_df(st.session_state.value_dist_df)
-        # Use global filter if set; otherwise, show all rows
-        if st.session_state.active_field:
-            filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == st.session_state.active_field].copy()
-        else:
-            filtered_val = st.session_state.value_dist_df.copy()
+        # Always show all rows (global filter removed)
+        filtered_val = st.session_state.value_dist_df.copy()
         # Merge previous comment columns if available; drop duplicates first
         if not pivot_prev_all.empty:
             prev_comment_cols = [col for col in pivot_prev_all.columns if col != "Field Name"]
@@ -360,12 +344,9 @@ def main():
         # SQL Logic for Value Distribution
         st.subheader("View SQL Logic (Value Distribution)")
         val_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="value_dist"]
-        if st.session_state.active_field:
-            selected_val_field = st.session_state.active_field
-        else:
-            # If no global filter, allow selection for SQL logic
-            val_fields = st.session_state.df_data["field_name"].unique().tolist()
-            selected_val_field = st.selectbox("Select Field (Value Dist SQL Logic)", val_fields, key="val_sql_field_select")
+        # Always allow field selection for SQL logic
+        val_fields = st.session_state.df_data["field_name"].unique().tolist()
+        selected_val_field = st.selectbox("Select Field (Value Dist SQL Logic)", val_fields, key="val_sql_field_select")
         val_orig_field = val_orig[val_orig["field_name"]==selected_val_field]
         val_val_labels = val_orig_field["value_label"].dropna().unique().tolist()
         if val_val_labels:
@@ -386,7 +367,10 @@ def main():
                 ]
                 sql_vals_val = matches_val["value_sql_logic"].dropna().unique()
                 if sql_vals_val.size > 0:
-                    st.text_area("Value SQL Logic (Value Dist)", "\n".join(sql_vals_val), height=150)
+                    # Replace literal escape sequences with actual characters
+                    formatted_sql = "\n".join(sql_vals_val)
+                    formatted_sql = formatted_sql.replace("\\r", "\r").replace("\\t", "\t").replace("\\n", "\n")
+                    st.text_area("Value SQL Logic (Value Dist)", formatted_sql, height=150)
                 else:
                     st.text_area("Value SQL Logic (Value Dist)", "No SQL Logic found", height=150)
         
@@ -394,13 +378,7 @@ def main():
         # Population Comparison Grid
         ##############################
         st.subheader("Population Comparison")
-        if "Field Name" not in st.session_state.pop_comp_df.columns:
-            st.session_state.pop_comp_df = normalize_df(st.session_state.pop_comp_df)
-        # Use global filter if set; otherwise, show all rows
-        if st.session_state.active_field:
-            filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == st.session_state.active_field].copy()
-        else:
-            filtered_pop = st.session_state.pop_comp_df.copy()
+        filtered_pop = st.session_state.pop_comp_df.copy()
         if "Prev Comments" in filtered_pop.columns:
             filtered_pop = filtered_pop.drop(columns=["Prev Comments"])
         # Merge previous comment columns if available; drop duplicates first
@@ -431,11 +409,8 @@ def main():
         # SQL Logic for Population Comparison
         st.subheader("View SQL Logic (Population Comparison)")
         pop_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="pop_comp"]
-        if st.session_state.active_field:
-            selected_pop_field = st.session_state.active_field
-        else:
-            pop_fields = st.session_state.df_data["field_name"].unique().tolist()
-            selected_pop_field = st.selectbox("Select Field (Pop Comp SQL Logic)", pop_fields, key="pop_sql_field_select")
+        pop_fields = st.session_state.df_data["field_name"].unique().tolist()
+        selected_pop_field = st.selectbox("Select Field (Pop Comp SQL Logic)", pop_fields, key="pop_sql_field_select")
         pop_orig_field = pop_orig[pop_orig["field_name"]==selected_pop_field]
         pop_val_labels = pop_orig_field["value_label"].dropna().unique().tolist()
         if pop_val_labels:
@@ -456,18 +431,17 @@ def main():
                 ]
                 sql_vals = matches["value_sql_logic"].dropna().unique()
                 if sql_vals.size > 0:
-                    st.text_area("Value SQL Logic (Pop Comp)", "\n".join(sql_vals), height=150)
+                    formatted_sql = "\n".join(sql_vals)
+                    formatted_sql = formatted_sql.replace("\\r", "\r").replace("\\t", "\t").replace("\\n", "\n")
+                    st.text_area("Value SQL Logic (Pop Comp)", formatted_sql, height=150)
                 else:
                     st.text_area("Value SQL Logic (Pop Comp)", "No SQL Logic found", height=150)
         
         ##############################
-        # Summary Grid (filtered by global field if set)
+        # Summary Grid
         ##############################
         st.subheader("Summary")
-        if st.session_state.active_field:
-            sum_df = st.session_state.summary_df[st.session_state.summary_df["Field Name"] == st.session_state.active_field].copy()
-        else:
-            sum_df = st.session_state.summary_df.copy()
+        sum_df = st.session_state.summary_df.copy()
         # Reorder Summary columns so that "Approval Comments" comes after "Comment"
         cols = list(sum_df.columns)
         cols.remove("Approval Comments")
