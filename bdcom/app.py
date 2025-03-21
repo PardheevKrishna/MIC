@@ -63,7 +63,6 @@ def generate_summary_df(df_data, date1, date2):
                        (df_data['value_label'].apply(contains_phrase)))
         pop_d2 = df_data.loc[mask_pop_d2, 'value_records'].sum()
         rows.append([field, missing_d1, missing_d2, pop_d1, pop_d2])
-    # Create summary DataFrame with desired column names.
     summary = pd.DataFrame(rows, columns=[
         "Field Name",
         f"Missing Values ({date1.strftime('%Y-%m-%d')})",
@@ -79,7 +78,6 @@ def generate_summary_df(df_data, date1, date2):
     summary["Month-to-Month % Change"] = summary.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     new_order = ["Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change"]
     summary = summary[new_order]
-    # Add columns for aggregated current grid comments and editable Approval Comments.
     summary["Comment"] = ""
     summary["Approval Comments"] = ""
     return summary
@@ -132,11 +130,6 @@ def flatten_dataframe(df):
 #############################################
 
 def pivot_all_previous_comments(df):
-    """
-    Given a DataFrame with previous comments (columns: Field Name, Month, Comment),
-    pivot it so that each unique Month becomes a separate column (named "YYYY-MM m- Comments")
-    where comments are aggregated (joined by newline) for each Field Name.
-    """
     if df.empty:
         return pd.DataFrame()
     months = sorted(df["Month"].unique())
@@ -329,6 +322,9 @@ def main():
             filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == st.session_state.active_field].copy()
         else:
             filtered_val = st.session_state.value_dist_df.copy()
+        # Ensure the key column exists
+        if "Field Name" not in filtered_val.columns and "field_name" in filtered_val.columns:
+            filtered_val.rename(columns={"field_name": "Field Name"}, inplace=True)
         # Remove duplicate previous comment columns if they exist
         if not pivot_prev_all.empty:
             for col in pivot_prev_all.columns:
