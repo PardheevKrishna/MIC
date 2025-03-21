@@ -313,15 +313,16 @@ def main():
         # Value Distribution Grid
         ##############################
         st.subheader("Value Distribution")
-        # Always show all rows (global filter removed)
-        filtered_val = st.session_state.value_dist_df.copy()
+        # Add a dropdown to select which field's data to show in the grid
+        val_fields = sorted(st.session_state.df_data["field_name"].unique().tolist())
+        selected_val_field = st.selectbox("Select Field for Value Distribution", val_fields, key="val_field_select")
+        filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
         # Merge previous comment columns if available; drop duplicates first
         if not pivot_prev_all.empty:
             prev_comment_cols = [col for col in pivot_prev_all.columns if col != "Field Name"]
             filtered_val = filtered_val.drop(columns=[c for c in prev_comment_cols if c in filtered_val.columns], errors='ignore')
             filtered_val = filtered_val.merge(pivot_prev_all, on="Field Name", how="left")
         gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-        # Anchor (pin) key columns
         if "Field Name" in filtered_val.columns:
             gb_val.configure_column("Field Name", pinned="left", width=180)
         if "Value Label" in filtered_val.columns:
@@ -341,13 +342,12 @@ def main():
                          key="val_grid", height=compute_grid_height(filtered_val), use_container_width=True)
         st.session_state.value_dist_df = pd.DataFrame(val_res["data"]).copy()
         
-        # SQL Logic for Value Distribution
+        # SQL Logic for Value Distribution using its own dropdown (defaulting to the grid selection)
         st.subheader("View SQL Logic (Value Distribution)")
+        # Dropdown for SQL logic (separate from grid selection, but default options are the same)
+        selected_val_field_sql = st.selectbox("Select Field (Value Dist SQL Logic)", val_fields, index=val_fields.index(selected_val_field), key="val_sql_field_select")
         val_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="value_dist"]
-        # Always allow field selection for SQL logic
-        val_fields = st.session_state.df_data["field_name"].unique().tolist()
-        selected_val_field = st.selectbox("Select Field (Value Dist SQL Logic)", val_fields, key="val_sql_field_select")
-        val_orig_field = val_orig[val_orig["field_name"]==selected_val_field]
+        val_orig_field = val_orig[val_orig["field_name"]==selected_val_field_sql]
         val_val_labels = val_orig_field["value_label"].dropna().unique().tolist()
         if val_val_labels:
             default_val_val = st.session_state.get("preselect_val_label_val", None)
@@ -367,7 +367,6 @@ def main():
                 ]
                 sql_vals_val = matches_val["value_sql_logic"].dropna().unique()
                 if sql_vals_val.size > 0:
-                    # Replace literal escape sequences with actual characters
                     formatted_sql = "\n".join(sql_vals_val)
                     formatted_sql = formatted_sql.replace("\\r", "\r").replace("\\t", "\t").replace("\\n", "\n")
                     st.text_area("Value SQL Logic (Value Dist)", formatted_sql, height=150)
@@ -378,10 +377,11 @@ def main():
         # Population Comparison Grid
         ##############################
         st.subheader("Population Comparison")
-        filtered_pop = st.session_state.pop_comp_df.copy()
+        pop_fields = sorted(st.session_state.df_data["field_name"].unique().tolist())
+        selected_pop_field = st.selectbox("Select Field for Population Comparison", pop_fields, key="pop_field_select")
+        filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
         if "Prev Comments" in filtered_pop.columns:
             filtered_pop = filtered_pop.drop(columns=["Prev Comments"])
-        # Merge previous comment columns if available; drop duplicates first
         if not pivot_prev_all.empty:
             prev_comment_cols = [col for col in pivot_prev_all.columns if col != "Field Name"]
             filtered_pop = filtered_pop.drop(columns=[c for c in prev_comment_cols if c in filtered_pop.columns], errors='ignore')
@@ -406,12 +406,11 @@ def main():
                          key="pop_grid", height=compute_grid_height(filtered_pop), use_container_width=True)
         st.session_state.pop_comp_df = pd.DataFrame(pop_res["data"]).copy()
         
-        # SQL Logic for Population Comparison
+        # SQL Logic for Population Comparison using its own dropdown (defaulting to grid selection)
         st.subheader("View SQL Logic (Population Comparison)")
+        selected_pop_field_sql = st.selectbox("Select Field (Pop Comp SQL Logic)", pop_fields, index=pop_fields.index(selected_pop_field), key="pop_sql_field_select")
         pop_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="pop_comp"]
-        pop_fields = st.session_state.df_data["field_name"].unique().tolist()
-        selected_pop_field = st.selectbox("Select Field (Pop Comp SQL Logic)", pop_fields, key="pop_sql_field_select")
-        pop_orig_field = pop_orig[pop_orig["field_name"]==selected_pop_field]
+        pop_orig_field = pop_orig[pop_orig["field_name"]==selected_pop_field_sql]
         pop_val_labels = pop_orig_field["value_label"].dropna().unique().tolist()
         if pop_val_labels:
             default_pop_val = st.session_state.get("preselect_val_label_pop", None)
@@ -442,7 +441,6 @@ def main():
         ##############################
         st.subheader("Summary")
         sum_df = st.session_state.summary_df.copy()
-        # Reorder Summary columns so that "Approval Comments" comes after "Comment"
         cols = list(sum_df.columns)
         cols.remove("Approval Comments")
         cols.remove("Comment")
