@@ -10,6 +10,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from st_aggrid.shared import JsCode
 from openpyxl import load_workbook
 from openpyxl.comments import Comment
+import numpy as np
 
 #############################################
 # 1) Helper Functions
@@ -129,6 +130,7 @@ def generate_distribution_df(df, analysis_type, date1):
     sorted in descending order (Dec, Nov, etc.).
     """
     months = [(date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
+    # Sort months in descending order
     months = sorted(months, reverse=True)
 
     sub = df[df['analysis_type'] == analysis_type].copy()
@@ -363,7 +365,7 @@ def main():
     if prev_comments_df.empty:
         prev_comments_df = cache_previous_comments(folder)
 
-    st.write("Cached previous comments (if multiple months, sorted by 'Month' ascending in CSV, but we can pivot in descending order):")
+    st.write("Cached previous comments:")
     st.dataframe(prev_comments_df)
 
     target_prev_month = (date1 - relativedelta(months=1)).strftime("%Y-%m")
@@ -397,7 +399,6 @@ def main():
         # 1) Value Distribution (Comment column)
         #############################################
         st.subheader("Value Distribution")
-        # Flatten & normalize if needed
         st.session_state.value_dist_df = flatten_dataframe(st.session_state.value_dist_df)
         st.session_state.value_dist_df = normalize_columns(st.session_state.value_dist_df)
 
@@ -413,30 +414,27 @@ def main():
 
             # Filter
             filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
-            # Drop old "m- Comments" columns
             filtered_val = drop_prev_comments_columns(filtered_val)
 
-            # Pivot the single target month (or you could pivot all months in descending order if you want).
+            # Merge single target month comment if desired
             pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
             if not pivot_prev.empty:
-                # Merge
                 filtered_val = filtered_val.merge(pivot_prev,
                                                   on="Field Name",
                                                   how="left",
                                                   suffixes=('', None))
-                # rename newly merged column
                 old_col = f"comment_{target_prev_month}"
                 if old_col in filtered_val.columns:
                     filtered_val.rename(columns={old_col: f"{target_prev_month} m- Comments"}, inplace=True)
-            # Ensure "Comment" col
+
             if "Comment" not in filtered_val.columns:
                 filtered_val["Comment"] = ""
 
-            # Replace NaN with empty
-            filtered_val = filtered_val.fillna("")
+            # Replace nan with empty
+            filtered_val = filtered_val.replace(np.nan, "", regex=True)
 
             gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-            gb_val.configure_default_column(editable=True,
+            gb_val.configure_default_column(editable=True, 
                                             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
             for c in filtered_val.columns:
                 if c == "Comment":
@@ -463,10 +461,9 @@ def main():
                              height=val_height,
                              use_container_width=True)
 
-            updated_val = pd.DataFrame(val_res["data"]).fillna("")
-            # Merge back into the big DF
+            updated_val = pd.DataFrame(val_res["data"]).replace(np.nan, "", regex=True)
+            # Merge back
             old_vdf = st.session_state.value_dist_df
-            # remove rows for this field
             mask_sel = (old_vdf["Field Name"] == selected_val_field)
             st.session_state.value_dist_df = pd.concat([
                 old_vdf[~mask_sel],
@@ -502,13 +499,14 @@ def main():
                 old_col = f"comment_{target_prev_month}"
                 if old_col in filtered_pop.columns:
                     filtered_pop.rename(columns={old_col: f"{target_prev_month} m- Comments"}, inplace=True)
+
             if "Comment" not in filtered_pop.columns:
                 filtered_pop["Comment"] = ""
 
-            filtered_pop = filtered_pop.fillna("")
+            filtered_pop = filtered_pop.replace(np.nan, "", regex=True)
 
             gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
-            gb_pop.configure_default_column(editable=True,
+            gb_pop.configure_default_column(editable=True, 
                                             cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
             for c in filtered_pop.columns:
                 if c == "Comment":
@@ -535,7 +533,7 @@ def main():
                              height=pop_height,
                              use_container_width=True)
 
-            updated_pop = pd.DataFrame(pop_res["data"]).fillna("")
+            updated_pop = pd.DataFrame(pop_res["data"]).replace(np.nan, "", regex=True)
             old_pdf = st.session_state.pop_comp_df
             mask_sel = (old_pdf["Field Name"] == selected_pop_field)
             st.session_state.pop_comp_df = pd.concat([
@@ -544,10 +542,32 @@ def main():
             ], ignore_index=True)
 
         #############################################
-        # 3) Summary Aggregation
+        # 3) Summaries
         #############################################
-        # a) Append previous month comment into Summary
+        # a) Append previous month comment
         summary_df = st.session_state.summary_df.copy()
+        def append_prev_comment(summary_df, target_month):
+            prev_df = get_cached_previous_comments(st.session_state.folder)
+            pivot_prev = pivot_previous_comments(prev_df, target_month)
+            if pivot_prev.empty:
+                return summary_df
+
+            def combine_comments(row):
+                orig = row["Comment"] if pd.notna(row["Comment"]) else ""
+                field = row["Field Name"]
+                match = pivot_prev[pivot_prev["Field Name"] == field]
+                if not match.empty:
+                    prev_comment = str(match.iloc[0, 1]).strip()
+                    if prev_comment:
+                        if orig:
+                            return orig + "\n" + prev_comment
+                        else:
+                            return prev_comment
+                return orig
+
+            summary_df["Comment"] = summary_df.apply(combine_comments, axis=1)
+            return summary_df
+
         summary_df = append_prev_comment(summary_df, target_prev_month)
         st.session_state.summary_df = summary_df
 
@@ -566,28 +586,30 @@ def main():
         except Exception as e:
             st.warning(f"Could not preserve existing summary comments: {e}")
 
-        # c) Aggregate from updated ValueDist & PopComp "Comment" columns
+        # c) Aggregate from updated ValueDist & PopComp "Comment" columns, skipping "nan"
         def aggregate_current_comments():
             sum_df = st.session_state.summary_df.copy()
             for field in sum_df["Field Name"].unique():
                 notes = []
-                # Value Dist
+                # from Value Dist
                 vdf = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==field]
                 if "Value Label" in vdf.columns and "Comment" in vdf.columns:
                     for _, row in vdf.iterrows():
                         cmt = str(row["Comment"]).strip()
                         vlb = str(row["Value Label"]).strip()
-                        if cmt:
-                            notes.append(f"{vlb} - {cmt}")
+                        if not cmt or cmt.lower()=="nan":
+                            continue
+                        notes.append(f"{vlb} - {cmt}")
 
-                # Pop Comp
+                # from Pop Comp
                 pdf = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"]==field]
                 if "Value Label" in pdf.columns and "Comment" in pdf.columns:
                     for _, row in pdf.iterrows():
                         cmt = str(row["Comment"]).strip()
                         vlb = str(row["Value Label"]).strip()
-                        if cmt:
-                            notes.append(f"{vlb} - {cmt}")
+                        if not cmt or cmt.lower()=="nan":
+                            continue
+                        notes.append(f"{vlb} - {cmt}")
 
                 aggregated_note = "\n".join(notes)
                 if aggregated_note:
