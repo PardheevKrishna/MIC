@@ -24,7 +24,7 @@ def get_excel_engine(file_path):
     return 'pyxlsb' if file_path.lower().endswith('.xlsb') else None
 
 def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "Value Label"}):
-    # Strip whitespace from column names and rename according to mapping.
+    # Strip whitespace and rename columns per mapping.
     df.columns = [str(col).strip() for col in df.columns]
     for orig, new in mapping.items():
         for col in df.columns:
@@ -39,9 +39,8 @@ def flatten_dataframe(df):
     return df
 
 def drop_prev_comments_columns(df):
-    # Drop any columns whose name matches the pattern "YYYY-MM m- Comments"
-    pattern = re.compile(r'\d{4}-\d{2} m- Comments')
-    cols_to_drop = [col for col in df.columns if pattern.search(col)]
+    # Drop any columns that contain the string "m- Comments"
+    cols_to_drop = [col for col in df.columns if isinstance(col, str) and "m- Comments" in col]
     if cols_to_drop:
         df = df.drop(columns=cols_to_drop)
     return df
@@ -146,7 +145,7 @@ def generate_distribution_df(df, analysis_type, date1):
     return final
 
 #############################################
-# Pivot All Previous Comments by Month
+# Pivot All Previous Comments (split by month)
 #############################################
 
 def pivot_all_previous_comments(df):
@@ -234,10 +233,10 @@ def cache_previous_comments(current_folder):
             if col_index is None:
                 continue
             for row in ws.iter_rows(min_row=header_row+1):
-                field_cell = row[0]
+                field_cell = row[0]  # Assume "Field Name" is in the first column
                 if field_cell.value:
                     field_name = str(field_cell.value).strip()
-                    cell = row[col_index - 1]
+                    cell = row[col_index - 1]  # 0-indexed
                     comment_text = cell.comment.text if (cell.comment and cell.comment.text is not None and str(cell.comment.text).strip() != "") else ""
                     if comment_text:
                         data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
@@ -286,7 +285,6 @@ def preserve_summary_comments(input_file_path, summary_df):
 #############################################
 
 def append_prev_comment(summary_df, target_month):
-    # Pivot previous comments for target_month.
     pivot_prev = pivot_previous_comments(get_cached_previous_comments(st.session_state.folder), target_month)
     if pivot_prev.empty:
         return summary_df
@@ -295,7 +293,7 @@ def append_prev_comment(summary_df, target_month):
         field = row["Field Name"]
         match = pivot_prev[pivot_prev["Field Name"] == field]
         if not match.empty:
-            prev_comment = str(match.iloc[0,1]).strip()  # second column is the pivoted comment
+            prev_comment = str(match.iloc[0, 1]).strip()
             if prev_comment:
                 if orig:
                     return orig + "\n" + prev_comment
@@ -363,7 +361,6 @@ def main():
         # Value Distribution Grid with Previous Comment Columns
         ##############################
         st.subheader("Value Distribution")
-        # Ensure normalized column name in value distribution DataFrame.
         if "Field Name" not in st.session_state.value_dist_df.columns:
             st.session_state.value_dist_df = normalize_columns(st.session_state.value_dist_df)
         try:
@@ -380,8 +377,9 @@ def main():
                                               key="val_field_select")
             st.session_state.active_field = selected_val_field
             filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
-            # Before merging, drop any duplicate previous comment columns.
+            # Drop any duplicate previous comment columns.
             filtered_val = drop_prev_comments_columns(filtered_val)
+            # Merge pivoted previous comments for the target month.
             pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
             if not pivot_prev.empty:
                 filtered_val = filtered_val.merge(pivot_prev, on="Field Name", how="left")
@@ -406,7 +404,7 @@ def main():
                              key="val_grid", height=val_height, use_container_width=True)
             st.session_state.value_dist_df = pd.DataFrame(val_res["data"]).copy()
             
-            # View SQL Logic for Value Distribution.
+            # View SQL Logic for Value Distribution
             st.subheader("View SQL Logic (Value Dist)")
             val_orig = st.session_state.df_data[st.session_state.df_data["analysis_type"]=="value_dist"]
             val_orig_field = val_orig[val_orig["field_name"]==selected_val_field]
@@ -453,8 +451,6 @@ def main():
                                               key="pop_field_select")
             st.session_state.active_field = selected_pop_field
             filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
-            if "Prev Comments" in filtered_pop.columns:
-                filtered_pop = filtered_pop.drop(columns=["Prev Comments"])
             filtered_pop = drop_prev_comments_columns(filtered_pop)
             pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
             if not pivot_prev.empty:
@@ -515,7 +511,8 @@ def main():
         st.session_state.summary_df = summary_df
         
         ##############################
-        # Preserve existing Summary comments from input Excel.
+        # Preserve Existing Summary Comments from Input Excel
+        ##############################
         try:
             existing = pd.read_excel(st.session_state.input_file_path, sheet_name="Summary")
             comment_dict = existing.set_index("Field Name")["Comment"].to_dict() if "Comment" in existing.columns else {}
@@ -553,7 +550,7 @@ def main():
             st.session_state.summary_df = sum_df
         aggregate_current_comments()
         
-        # Ensure columns exist and reorder Summary columns.
+        # Reorder Summary columns so that "Approval Comments" comes immediately after "Comment"
         if "Approval Comments" not in st.session_state.summary_df.columns:
             st.session_state.summary_df["Approval Comments"] = ""
         if "Comment" not in st.session_state.summary_df.columns:
@@ -606,7 +603,7 @@ def main():
                 st.session_state.summary_df.to_excel(writer, index=False, sheet_name="Summary")
                 st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
                 st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
-                # Update Summary sheet Comment cells: for each row, if a previous comment exists, append it.
+                # Update the Summary sheet Comment cells by appending the previous month comment.
                 summary_sheet = writer.sheets["Summary"]
                 header = [cell.value for cell in summary_sheet[1]]
                 try:
