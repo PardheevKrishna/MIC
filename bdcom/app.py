@@ -17,13 +17,12 @@ import numpy as np
 #############################################
 
 def compute_grid_height(df, row_height=40, header_height=80):
-    """Compute approximate AgGrid height."""
     n = len(df)
     return header_height + (min(n, 30) * row_height)
 
 def drop_prev_comments_columns(df):
     """
-    Drop any columns that contain 'm- Comments' 
+    Drop any columns that contain 'm- Comments'
     so we don't accumulate duplicates like '2025-12 m- Comments_x'.
     """
     pattern = re.compile(r"m- Comments", re.IGNORECASE)
@@ -33,7 +32,6 @@ def drop_prev_comments_columns(df):
     return df
 
 def flatten_dataframe(df):
-    """Flatten multi-index columns into single-level columns."""
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
         df.columns = [
@@ -43,10 +41,6 @@ def flatten_dataframe(df):
     return df
 
 def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "Value Label"}):
-    """
-    Convert e.g. 'field_name' -> 'Field Name', 'value_label' -> 'Value Label', etc.
-    Also strip whitespace from column names.
-    """
     df.columns = [str(col).strip() for col in df.columns]
     for orig, new in mapping.items():
         for col in df.columns:
@@ -59,11 +53,9 @@ def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "V
 #############################################
 
 def generate_summary_df(df_data, date1, date2):
-    """Create the Summary sheet from the Data sheet (lowercase columns)."""
     fields = sorted(df_data["field_name"].unique())
     rows = []
     for field in fields:
-        # Missing checks
         mask_miss_d1 = ((df_data['analysis_type'] == 'value_dist') &
                         (df_data['field_name'] == field) &
                         (df_data['filemonth_dt'] == date1) &
@@ -76,7 +68,6 @@ def generate_summary_df(df_data, date1, date2):
                         (df_data['value_label'].str.contains("Missing", case=False, na=False)))
         missing_d2 = df_data.loc[mask_miss_d2, 'value_records'].sum()
 
-        # Phrases for pop_comp
         phrases = [
             "1\\)   CF Loan - Both Pop, Diff Values",
             "2\\)   CF Loan - Prior Null, Current Pop",
@@ -87,7 +78,6 @@ def generate_summary_df(df_data, date1, date2):
                 if pd.notna(x) and re.search(pat, x):
                     return True
             return False
-
         mask_pop_d1 = ((df_data['analysis_type'] == 'pop_comp') &
                        (df_data['field_name'] == field) &
                        (df_data['filemonth_dt'] == date1) &
@@ -109,7 +99,6 @@ def generate_summary_df(df_data, date1, date2):
         f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})",
         f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
     ])
-
     m1 = f"Missing Values ({date1.strftime('%Y-%m-%d')})"
     m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
     d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
@@ -117,7 +106,6 @@ def generate_summary_df(df_data, date1, date2):
 
     summary["Missing % Change"] = summary.apply(lambda r: ((r[m1]-r[m2]) / r[m2] * 100) if r[m2]!=0 else None, axis=1)
     summary["Month-to-Month % Change"] = summary.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
-
     new_order = ["Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change"]
     summary = summary[new_order]
     summary["Comment"] = ""
@@ -125,12 +113,7 @@ def generate_summary_df(df_data, date1, date2):
     return summary
 
 def generate_distribution_df(df, analysis_type, date1):
-    """
-    Generate the pivot for either "value_dist" or "pop_comp" for the last 12 months,
-    sorted in descending order (Dec, Nov, etc.).
-    """
     months = [(date1 - relativedelta(months=i)).replace(day=1) for i in range(12)]
-    # Sort months in descending order
     months = sorted(months, reverse=True)
 
     sub = df[df['analysis_type'] == analysis_type].copy()
@@ -139,7 +122,6 @@ def generate_distribution_df(df, analysis_type, date1):
     grouped = sub.groupby(['field_name', 'value_label', 'month'])['value_records'].sum().reset_index()
     if grouped.empty:
         return pd.DataFrame()
-
     pivot = grouped.pivot_table(index=['field_name', 'value_label'],
                                 columns='month', values='value_records', fill_value=0)
     pivot = pivot.reindex(columns=months, fill_value=0)
@@ -155,17 +137,14 @@ def generate_distribution_df(df, analysis_type, date1):
             data[(m_str, "Sum")] = sub_df[m]
             data[(m_str, "Percent")] = pct[m]
         tmp = pd.DataFrame(data)
-        # total row
         tot_row = {}
         for m in months:
             m_str = m.strftime('%Y-%m')
             tot_row[(m_str, "Sum")] = total[m]
             tot_row[(m_str, "Percent")] = ""
         tmp.loc["Current period total"] = tot_row
-
         tmp.index = pd.MultiIndex.from_product([[field], tmp.index], names=["Field Name", "Value Label"])
         frames.append(tmp)
-
     if not frames:
         return pd.DataFrame()
     final = pd.concat(frames)
@@ -177,13 +156,10 @@ def generate_distribution_df(df, analysis_type, date1):
 #############################################
 
 def load_report_data(file_path, date1, date2):
-    """Load or generate Summary, ValueDist, PopComp from Excel. 
-       If no 'Comment' col in those sheets, create it as empty."""
     df_data = pd.read_excel(file_path, sheet_name="Data")
     df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"])
 
     wb = load_workbook(file_path, data_only=True)
-    # Summary
     if "Summary" in wb.sheetnames:
         summary_df = pd.read_excel(file_path, sheet_name="Summary")
     else:
@@ -194,31 +170,26 @@ def load_report_data(file_path, date1, date2):
         val_dist_df = pd.read_excel(file_path, sheet_name="Value Distribution")
     else:
         val_dist_df = generate_distribution_df(df_data, "value_dist", date1)
-
-    # If no "Comment" column, create it
     if "Comment" not in val_dist_df.columns:
         val_dist_df["Comment"] = ""
 
-    # Population Comparison
+    # Pop Comp
     if "Population Comparison" in wb.sheetnames:
         pop_comp_df = pd.read_excel(file_path, sheet_name="Population Comparison")
     else:
         pop_comp_df = generate_distribution_df(df_data, "pop_comp", date1)
-
     if "Comment" not in pop_comp_df.columns:
         pop_comp_df["Comment"] = ""
 
     return df_data, summary_df, val_dist_df, pop_comp_df
 
 def cache_previous_comments(current_folder):
-    """Scan 'previous/<folder>' for older Excel files, read summary comments from 'month to month' column, store in CSV."""
     data = []
     prev_folder = os.path.join(os.getcwd(), "previous", current_folder)
     if not os.path.exists(prev_folder):
         st.warning("Previous months folder not found.")
         return pd.DataFrame(columns=["Field Name", "Month", "Comment"])
     month_pattern = re.compile(r'(\d{4})[- ]?(\d{2})')
-
     for file in os.listdir(prev_folder):
         if file.lower().endswith('.xlsx'):
             file_path = os.path.join(prev_folder, file)
@@ -260,17 +231,15 @@ def cache_previous_comments(current_folder):
                     comment_text = ""
                     if cell.comment and cell.comment.text:
                         raw = str(cell.comment.text).strip()
-                        if raw.lower() != "nan" and raw != "":
+                        if raw.lower()!="nan" and raw!="":
                             comment_text = raw
                     if comment_text:
                         data.append({"Field Name": field_name, "Month": month_year, "Comment": comment_text})
-
     df = pd.DataFrame(data)
     df.to_csv("previous_comments.csv", index=False)
     return df
 
 def get_cached_previous_comments(current_folder):
-    """Load the CSV of previous comments if it exists, else empty."""
     try:
         df = pd.read_csv("previous_comments.csv")
         if df.empty:
@@ -284,17 +253,16 @@ def get_cached_previous_comments(current_folder):
 #############################################
 
 def preserve_summary_comments(input_file_path, summary_df):
-    """If 'Summary' sheet has existing 'Comment' or 'Approval Comments', keep them."""
     try:
         existing = pd.read_excel(input_file_path, sheet_name="Summary")
-        comment_dict = {}
-        approval_dict = {}
+        cdict = {}
+        adict = {}
         if "Comment" in existing.columns:
-            comment_dict = existing.set_index("Field Name")["Comment"].to_dict()
+            cdict = existing.set_index("Field Name")["Comment"].to_dict()
         if "Approval Comments" in existing.columns:
-            approval_dict = existing.set_index("Field Name")["Approval Comments"].to_dict()
-        summary_df["Comment"] = summary_df["Field Name"].map(comment_dict).fillna("")
-        summary_df["Approval Comments"] = summary_df["Field Name"].map(approval_dict).fillna("")
+            adict = existing.set_index("Field Name")["Approval Comments"].to_dict()
+        summary_df["Comment"] = summary_df["Field Name"].map(cdict).fillna("")
+        summary_df["Approval Comments"] = summary_df["Field Name"].map(adict).fillna("")
     except Exception as e:
         st.warning(f"Could not preserve existing summary comments: {e}")
     return summary_df
@@ -375,7 +343,6 @@ def main():
         # Keep old summary comments
         summary_df = preserve_summary_comments(input_file_path, summary_df)
 
-        # Put into session state
         st.session_state.df_data = df_data
         st.session_state.summary_df = summary_df
         st.session_state.value_dist_df = val_dist_df  # has 'Comment' col
@@ -416,10 +383,9 @@ def main():
             filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
             filtered_val = drop_prev_comments_columns(filtered_val)
 
-            # Merge single target month comment if desired
             pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
             if not pivot_prev.empty:
-                filtered_val = filtered_val.merge(pivot_prev,
+                filtered_val = filtered_val.merge(pivot_prev, 
                                                   on="Field Name",
                                                   how="left",
                                                   suffixes=('', None))
@@ -462,7 +428,6 @@ def main():
                              use_container_width=True)
 
             updated_val = pd.DataFrame(val_res["data"]).replace(np.nan, "", regex=True)
-            # Merge back
             old_vdf = st.session_state.value_dist_df
             mask_sel = (old_vdf["Field Name"] == selected_val_field)
             st.session_state.value_dist_df = pd.concat([
@@ -544,34 +509,32 @@ def main():
         #############################################
         # 3) Summaries
         #############################################
-        # a) Append previous month comment
         summary_df = st.session_state.summary_df.copy()
-        def append_prev_comment(summary_df, target_month):
+
+        # a) Optionally append the previous month's comment
+        def append_prev_comment_local(sdf, target_month):
             prev_df = get_cached_previous_comments(st.session_state.folder)
             pivot_prev = pivot_previous_comments(prev_df, target_month)
             if pivot_prev.empty:
-                return summary_df
-
+                return sdf
             def combine_comments(row):
                 orig = row["Comment"] if pd.notna(row["Comment"]) else ""
                 field = row["Field Name"]
                 match = pivot_prev[pivot_prev["Field Name"] == field]
                 if not match.empty:
-                    prev_comment = str(match.iloc[0, 1]).strip()
-                    if prev_comment:
+                    pcmt = str(match.iloc[0,1]).strip()
+                    if pcmt:
                         if orig:
-                            return orig + "\n" + prev_comment
+                            return orig + "\n" + pcmt
                         else:
-                            return prev_comment
+                            return pcmt
                 return orig
+            sdf["Comment"] = sdf.apply(combine_comments, axis=1)
+            return sdf
 
-            summary_df["Comment"] = summary_df.apply(combine_comments, axis=1)
-            return summary_df
+        summary_df = append_prev_comment_local(summary_df, target_prev_month)
 
-        summary_df = append_prev_comment(summary_df, target_prev_month)
-        st.session_state.summary_df = summary_df
-
-        # b) Optionally preserve existing summary from Excel
+        # b) preserve existing from Excel
         try:
             existing = pd.read_excel(st.session_state.input_file_path, sheet_name="Summary")
             cdict = {}
@@ -580,16 +543,18 @@ def main():
                 cdict = existing.set_index("Field Name")["Comment"].to_dict()
             if "Approval Comments" in existing.columns:
                 adict = existing.set_index("Field Name")["Approval Comments"].to_dict()
-            st.session_state.summary_df["Comment"] = st.session_state.summary_df["Field Name"].map(cdict).fillna("")\
-                .str.cat(st.session_state.summary_df["Comment"], sep="\n")
-            st.session_state.summary_df["Approval Comments"] = st.session_state.summary_df["Field Name"].map(adict).fillna("")
+            summary_df["Comment"] = summary_df["Field Name"].map(cdict).fillna("")\
+                .str.cat(summary_df["Comment"], sep="\n")
+            summary_df["Approval Comments"] = summary_df["Field Name"].map(adict).fillna("")
         except Exception as e:
             st.warning(f"Could not preserve existing summary comments: {e}")
 
-        # c) Aggregate from updated ValueDist & PopComp "Comment" columns, skipping "nan"
+        st.session_state.summary_df = summary_df
+
+        # c) Aggregation: skipping "nan"
         def aggregate_current_comments():
-            sum_df = st.session_state.summary_df.copy()
-            for field in sum_df["Field Name"].unique():
+            ssum = st.session_state.summary_df.copy()
+            for field in ssum["Field Name"].unique():
                 notes = []
                 # from Value Dist
                 vdf = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==field]
@@ -599,7 +564,10 @@ def main():
                         vlb = str(row["Value Label"]).strip()
                         if not cmt or cmt.lower()=="nan":
                             continue
-                        notes.append(f"{vlb} - {cmt}")
+                        # remove any leftover "nan" from partial text
+                        line = f"{vlb} - {cmt}".replace("nan","").strip()
+                        if line:
+                            notes.append(line)
 
                 # from Pop Comp
                 pdf = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"]==field]
@@ -609,38 +577,42 @@ def main():
                         vlb = str(row["Value Label"]).strip()
                         if not cmt or cmt.lower()=="nan":
                             continue
-                        notes.append(f"{vlb} - {cmt}")
+                        line = f"{vlb} - {cmt}".replace("nan","").strip()
+                        if line:
+                            notes.append(line)
 
                 aggregated_note = "\n".join(notes)
                 if aggregated_note:
-                    sum_df.loc[sum_df["Field Name"]==field, "Comment"] = aggregated_note
+                    # also remove any partial leftover "nan" if any
+                    aggregated_note = aggregated_note.replace("nan","").strip()
+                    ssum.loc[ssum["Field Name"]==field, "Comment"] = aggregated_note
 
-            st.session_state.summary_df = sum_df
+            st.session_state.summary_df = ssum
 
         aggregate_current_comments()
 
         # d) Reorder summary columns so "Approval Comments" is after "Comment"
-        sum_df = st.session_state.summary_df.copy()
-        if "Approval Comments" not in sum_df.columns:
-            sum_df["Approval Comments"] = ""
-        if "Comment" not in sum_df.columns:
-            sum_df["Comment"] = ""
+        ssum = st.session_state.summary_df.copy()
+        if "Approval Comments" not in ssum.columns:
+            ssum["Approval Comments"] = ""
+        if "Comment" not in ssum.columns:
+            ssum["Comment"] = ""
 
-        col_list = list(sum_df.columns)
+        col_list = list(ssum.columns)
         col_list.remove("Approval Comments")
         col_list.remove("Comment")
         new_order = ["Field Name"] + [c for c in col_list if c != "Field Name"] + ["Comment","Approval Comments"]
-        sum_df = sum_df[new_order]
+        ssum = ssum[new_order]
 
         st.subheader("Summary")
         comment_renderer = JsCode("function(params){return params.value ? params.value : '';}")
-        gb_sum = GridOptionsBuilder.from_dataframe(sum_df)
-        gb_sum.configure_default_column(editable=False, 
+        gb_sum = GridOptionsBuilder.from_dataframe(ssum)
+        gb_sum.configure_default_column(editable=False,
                                         cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
         gb_sum.configure_column("Approval Comments", editable=True, width=250, minWidth=100, maxWidth=300)
         gb_sum.configure_column("Comment", editable=False, cellRenderer=comment_renderer, width=250, minWidth=100, maxWidth=300)
 
-        for c in sum_df.columns:
+        for c in ssum.columns:
             if c not in ["Field Name", "Comment", "Approval Comments"]:
                 if "Change" in c:
                     gb_sum.configure_column(c, type=["numericColumn"],
@@ -661,8 +633,8 @@ def main():
         sum_opts["rowHeight"] = 40
         sum_opts["headerHeight"] = 80
 
-        sum_height = compute_grid_height(sum_df, 40, 80)
-        sum_res = AgGrid(sum_df,
+        sum_height = compute_grid_height(ssum, 40, 80)
+        sum_res = AgGrid(ssum,
                          gridOptions=sum_opts,
                          update_mode=GridUpdateMode.VALUE_CHANGED,
                          data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
