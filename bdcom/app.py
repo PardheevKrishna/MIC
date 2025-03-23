@@ -20,6 +20,7 @@ def compute_grid_height(df, row_height=40, header_height=80):
     return header_height + (min(n, 30) * row_height)
 
 def drop_prev_comments_columns(df):
+    # Drop any columns that contain "m- Comments" to avoid duplicates.
     pattern = re.compile(r"m- Comments", re.IGNORECASE)
     drop_cols = [c for c in df.columns if pattern.search(str(c))]
     if drop_cols:
@@ -27,12 +28,11 @@ def drop_prev_comments_columns(df):
     return df
 
 def flatten_dataframe(df):
+    # Flatten MultiIndex columns if necessary.
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
-        df.columns = [
-            " ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
-            for col in df.columns.values
-        ]
+        df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
+                      for col in df.columns.values]
     return df
 
 def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "Value Label"}):
@@ -98,8 +98,8 @@ def generate_summary_df(df_data, date1, date2):
     m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
     d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
-    summary["Missing % Change"] = summary.apply(lambda r: ((r[m1]-r[m2]) / r[m2] * 100) if r[m2]!=0 else None, axis=1)
-    summary["Month-to-Month % Change"] = summary.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
+    summary["Missing % Change"] = summary.apply(lambda r: ((r[m1]-r[m2]) / r[m2] * 100) if r[m2] != 0 else None, axis=1)
+    summary["Month-to-Month % Change"] = summary.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2] != 0 else None, axis=1)
     new_order = ["Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change"]
     summary = summary[new_order]
     summary["Comment"] = ""
@@ -271,7 +271,7 @@ def preserve_summary_comments(input_file_path, summary_df):
 #############################################
 # 6) Append Previous Month Comment into Summary
 #############################################
-
+# Modified: Prepend "Prev Month: " followed by the previous month comment to the existing Comment.
 def append_prev_comment(summary_df, target_month):
     prev_df = get_cached_previous_comments(st.session_state.folder)
     pivot_prev = pivot_previous_comments(prev_df, target_month)
@@ -284,10 +284,12 @@ def append_prev_comment(summary_df, target_month):
         if not match.empty:
             prev_comment = str(match.iloc[0, 1]).strip()
             if prev_comment and prev_comment.lower() != "nan":
+                prefix = f"Prev Month: {prev_comment}"
+                # Prepend previous comment to the original comment.
                 if orig:
-                    return orig + "\n" + prev_comment
+                    return prefix + "\n" + orig
                 else:
-                    return prev_comment
+                    return prefix
         return orig
     summary_df["Comment"] = summary_df.apply(combine_comments, axis=1)
     summary_df["Comment"] = summary_df["Comment"].replace("nan", "", regex=True).str.strip()
@@ -313,6 +315,7 @@ def main():
 
     selected_file = st.sidebar.selectbox("Select an Excel File", all_files)
     input_file_path = os.path.join(folder_path, selected_file)
+
     selected_date = st.sidebar.date_input("Select Date for Date1", datetime.date(2025, 1, 1))
     date1 = datetime.datetime.combine(selected_date, datetime.datetime.min.time())
     date2 = date1 - relativedelta(months=1)
@@ -362,11 +365,10 @@ def main():
         filtered_val["Comment"] = ""
     filtered_val = filtered_val.replace(np.nan, "", regex=True)
     gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-    # Pin "Field Name" and "Value Label" columns if present.
     gb_val.configure_column("Field Name", pinned="left")
     if "Value Label" in filtered_val.columns:
         gb_val.configure_column("Value Label", pinned="left")
-    gb_val.configure_default_column(editable=True, cellStyle={'white-space': 'normal','line-height':'1.2em','width':150})
+    gb_val.configure_default_column(editable=True, cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
     for c in filtered_val.columns:
         if c == "Comment":
             gb_val.configure_column(c, editable=True, width=220)
@@ -437,11 +439,12 @@ def main():
     updated_pop = pd.DataFrame(pop_res["data"]).replace(np.nan, "", regex=True)
     st.session_state.pop_comp_df = pd.concat([st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] != selected_pop_field], updated_pop], ignore_index=True)
 
-    # --- 3) Summary Grid (All Fields are shown) ---
+    # --- 3) Summary Grid (All Fields shown) ---
     st.subheader("Summary")
     st.session_state.summary_df = flatten_dataframe(st.session_state.summary_df)
     summary_df = normalize_columns(st.session_state.summary_df)
     ssum = summary_df.copy()
+    # Append previous month comment (prepend "Prev Month: " to the cached comment)
     ssum = append_prev_comment(ssum, target_prev_month)
     st.session_state.summary_df = ssum
     try:
@@ -462,14 +465,14 @@ def main():
         ssum = st.session_state.summary_df.copy()
         for field in ssum["Field Name"].unique():
             notes = []
-            vdf = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==field]
+            vdf = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == field]
             if "Value Label" in vdf.columns and "Comment" in vdf.columns:
                 for _, row in vdf.iterrows():
                     cmt = str(row["Comment"]).strip()
                     vlb = str(row["Value Label"]).strip()
                     if cmt and cmt.lower() != "nan":
                         notes.append(f"{vlb} - {cmt}")
-            pdf = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"]==field]
+            pdf = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == field]
             if "Value Label" in pdf.columns and "Comment" in pdf.columns:
                 for _, row in pdf.iterrows():
                     cmt = str(row["Comment"]).strip()
@@ -478,7 +481,7 @@ def main():
                         notes.append(f"{vlb} - {cmt}")
             aggregated_note = "\n".join(notes).replace("nan", "").strip()
             if aggregated_note:
-                ssum.loc[ssum["Field Name"]==field, "Comment"] = aggregated_note
+                ssum.loc[ssum["Field Name"] == field, "Comment"] = aggregated_note
         return ssum
 
     ssum = aggregate_current_comments()
@@ -496,7 +499,7 @@ def main():
     # In Summary, pin "Field Name"
     comment_renderer = "function(params){return params.value ? params.value : '';}"
     gb_sum = GridOptionsBuilder.from_dataframe(ssum)
-    gb_sum.configure_default_column(editable=False,
+    gb_sum.configure_default_column(editable=False, 
                                     cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
     gb_sum.configure_column("Field Name", pinned="left")
     gb_sum.configure_column("Approval Comments", editable=True, width=250, minWidth=100, maxWidth=300)
