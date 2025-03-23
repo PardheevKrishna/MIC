@@ -20,7 +20,7 @@ def compute_grid_height(df, row_height=40, header_height=80):
     return header_height + (min(n, 30) * row_height)
 
 def drop_prev_comments_columns(df):
-    # Drop any columns that contain "m- Comments" to avoid duplicates.
+    """Drop any columns that contain 'm- Comments' to avoid duplicates."""
     pattern = re.compile(r"m- Comments", re.IGNORECASE)
     drop_cols = [c for c in df.columns if pattern.search(str(c))]
     if drop_cols:
@@ -28,6 +28,7 @@ def drop_prev_comments_columns(df):
     return df
 
 def flatten_dataframe(df):
+    """Flatten MultiIndex columns if any."""
     if isinstance(df.columns, pd.MultiIndex):
         df = df.reset_index()
         df.columns = [" ".join(map(str, col)).strip() if isinstance(col, tuple) else col 
@@ -35,6 +36,7 @@ def flatten_dataframe(df):
     return df
 
 def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "Value Label"}):
+    """Rename columns (e.g. 'field_name' to 'Field Name') and strip whitespace."""
     df.columns = [str(col).strip() for col in df.columns]
     for orig, new in mapping.items():
         for col in df.columns:
@@ -43,7 +45,7 @@ def normalize_columns(df, mapping={"field_name": "Field Name", "value_label": "V
     return df
 
 #############################################
-# 2) Generate Summary & Distribution
+# 2) Generate Summary & Distribution Sheets
 #############################################
 
 def generate_summary_df(df_data, date1, date2):
@@ -97,8 +99,8 @@ def generate_summary_df(df_data, date1, date2):
     m2 = f"Missing Values ({date2.strftime('%Y-%m-%d')})"
     d1 = f"Month-to-Month Diff ({date1.strftime('%Y-%m-%d')})"
     d2 = f"Month-to-Month Diff ({date2.strftime('%Y-%m-%d')})"
-    summary["Missing % Change"] = summary.apply(lambda r: ((r[m1]-r[m2]) / r[m2] * 100) if r[m2] != 0 else None, axis=1)
-    summary["Month-to-Month % Change"] = summary.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2] != 0 else None, axis=1)
+    summary["Missing % Change"] = summary.apply(lambda r: ((r[m1]-r[m2]) / r[m2] * 100) if r[m2]!=0 else None, axis=1)
+    summary["Month-to-Month % Change"] = summary.apply(lambda r: ((r[d1]-r[d2]) / r[d2] * 100) if r[d2]!=0 else None, axis=1)
     new_order = ["Field Name", m1, m2, "Missing % Change", d1, d2, "Month-to-Month % Change"]
     summary = summary[new_order]
     summary["Comment"] = ""
@@ -143,7 +145,7 @@ def generate_distribution_df(df, analysis_type, date1):
     return final
 
 #############################################
-# 3) Loading & Saving Functions
+# 3) Load Report Data
 #############################################
 
 def load_report_data(file_path, date1, date2):
@@ -293,7 +295,7 @@ def append_prev_comment(summary_df, target_month):
     return summary_df
 
 #############################################
-# 7) Main Streamlit App with Three Separate Filters
+# 7) Main Streamlit App with Separate Filters for Each Table
 #############################################
 
 def main():
@@ -330,13 +332,12 @@ def main():
         summary_df = preserve_summary_comments(input_file_path, summary_df)
         st.session_state.df_data = df_data
         st.session_state.summary_df = summary_df
-        st.session_state.value_dist_df = val_dist_df  # Has "Comment" column
-        st.session_state.pop_comp_df = pop_comp_df      # Has "Comment" column
+        st.session_state.value_dist_df = val_dist_df  # Already has "Comment" column
+        st.session_state.pop_comp_df = pop_comp_df      # Already has "Comment" column
         st.session_state.selected_file = selected_file
         st.session_state.folder = folder
         st.session_state.date1 = date1
         st.session_state.date2 = date2
-        st.session_state.input_file_path = input_file_path
 
     st.write("Working Directory:", os.getcwd())
 
@@ -344,45 +345,47 @@ def main():
     st.subheader("Value Distribution")
     st.session_state.value_dist_df = flatten_dataframe(st.session_state.value_dist_df)
     st.session_state.value_dist_df = normalize_columns(st.session_state.value_dist_df)
+    # Use a filter selectbox for Value Distribution (its own list)
     val_fields = st.session_state.value_dist_df["Field Name"].unique().tolist()
     if not val_fields:
         st.warning("No Value Distribution data available.")
+        filtered_val = st.session_state.value_dist_df.copy()
     else:
         selected_val_field = st.selectbox("Filter Value Distribution by Field", val_fields, key="val_filter")
         filtered_val = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == selected_val_field].copy()
-        filtered_val = drop_prev_comments_columns(filtered_val)
-        pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
-        if not pivot_prev.empty:
-            filtered_val = filtered_val.merge(pivot_prev, on="Field Name", how="left", suffixes=('', None))
-            old_col = f"comment_{target_prev_month}"
-            if old_col in filtered_val.columns:
-                filtered_val.rename(columns={old_col: f"{target_prev_month} m- Comments"}, inplace=True)
-        if "Comment" not in filtered_val.columns:
-            filtered_val["Comment"] = ""
-        filtered_val = filtered_val.replace(np.nan, "", regex=True)
-        gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
-        gb_val.configure_default_column(editable=True, cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
-        for c in filtered_val.columns:
-            if c == "Comment":
-                gb_val.configure_column(c, editable=True, width=220)
-            elif "m- Comments" in c:
-                gb_val.configure_column(c, editable=False, width=180)
-            elif c.endswith("Sum") or c.endswith("Percent"):
-                gb_val.configure_column(c, editable=False, width=120)
-        val_opts = gb_val.build()
-        if isinstance(val_opts, list):
-            val_opts = {"columnDefs": val_opts}
-        val_opts["rowSelection"] = "single"
-        val_opts["pagination"] = False
-        val_opts["rowHeight"] = 40
-        val_opts["headerHeight"] = 80
-        val_height = compute_grid_height(filtered_val, 40, 80)
-        val_res = AgGrid(filtered_val, gridOptions=val_opts,
-                         update_mode=GridUpdateMode.VALUE_CHANGED,
-                         data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-                         key="val_grid", height=val_height, use_container_width=True)
-        updated_val = pd.DataFrame(val_res["data"]).replace(np.nan, "", regex=True)
-        st.session_state.value_dist_df = pd.concat([st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] != selected_val_field], updated_val], ignore_index=True)
+    filtered_val = drop_prev_comments_columns(filtered_val)
+    pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
+    if not pivot_prev.empty:
+        filtered_val = filtered_val.merge(pivot_prev, on="Field Name", how="left", suffixes=('', None))
+        old_col = f"comment_{target_prev_month}"
+        if old_col in filtered_val.columns:
+            filtered_val.rename(columns={old_col: f"{target_prev_month} m- Comments"}, inplace=True)
+    if "Comment" not in filtered_val.columns:
+        filtered_val["Comment"] = ""
+    filtered_val = filtered_val.replace(np.nan, "", regex=True)
+    gb_val = GridOptionsBuilder.from_dataframe(filtered_val)
+    gb_val.configure_default_column(editable=True, cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+    for c in filtered_val.columns:
+        if c == "Comment":
+            gb_val.configure_column(c, editable=True, width=220)
+        elif "m- Comments" in c:
+            gb_val.configure_column(c, editable=False, width=180)
+        elif c.endswith("Sum") or c.endswith("Percent"):
+            gb_val.configure_column(c, editable=False, width=120)
+    val_opts = gb_val.build()
+    if isinstance(val_opts, list):
+        val_opts = {"columnDefs": val_opts}
+    val_opts["rowSelection"] = "single"
+    val_opts["pagination"] = False
+    val_opts["rowHeight"] = 40
+    val_opts["headerHeight"] = 80
+    val_height = compute_grid_height(filtered_val, 40, 80)
+    val_res = AgGrid(filtered_val, gridOptions=val_opts,
+                     update_mode=GridUpdateMode.VALUE_CHANGED,
+                     data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+                     key="val_grid", height=val_height, use_container_width=True)
+    updated_val = pd.DataFrame(val_res["data"]).replace(np.nan, "", regex=True)
+    st.session_state.value_dist_df = pd.concat([st.session_state.value_dist_df[~(st.session_state.value_dist_df["Field Name"] == (selected_val_field if val_fields else ""))], updated_val], ignore_index=True)
 
     # --- 2) Population Comparison Grid with its own Field Filter ---
     st.subheader("Population Comparison")
@@ -391,166 +394,153 @@ def main():
     pop_fields = st.session_state.pop_comp_df["Field Name"].unique().tolist()
     if not pop_fields:
         st.warning("No Population Comparison data available.")
+        filtered_pop = st.session_state.pop_comp_df.copy()
     else:
         selected_pop_field = st.selectbox("Filter Population Comparison by Field", pop_fields, key="pop_filter")
         filtered_pop = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == selected_pop_field].copy()
-        filtered_pop = drop_prev_comments_columns(filtered_pop)
-        pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
-        if not pivot_prev.empty:
-            filtered_pop = filtered_pop.merge(pivot_prev, on="Field Name", how="left", suffixes=('', None))
-            old_col = f"comment_{target_prev_month}"
-            if old_col in filtered_pop.columns:
-                filtered_pop.rename(columns={old_col: f"{target_prev_month} m- Comments"}, inplace=True)
-        if "Comment" not in filtered_pop.columns:
-            filtered_pop["Comment"] = ""
-        filtered_pop = filtered_pop.replace(np.nan, "", regex=True)
-        gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
-        gb_pop.configure_default_column(editable=True, cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
-        for c in filtered_pop.columns:
-            if c == "Comment":
-                gb_pop.configure_column(c, editable=True, width=220)
-            elif "m- Comments" in c:
-                gb_pop.configure_column(c, editable=False, width=180)
-            elif c.endswith("Sum") or c.endswith("Percent"):
-                gb_pop.configure_column(c, editable=False, width=120)
-        pop_opts = gb_pop.build()
-        if isinstance(pop_opts, list):
-            pop_opts = {"columnDefs": pop_opts}
-        pop_opts["rowSelection"] = "single"
-        pop_opts["pagination"] = False
-        pop_opts["rowHeight"] = 40
-        pop_opts["headerHeight"] = 80
-        pop_height = compute_grid_height(filtered_pop, 40, 80)
-        pop_res = AgGrid(filtered_pop, gridOptions=pop_opts,
-                         update_mode=GridUpdateMode.VALUE_CHANGED,
-                         data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-                         key="pop_grid", height=pop_height, use_container_width=True)
-        updated_pop = pd.DataFrame(pop_res["data"]).replace(np.nan, "", regex=True)
-        st.session_state.pop_comp_df = pd.concat([st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] != selected_pop_field], updated_pop], ignore_index=True)
+    filtered_pop = drop_prev_comments_columns(filtered_pop)
+    pivot_prev = pivot_previous_comments(prev_comments_df, target_prev_month)
+    if not pivot_prev.empty:
+        filtered_pop = filtered_pop.merge(pivot_prev, on="Field Name", how="left", suffixes=('', None))
+        old_col = f"comment_{target_prev_month}"
+        if old_col in filtered_pop.columns:
+            filtered_pop.rename(columns={old_col: f"{target_prev_month} m- Comments"}, inplace=True)
+    if "Comment" not in filtered_pop.columns:
+        filtered_pop["Comment"] = ""
+    filtered_pop = filtered_pop.replace(np.nan, "", regex=True)
+    gb_pop = GridOptionsBuilder.from_dataframe(filtered_pop)
+    gb_pop.configure_default_column(editable=True, cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+    for c in filtered_pop.columns:
+        if c == "Comment":
+            gb_pop.configure_column(c, editable=True, width=220)
+        elif "m- Comments" in c:
+            gb_pop.configure_column(c, editable=False, width=180)
+        elif c.endswith("Sum") or c.endswith("Percent"):
+            gb_pop.configure_column(c, editable=False, width=120)
+    pop_opts = gb_pop.build()
+    if isinstance(pop_opts, list):
+        pop_opts = {"columnDefs": pop_opts}
+    pop_opts["rowSelection"] = "single"
+    pop_opts["pagination"] = False
+    pop_opts["rowHeight"] = 40
+    pop_opts["headerHeight"] = 80
+    pop_height = compute_grid_height(filtered_pop, 40, 80)
+    pop_res = AgGrid(filtered_pop, gridOptions=pop_opts,
+                     update_mode=GridUpdateMode.VALUE_CHANGED,
+                     data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+                     key="pop_grid", height=pop_height, use_container_width=True)
+    updated_pop = pd.DataFrame(pop_res["data"]).replace(np.nan, "", regex=True)
+    st.session_state.pop_comp_df = pd.concat([st.session_state.pop_comp_df[~(st.session_state.pop_comp_df["Field Name"] == (selected_pop_field if pop_fields else ""))], updated_pop], ignore_index=True)
 
-    # --- 3) Summary Grid with its own Field Filter ---
+    # --- 3) Summary Grid (Show All Fields) ---
     st.subheader("Summary")
     st.session_state.summary_df = flatten_dataframe(st.session_state.summary_df)
     summary_df = normalize_columns(st.session_state.summary_df)
-    summary_fields = summary_df["Field Name"].unique().tolist()
-    if not summary_fields:
-        st.warning("No Summary data available.")
-    else:
-        selected_summary_field = st.selectbox("Filter Summary by Field", summary_fields, key="summary_filter")
-        filtered_summary = summary_df[summary_df["Field Name"] == selected_summary_field].copy()
+    # In summary, show all fields (no filter)
+    ssum = summary_df.copy()
 
-        # Append the previous month’s comment automatically
-        filtered_summary = append_prev_comment(filtered_summary, target_prev_month)
+    # Append the previous month’s comment automatically
+    ssum = append_prev_comment(ssum, target_prev_month)
+    st.session_state.summary_df = ssum
 
-        # Optionally, preserve any existing Summary comments from Excel
-        try:
-            existing = pd.read_excel(st.session_state.input_file_path, sheet_name="Summary")
-            cdict = {}
-            adict = {}
-            if "Comment" in existing.columns:
-                cdict = existing.set_index("Field Name")["Comment"].to_dict()
-            if "Approval Comments" in existing.columns:
-                adict = existing.set_index("Field Name")["Approval Comments"].to_dict()
-            filtered_summary["Comment"] = filtered_summary["Field Name"].map(cdict).fillna("") \
-                .str.cat(filtered_summary["Comment"], sep="\n")
-            filtered_summary["Approval Comments"] = filtered_summary["Field Name"].map(adict).fillna("")
-        except Exception as e:
-            st.warning(f"Could not preserve existing summary comments: {e}")
-
-        # Aggregate current grid comments from Value Dist and Pop Comp into Summary
-        def aggregate_current_comments():
-            ssum = filtered_summary.copy()
-            for field in ssum["Field Name"].unique():
-                notes = []
-                vdf = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"] == field]
-                if "Value Label" in vdf.columns and "Comment" in vdf.columns:
-                    for _, row in vdf.iterrows():
-                        cmt = str(row["Comment"]).strip()
-                        vlb = str(row["Value Label"]).strip()
-                        if cmt and cmt.lower() != "nan":
-                            notes.append(f"{vlb} - {cmt}")
-                pdf = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"] == field]
-                if "Value Label" in pdf.columns and "Comment" in pdf.columns:
-                    for _, row in pdf.iterrows():
-                        cmt = str(row["Comment"]).strip()
-                        vlb = str(row["Value Label"]).strip()
-                        if cmt and cmt.lower() != "nan":
-                            notes.append(f"{vlb} - {cmt}")
-                aggregated_note = "\n".join(notes).replace("nan", "").strip()
-                if aggregated_note:
-                    ssum.loc[ssum["Field Name"] == field, "Comment"] = aggregated_note
-            return ssum
-
-        filtered_summary = aggregate_current_comments()
-        st.session_state.summary_df = filtered_summary
-
-        # Reorder Summary columns so that "Approval Comments" is after "Comment"
-        cols = list(filtered_summary.columns)
-        if "Approval Comments" not in cols:
-            filtered_summary["Approval Comments"] = ""
-        if "Comment" not in cols:
-            filtered_summary["Comment"] = ""
-        cols.remove("Approval Comments")
-        cols.remove("Comment")
-        new_order = ["Field Name"] + [c for c in cols if c != "Field Name"] + ["Comment", "Approval Comments"]
-        filtered_summary = filtered_summary[new_order]
-
-        # Use a plain JavaScript function string for the cell renderer to avoid JSON serialization issues.
-        comment_renderer = "function(params){return params.value ? params.value : '';}"
-        gb_sum = GridOptionsBuilder.from_dataframe(filtered_summary)
-        gb_sum.configure_default_column(editable=False, 
-                                        cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
-        gb_sum.configure_column("Approval Comments", editable=True, width=250, minWidth=100, maxWidth=300)
-        gb_sum.configure_column("Comment", editable=False, cellRenderer=comment_renderer, width=250, minWidth=100, maxWidth=300)
-        for c in filtered_summary.columns:
-            if c not in ["Field Name", "Comment", "Approval Comments"]:
-                if "Change" in c:
-                    gb_sum.configure_column(c, type=["numericColumn"],
-                                            valueFormatter="(params.value != null ? params.value.toFixed(2)+'%' : '')",
-                                            width=150, minWidth=100, maxWidth=200)
-                else:
-                    gb_sum.configure_column(c, type=["numericColumn"],
-                                            valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')",
-                                            width=150, minWidth=100, maxWidth=200)
-        sum_opts = gb_sum.build()
-        if isinstance(sum_opts, list):
-            sum_opts = {"columnDefs": sum_opts}
-        for c in sum_opts["columnDefs"]:
-            c["headerName"] = "\n".join(c["headerName"].split())
-        sum_opts["rowSelection"] = "single"
-        sum_opts["pagination"] = False
-        sum_opts["rowHeight"] = 40
-        sum_opts["headerHeight"] = 80
-        sum_height = compute_grid_height(filtered_summary, 40, 80)
-        sum_res = AgGrid(filtered_summary, gridOptions=sum_opts,
-                         update_mode=GridUpdateMode.VALUE_CHANGED,
-                         data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-                         key="sum_grid", height=sum_height, use_container_width=True)
-        st.session_state.summary_df = pd.DataFrame(sum_res["data"])
-
-        #############################################
-        # 4) Save to Excel (In-Place Update)
-        #############################################
-        try:
-            with pd.ExcelWriter(st.session_state.input_file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                st.session_state.summary_df.to_excel(writer, index=False, sheet_name="Summary")
-                st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
-                st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
-                summary_sheet = writer.sheets["Summary"]
-                header = [cell.value for cell in summary_sheet[1]]
-                try:
-                    comment_col_index = header.index("Comment") + 1
-                except ValueError:
-                    comment_col_index = len(header)
-                for idx, row in st.session_state.summary_df.iterrows():
+    # Also aggregate current grid comments from Value Dist & Pop Comp
+    def aggregate_current_comments():
+        ssum = st.session_state.summary_df.copy()
+        for field in ssum["Field Name"].unique():
+            notes = []
+            vdf = st.session_state.value_dist_df[st.session_state.value_dist_df["Field Name"]==field]
+            if "Value Label" in vdf.columns and "Comment" in vdf.columns:
+                for _, row in vdf.iterrows():
                     cmt = str(row["Comment"]).strip()
+                    vlb = str(row["Value Label"]).strip()
                     if cmt and cmt.lower() != "nan":
-                        com_obj = Comment(cmt, "User")
-                        summary_sheet.cell(row=idx+2, column=comment_col_index).comment = com_obj
-            update_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            st.success(f"Excel file updated successfully at {update_time}!")
-        except Exception as e:
-            st.error(f"Error updating the Excel file: {e}")
+                        notes.append(f"{vlb} - {cmt}")
+            pdf = st.session_state.pop_comp_df[st.session_state.pop_comp_df["Field Name"]==field]
+            if "Value Label" in pdf.columns and "Comment" in pdf.columns:
+                for _, row in pdf.iterrows():
+                    cmt = str(row["Comment"]).strip()
+                    vlb = str(row["Value Label"]).strip()
+                    if cmt and cmt.lower() != "nan":
+                        notes.append(f"{vlb} - {cmt}")
+            aggregated_note = "\n".join(notes).replace("nan", "").strip()
+            if aggregated_note:
+                ssum.loc[ssum["Field Name"]==field, "Comment"] = aggregated_note
+        return ssum
+
+    ssum = aggregate_current_comments()
+    st.session_state.summary_df = ssum
+
+    # Reorder Summary columns so that "Approval Comments" is after "Comment"
+    cols = list(ssum.columns)
+    if "Approval Comments" not in cols:
+        ssum["Approval Comments"] = ""
+    if "Comment" not in cols:
+        ssum["Comment"] = ""
+    cols.remove("Approval Comments")
+    cols.remove("Comment")
+    new_order = ["Field Name"] + [c for c in cols if c != "Field Name"] + ["Comment", "Approval Comments"]
+    ssum = ssum[new_order]
+
+    # Configure Summary grid; add row selection event so that if a row is selected, we update active_field.
+    comment_renderer = "function(params){return params.value ? params.value : '';}"
+    gb_sum = GridOptionsBuilder.from_dataframe(ssum)
+    gb_sum.configure_default_column(editable=False,
+                                    cellStyle={'white-space':'normal','line-height':'1.2em','width':150})
+    gb_sum.configure_column("Approval Comments", editable=True, width=250, minWidth=100, maxWidth=300)
+    gb_sum.configure_column("Comment", editable=False, cellRenderer=comment_renderer, width=250, minWidth=100, maxWidth=300)
+    for c in ssum.columns:
+        if c not in ["Field Name", "Comment", "Approval Comments"]:
+            if "Change" in c:
+                gb_sum.configure_column(c, type=["numericColumn"],
+                                        valueFormatter="(params.value != null ? params.value.toFixed(2)+'%' : '')",
+                                        width=150, minWidth=100, maxWidth=200)
+            else:
+                gb_sum.configure_column(c, type=["numericColumn"],
+                                        valueFormatter="(params.value != null ? params.value.toLocaleString('en-US') : '')",
+                                        width=150, minWidth=100, maxWidth=200)
+    sum_opts = gb_sum.build()
+    if isinstance(sum_opts, list):
+        sum_opts = {"columnDefs": sum_opts}
+    for c in sum_opts["columnDefs"]:
+        c["headerName"] = "\n".join(c["headerName"].split())
+    sum_opts["rowSelection"] = "single"
+    sum_opts["pagination"] = False
+    sum_opts["rowHeight"] = 40
+    sum_opts["headerHeight"] = 80
+    sum_height = compute_grid_height(ssum, 40, 80)
+    sum_res = AgGrid(ssum, gridOptions=sum_opts,
+                     update_mode=GridUpdateMode.VALUE_CHANGED,
+                     data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+                     key="sum_grid", height=sum_height, use_container_width=True)
+    # When a row in the Summary grid is selected, update the active field.
+    sel_sum = sum_res.get("selectedRows", [])
+    if sel_sum:
+        st.session_state.active_field = sel_sum[0].get("Field Name")
+    st.session_state.summary_df = pd.DataFrame(sum_res["data"])
+
+    #############################################
+    # 4) Save to Excel (In-Place Update)
+    #############################################
+    try:
+        with pd.ExcelWriter(st.session_state.input_file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+            st.session_state.summary_df.to_excel(writer, index=False, sheet_name="Summary")
+            st.session_state.value_dist_df.to_excel(writer, index=False, sheet_name="Value Distribution")
+            st.session_state.pop_comp_df.to_excel(writer, index=False, sheet_name="Population Comparison")
+            summary_sheet = writer.sheets["Summary"]
+            header = [cell.value for cell in summary_sheet[1]]
+            try:
+                comment_col_index = header.index("Comment") + 1
+            except ValueError:
+                comment_col_index = len(header)
+            for idx, row in st.session_state.summary_df.iterrows():
+                cmt = str(row["Comment"]).strip()
+                if cmt and cmt.lower() != "nan":
+                    com_obj = Comment(cmt, "User")
+                    summary_sheet.cell(row=idx+2, column=comment_col_index).comment = com_obj
+        update_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.success(f"Excel file updated successfully at {update_time}!")
+    except Exception as e:
+        st.error(f"Error updating the Excel file: {e}")
 
 if __name__=="__main__":
     main()
