@@ -1,24 +1,24 @@
 import re
 
 def extract_sas_variables(sas_code):
-    # Step 1: Remove quoted strings (both single and double quotes).
-    # This ensures that literal strings (e.g., 'XX' or ", XX") are not treated as variables.
-    cleaned_code = re.sub(r'(["\']).*?\1', '', sas_code)
+    # Step 1: Remove quoted strings (including standard and smart quotes)
+    # This regex removes any text enclosed by: " ' ‘ ’ “ ”
+    cleaned_code = re.sub(r'(["\'\u2018\u2019\u201C\u201D]).*?\1', '', sas_code)
     
     # Step 2: Extract tokens that look like SAS identifiers.
     # SAS variable names usually start with a letter or underscore and can contain letters, digits, or underscores.
     tokens = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', cleaned_code)
     
-    # Step 3: Exclude known SAS reserved words, built-in functions, macro keywords, automatic variables,
-    # and common procedure names/options. This list is extensive but not absolutely exhaustive.
+    # Step 3: Exclude known SAS reserved words, built-in functions, macro keywords,
+    # automatic variables, procedure names/options, and common logical operators.
     sas_exclusions = {
         # SAS Reserved Keywords
         "DATA", "SET", "MERGE", "UPDATE", "BY", "IF", "THEN", "ELSE", "ELSEIF", "DO", "END", "OUTPUT",
         "DROP", "KEEP", "RENAME", "LABEL", "FORMAT", "INFORMAT", "LENGTH", "ATTRIB", "ARRAY", "RETAIN",
         "RUN", "QUIT", "LIBNAME", "FILENAME", "OPTIONS", "TITLE", "FOOTNOTE", "CARDS", "DATALINES",
-        "CARDS4", "DATALINES4", "_NULL_", "_ALL_", "_NUMERIC_", "_CHARACTER_",
-        "INPUT", "PUT", "INFILE", "FILE", "SELECT", "FROM", "WHERE", "GROUP", "HAVING", "ORDER", 
-        "CASE", "WHEN", "UNION", "ALL", "EXAMINE", "DEFINE", "OBS", "FIRSTOBS",
+        "CARDS4", "DATALINES4", "_NULL_", "_ALL_", "_NUMERIC_", "_CHARACTER_", "INPUT", "PUT", "INFILE", 
+        "FILE", "SELECT", "FROM", "WHERE", "GROUP", "HAVING", "ORDER", "CASE", "WHEN", "UNION", "ALL", 
+        "EXAMINE", "DEFINE", "OBS", "FIRSTOBS",
         
         # SAS Built-in Functions
         "ABS", "ACOS", "ACOSH", "ALPHA", "ANYALNUM", "ANYALPHA", "ANYCNTRL", "ANYDIGIT", "ANYLOWER", 
@@ -27,8 +27,8 @@ def extract_sas_variables(sas_code):
         "DIGIT", "FLOOR", "INDEX", "INDEXC", "INDEXW", "INPUTN", "INT", "INTCK", "INTNX", "LAG", "LBOUND", 
         "LENGTH", "LOG", "LOG10", "MAX", "MEAN", "MEDIAN", "MIN", "MOD", "NVALID", "NOW", "NLOGB", "NROOT", 
         "NVAR", "PV", "RANUNI", "ROUND", "SIGN", "SIN", "SINH", "SQRT", "STRIP", "SUBSTR", "SUM", "TAN", 
-        "TANH", "TRANWRD", "TRIM", "UPCASE", "LOWCASE", "COMPRESS", "CAT", "CATS", "CATX", "FIND", "FINDC", 
-        "FINDW", "VERIFY", "COALESECEC", "COALESCE",
+        "TANH", "TRANWRD", "TRIM", "UPCASE", "LOWCASE", "COMPRESS", "COMPBL", "CAT", "CATS", "CATX", "FIND", 
+        "FINDC", "FINDW", "VERIFY", "COALESECEC", "COALESCE",
         
         # SAS Macro Keywords and Functions
         "%MACRO", "%MEND", "%LET", "%IF", "%THEN", "%ELSE", "%DO", "%END", "%GOTO", "%RETURN", "%ABORT", 
@@ -40,7 +40,7 @@ def extract_sas_variables(sas_code):
         # Automatic Variables (DATA Step)
         "_N_", "_ERROR_", "_FILE_", "_INFILE_", "_IORC_", "_MSG_", "_CMD_",
         
-        # SAS Automatic Macro Variables (SYS variables)
+        # SAS Automatic Macro Variables
         "SYSDATE", "SYSDATE9", "SYSDAY", "SYSTIME", "SYSCC", "SYSERR", "SYSFILRC", "SYSLIBRC", 
         "SYSINFO", "SYSWARNINGTEXT", "SYSERRORTEXT", "SYSLAST", "SYSDBRC", "SYSDBMSG", "SQLOBS", 
         "SQLRC", "SYSPARM", "SYSJOBID", "SYSPROCESSNAME", "SYSPROCESSID", "SYSSCP", "SYSSCPL",
@@ -51,11 +51,17 @@ def extract_sas_variables(sas_code):
         "LIFETEST", "PHREG", "SURVEYMEANS", "SURVEYFREQ", "SURVEYLOGISTIC", "GPLOT", "GCHART", 
         "GREPLAY", "ARIMA", "AUTOREG", "EXPAND", "TIMESERIES", "ACECLUS", "CLUSTER", "FASTCLUS", 
         "VARCLUS", "PRINCOMP", "DMDB", "HPFOREST", "IML", "NLIN", "QLIM", "KRIGE2D", "GLIMMIX", "PLM", 
-        "POWER", "ICPHREG", "MCMC", "STDIZE", "TRANSREG", "X12",
-        "OUT", "NOPRINT", "NOOBS", "BY", "WHERE", "PLOTS", "ALPHA", "MAXDEC", "NWAY", "ORDER"
+        "POWER", "ICPHREG", "MCMC", "STDIZE", "TRANSREG", "X12", "OUT", "NOPRINT", "NOOBS", "BY", 
+        "WHERE", "PLOTS", "ALPHA", "MAXDEC", "NWAY", "ORDER",
+        
+        # Logical Operators and Other Reserved Words
+        "NOT", "IN", "AND", "OR", "XOR", "EQ", "NE", "GT", "LT", "GE", "LE",
+        
+        # Additional User-Specified Tokens
+        "XX"
     }
     
-    # Filter tokens by removing any that match the exclusion list (case-insensitive)
+    # Filter tokens by removing any that match the exclusion list (using case-insensitive matching)
     variables = {token for token in tokens if token.upper() not in sas_exclusions}
     
     return variables
@@ -66,9 +72,10 @@ IF COMPRESS(property_state_cd) Not In(", XX')
 Then propstate = UPCASE(COMPBL(STRIP(property_state_cd)));
 Else If COMPRESS(property_state_cd_vo) Not In(", XX)
 Then propstate = UPCASE(COMPBL(STRIP(property_state_cd_vo)));
-Else If COMPRESS(propstate_pm) Not In(", 'XX')
+Else If COMPRESS(propstate_pm) Not In(", ‘LOAN’")
 Then propstate = UPCASE(COMPBL(STRIP(propstate_pm)));
-Else propstate = ";
+Else propstate = "";
+AND;
 '''
 
 extracted_vars = extract_sas_variables(sas_code)
