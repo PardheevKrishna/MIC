@@ -1,10 +1,13 @@
 import re
 
 def extract_sas_variables(sas_code):
-    # Step 1: Remove quoted strings (handles standard and smart quotes)
-    # This regex removes any text enclosed by any of these quote characters:
-    #   "  '  ‘  ’  “  ”
-    cleaned_code = re.sub(r'["\'\u2018\u2019\u201C\u201D].*?["\'\u2018\u2019\u201C\u201D]', '', sas_code)
+    # Step 1: Remove quoted strings using three substitutions.
+    # Remove standard quoted strings: e.g., "LOAN" or 'LOAN'
+    cleaned_code = re.sub(r'["\'].+?["\']', '', sas_code)
+    # Remove smart single-quoted strings: e.g., ‘LOAN’ 
+    cleaned_code = re.sub(r'[\u2018].+?[\u2019]', '', cleaned_code)
+    # Remove smart double-quoted strings: e.g., “LOAN”
+    cleaned_code = re.sub(r'[\u201C].+?[\u201D]', '', cleaned_code)
     
     # Step 2: Extract tokens that look like SAS identifiers.
     # SAS variable names usually start with a letter or underscore and can contain letters, digits, or underscores.
@@ -29,7 +32,7 @@ def extract_sas_variables(sas_code):
         "LENGTH", "LOG", "LOG10", "MAX", "MEAN", "MEDIAN", "MIN", "MOD", "NVALID", "NOW", "NLOGB", "NROOT", 
         "NVAR", "PV", "RANUNI", "ROUND", "SIGN", "SIN", "SINH", "SQRT", "STRIP", "SUBSTR", "SUM", "TAN", 
         "TANH", "TRANWRD", "TRIM", "UPCASE", "LOWCASE", "COMPRESS", "COMPBL", "CAT", "CATS", "CATX", "FIND", 
-        "FINDC", "FINDW", "VERIFY", "COALESECEC", "COALESCE",
+        "FINDC", "FINDW", "VERIFY", "COALESCEC", "COALESCE",
         
         # SAS Macro Keywords and Functions
         "%MACRO", "%MEND", "%LET", "%IF", "%THEN", "%ELSE", "%DO", "%END", "%GOTO", "%RETURN", "%ABORT", 
@@ -58,7 +61,7 @@ def extract_sas_variables(sas_code):
         # Logical Operators and Other Reserved Words
         "NOT", "IN", "AND", "OR", "XOR", "EQ", "NE", "GT", "LT", "GE", "LE",
         
-        # Additional Tokens (as encountered in your code)
+        # Additional Tokens
         "XX"
     }
     
