@@ -276,7 +276,7 @@ class ExcelSearchApp(QMainWindow):
         """
         Display aggregated rows from multiple Excel files for a given sheet name.
         Each record is a tuple: (Source, Row, columns, values)
-        This version shows the columns separately for each sheet.
+        This version shows all rows one below the other, with each file's data.
         """
         self.detail_table.clear()
         if not aggregated_records:
@@ -284,17 +284,13 @@ class ExcelSearchApp(QMainWindow):
             self.detail_table.setColumnCount(0)
             return
 
-        # Collect columns from each sheet.
-        all_columns = {}
-        for record in aggregated_records:
-            source, row_text, cols, values = record
-            if source not in all_columns:
-                all_columns[source] = cols
-
         # Create headers: Source, Row, then each sheet's columns.
         headers = ["Source", "Row"]
-        for source in all_columns:
-            headers += all_columns[source]
+        for record in aggregated_records:
+            cols = record[2]
+            for col in cols:
+                if col not in headers:
+                    headers.append(col)
 
         self.detail_table.setColumnCount(len(headers))
         self.detail_table.setHorizontalHeaderLabels(headers)
@@ -305,10 +301,9 @@ class ExcelSearchApp(QMainWindow):
             self.detail_table.setItem(row_index, 0, QTableWidgetItem(source))
             self.detail_table.setItem(row_index, 1, QTableWidgetItem(row_text))
             row_dict = dict(zip(cols, values))
-            # Place the values in the corresponding columns.
-            col_index_start = 2 + list(all_columns.keys()).index(source) * len(cols)
             for col_index, col in enumerate(cols):
-                self.detail_table.setItem(row_index, col_index_start + col_index, QTableWidgetItem(str(row_dict.get(col, ""))))
+                column_index = headers.index(col)  # Get the column index dynamically
+                self.detail_table.setItem(row_index, column_index, QTableWidgetItem(str(row_dict.get(col, ""))))
 
         self.detail_table.resizeColumnsToContents()
 
