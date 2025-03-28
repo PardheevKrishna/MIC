@@ -2,6 +2,7 @@ import sys
 import os
 import glob
 import pandas as pd
+import textwrap
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QTreeWidget, QTreeWidgetItem, QLabel,
@@ -112,14 +113,12 @@ class ExcelSearchApp(QMainWindow):
         # Page 0: Single-row detail table.
         self.detail_table = QTableWidget()
         self.detail_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        # Set dark background on the detail table.
         self.detail_table.setStyleSheet("background-color: #27293d; color: #ffffff;")
         self.detail_stack.addWidget(self.detail_table)
 
         # Page 1: Aggregated detail view using a scroll area.
         self.detail_scroll = QScrollArea()
         self.detail_scroll.setWidgetResizable(True)
-        # Set dark background on the scroll area.
         self.detail_scroll.setStyleSheet("background-color: #27293d;")
         self.detail_container = QWidget()
         self.detail_container.setStyleSheet("background-color: #27293d;")
@@ -213,7 +212,11 @@ class ExcelSearchApp(QMainWindow):
                         if r_data is not None:
                             row_text = row_item.text(2)
                             aggregated_records.append((os.path.basename(file_path), row_text, r_data[0], r_data[1]))
-            self.show_aggregated_detail(aggregated_records)
+            # If the sheet is "1. Data Dictionary", use the new detail view.
+            if sheet_name == "1. Data Dictionary":
+                self.show_data_dictionary_detail(aggregated_records)
+            else:
+                self.show_aggregated_detail(aggregated_records)
             self.detail_stack.setCurrentIndex(1)
         else:
             self.detail_table.clear()
@@ -236,9 +239,8 @@ class ExcelSearchApp(QMainWindow):
 
     def show_aggregated_detail(self, aggregated_records):
         """
-        Group aggregated records by source (file). For each group, create a table
-        that shows the sheet's column headers and all matching rows.
-        The tables are stacked vertically in the detail container.
+        Default aggregated view (if sheet name is not "1. Data Dictionary").
+        Groups records by source and stacks group tables.
         """
         self.clear_detail_container()
         if not aggregated_records:
@@ -260,13 +262,54 @@ class ExcelSearchApp(QMainWindow):
             table.setColumnCount(len(header_cols))
             table.setHorizontalHeaderLabels(header_cols)
             table.setRowCount(len(group_rows))
-            # Set table style to dark.
             table.setStyleSheet("background-color: #27293d; color: #ffffff;")
             for i, (row_text, cols, values) in enumerate(group_rows):
                 for j, val in enumerate(values):
                     table.setItem(i, j, QTableWidgetItem(str(val)))
             table.resizeColumnsToContents()
             self.detail_layout.addWidget(table)
+        self.detail_layout.addStretch()
+
+    def show_data_dictionary_detail(self, aggregated_records):
+        """
+        For the sheet named "1. Data Dictionary", display a single table
+        that shows only the following columns:
+          - CorporateFinanceSubmissionFieldName
+          - Corporate Finance Submission Field Description
+          - Transformation/Business Logic
+        The first column will be the Excel file name (Source).
+        Text is wrapped (using a fixed width of 50 characters) for better readability.
+        """
+        self.clear_detail_container()
+        if not aggregated_records:
+            return
+
+        required_cols = [
+            "CorporateFinanceSubmissionFieldName",
+            "Corporate Finance Submission Field Description",
+            "Transformation/Business Logic"
+        ]
+        headers = ["Source"] + required_cols
+
+        # Combine all records into one table.
+        table = QTableWidget()
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.setRowCount(len(aggregated_records))
+        table.setStyleSheet("background-color: #27293d; color: #ffffff;")
+        for i, record in enumerate(aggregated_records):
+            source, row_text, cols, values = record
+            row_dict = dict(zip(cols, values))
+            table.setItem(i, 0, QTableWidgetItem(source))
+            for j, col in enumerate(required_cols):
+                # Get the cell value if available, else blank.
+                cell_val = row_dict.get(col, "")
+                # Wrap the text using textwrap.fill.
+                wrapped_val = textwrap.fill(str(cell_val), width=50)
+                table.setItem(i, j+1, QTableWidgetItem(wrapped_val))
+        table.resizeColumnsToContents()
+        self.detail_layout.addWidget(table)
         self.detail_layout.addStretch()
 
     def on_item_double_clicked(self, item, column):
