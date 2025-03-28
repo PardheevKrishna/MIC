@@ -11,9 +11,6 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from rapidfuzz import fuzz
 import subprocess
 
-# Set this to True to enable debug print statements.
-DEBUG = True
-
 # Worker thread to process Excel files asynchronously.
 class SearchWorker(QThread):
     # Signal to emit when a row match is found.
@@ -28,33 +25,29 @@ class SearchWorker(QThread):
         self.search_term_lower = self.search_term.lower()  # Lowercase once for reuse
 
     def run(self):
-        if DEBUG:
-            print(f"DEBUG: Search started for term: {self.search_term}")
+        print(f"Search started for term: {self.search_term}")
 
         # Get list of Excel files (.xlsx and .xls)
         file_list = glob.glob(os.path.join(self.folder_path, "*.xlsx")) + \
                     glob.glob(os.path.join(self.folder_path, "*.xls"))
-        if DEBUG:
-            print(f"DEBUG: Found {len(file_list)} files in folder: {self.folder_path}")
+        print(f"Found {len(file_list)} files.")
         
         for file_path in file_list:
-            if DEBUG:
-                print(f"DEBUG: Reading file: {file_path}")
             try:
+                print(f"Reading file: {file_path}")
                 # Load all sheets as a dictionary {sheet_name: DataFrame}
                 sheets = pd.read_excel(file_path, sheet_name=None)
             except Exception as e:
-                print(f"ERROR: Could not read {file_path}: {e}")
+                print(f"Error reading {file_path}: {e}")
                 continue
 
             # Process each sheet
             for sheet_name, df in sheets.items():
-                if DEBUG:
-                    print(f"DEBUG: Processing sheet: {sheet_name} in file: {file_path}")
+                print(f"Processing sheet: {sheet_name} in file: {os.path.basename(file_path)}")
                 # Iterate over each row of the DataFrame
                 for idx, row in df.iterrows():
                     row_matched = False
-                    # Check every cell in the row for a fuzzy match.
+                    # Check every cell in the row
                     for col in df.columns:
                         cell_value = row[col]
                         if pd.isna(cell_value):
@@ -63,16 +56,12 @@ class SearchWorker(QThread):
                         similarity = fuzz.ratio(self.search_term_lower, cell_str.lower())
                         if similarity >= 80:
                             row_matched = True
-                            break  # Once one cell qualifies, mark the entire row as matched.
+                            break  # Once one cell qualifies, mark the entire row as matched
                     if row_matched:
                         # Save entire row data as a tuple: (columns, values)
                         row_data = (df.columns.tolist(), row.tolist())
-                        if DEBUG:
-                            print(f"DEBUG: Match found in file: {os.path.basename(file_path)}, sheet: {sheet_name}, row: {idx}")
                         self.resultFound.emit(file_path, sheet_name, idx, row_data)
-
-        if DEBUG:
-            print("DEBUG: Search completed.")
+        print("Search completed.")
         self.finished.emit()
 
 
@@ -84,9 +73,11 @@ class ExcelSearchApp(QMainWindow):
         self.folder_path = ""
         self.worker = None  # Placeholder for our worker thread
 
-        # Dictionaries to store tree nodes for quick lookup.
-        self.file_items = {}   # key: file path, value: QTreeWidgetItem for file
-        self.sheet_items = {}  # key: (file_path, sheet_name), value: QTreeWidgetItem for sheet
+        # Dictionaries for quick lookup:
+        # file_items maps file_path -> file-level QTreeWidgetItem.
+        # sheet_items maps (file_path, sheet_name) -> sheet-level QTreeWidgetItem.
+        self.file_items = {}
+        self.sheet_items = {}
 
         self.initUI()
 
@@ -98,7 +89,6 @@ class ExcelSearchApp(QMainWindow):
 
         # Top controls: folder selection and search input.
         controls_layout = QHBoxLayout()
-
         self.folder_label = QLabel("No folder selected")
         controls_layout.addWidget(self.folder_label)
 
@@ -120,7 +110,8 @@ class ExcelSearchApp(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(splitter)
 
-        # Left side: hierarchical tree view
+        # Left side: hierarchical tree view.
+        # Structure: file-level node -> sheet-level node -> row-level node.
         self.result_tree = QTreeWidget()
         self.result_tree.setHeaderLabels(["File", "Sheet", "Row"])
         self.result_tree.header().setSectionResizeMode(QHeaderView.ResizeToContents)
@@ -128,27 +119,23 @@ class ExcelSearchApp(QMainWindow):
         self.result_tree.itemDoubleClicked.connect(self.on_item_double_clicked)
         splitter.addWidget(self.result_tree)
 
-        # Right side: detailed view of the row (as a table)
+        # Right side: detailed view.
         self.detail_table = QTableWidget()
         self.detail_table.setEditTriggers(QTableWidget.NoEditTriggers)
         splitter.addWidget(self.detail_table)
 
-        # Set initial splitter sizes
         splitter.setSizes([400, 600])
 
-        # Modern, sleek styling with a refined dark palette and subtle hover effects.
+        # Modern, sleek styling.
         self.setStyleSheet("""
-            /* Main window */
             QMainWindow {
                 background-color: #1e1e2f;
                 font-family: 'Segoe UI', sans-serif;
             }
-            /* Labels */
             QLabel {
                 font-size: 14px;
                 color: #ffffff;
             }
-            /* Line edits and buttons */
             QLineEdit, QPushButton {
                 font-size: 16px;
                 padding: 8px;
@@ -160,27 +147,23 @@ class ExcelSearchApp(QMainWindow):
             QLineEdit:hover, QPushButton:hover {
                 border: 1px solid #5c5c7e;
             }
-            /* Tree and table views */
             QTreeWidget, QTableWidget {
                 background-color: #27293d;
                 color: #ffffff;
                 border: none;
             }
-            /* Header styling for tree and table */
             QHeaderView::section {
                 background-color: #3c3c4e;
                 color: #ffffff;
                 padding: 8px;
                 border: 1px solid #27293d;
             }
-            /* Tree widget items */
             QTreeWidget::item {
                 padding: 4px;
             }
             QTreeWidget::item:selected {
                 background-color: #4a90e2;
             }
-            /* Table widget items */
             QTableWidget::item:selected {
                 background-color: #4a90e2;
             }
@@ -191,54 +174,41 @@ class ExcelSearchApp(QMainWindow):
         if folder:
             self.folder_path = folder
             self.folder_label.setText(f"Folder: {folder}")
-            if DEBUG:
-                print(f"DEBUG: Folder selected: {folder}")
 
     def start_search(self):
         search_term = self.search_input.text().strip()
-        if not search_term:
-            if DEBUG:
-                print("DEBUG: No search term entered.")
-            return
-        if not self.folder_path:
-            if DEBUG:
-                print("DEBUG: No folder selected.")
+        if not search_term or not self.folder_path:
             return
 
-        # Clear previous results
+        # Clear previous results.
         self.result_tree.clear()
         self.detail_table.clear()
         self.file_items.clear()
         self.sheet_items.clear()
 
-        # Disable search button while processing.
         self.search_button.setEnabled(False)
-        if DEBUG:
-            print("DEBUG: Starting search...")
 
-        # Create and start the worker thread.
+        # Start the worker thread.
         self.worker = SearchWorker(self.folder_path, search_term)
         self.worker.resultFound.connect(self.handle_result)
         self.worker.finished.connect(self.search_finished)
         self.worker.start()
 
     def handle_result(self, file_path, sheet_name, row_index, row_data):
-        # file_path: full file path
-        # row_data: tuple (columns, values)
-        print(f"DEBUG: Match found - File: {os.path.basename(file_path)}, Sheet: {sheet_name}, Row: {row_index}")
+        # Debug output.
+        print(f"Row matched in file: {os.path.basename(file_path)}, sheet: {sheet_name}, row: {row_index}")
 
-        # Create or get the file-level item.
+        # Create or get file-level node.
         file_key = file_path
         if file_key not in self.file_items:
             file_item = QTreeWidgetItem([os.path.basename(file_path), "", ""])
-            # Store the file path in the file item (for later use on double-click)
-            file_item.setData(0, Qt.UserRole, file_path)
+            file_item.setData(0, Qt.UserRole, file_path)  # Store full file path.
             self.file_items[file_key] = file_item
             self.result_tree.addTopLevelItem(file_item)
         else:
             file_item = self.file_items[file_key]
 
-        # Create or get the sheet-level item.
+        # Create or get sheet-level node.
         sheet_key = (file_path, sheet_name)
         if sheet_key not in self.sheet_items:
             sheet_item = QTreeWidgetItem(["", sheet_name, ""])
@@ -247,14 +217,13 @@ class ExcelSearchApp(QMainWindow):
         else:
             sheet_item = self.sheet_items[sheet_key]
 
-        # Create the row-level item. The text shows the row number.
+        # Create the row-level node.
         row_item = QTreeWidgetItem(["", "", f"Row {row_index}"])
-        # Save the entire row data into the item (for detail view).
-        row_item.setData(0, Qt.UserRole + 1, row_data)
+        row_item.setData(0, Qt.UserRole + 1, row_data)  # Store entire row data.
         sheet_item.addChild(row_item)
 
     def search_finished(self):
-        print("DEBUG: Search finished.")
+        print("Search finished.")
         self.search_button.setEnabled(True)
         self.result_tree.expandAll()
 
@@ -262,18 +231,39 @@ class ExcelSearchApp(QMainWindow):
         selected_items = self.result_tree.selectedItems()
         if not selected_items:
             return
+
         item = selected_items[0]
-        # Check if this item has row data (stored under UserRole+1).
         row_data = item.data(0, Qt.UserRole + 1)
-        if row_data:
+        
+        # If this is a row-level node, show its individual details.
+        if row_data is not None:
             columns, values = row_data
             self.show_detail(columns, values)
+        # If it's a sheet-level node (child of a file-level node)...
+        elif item.parent() is not None:
+            # Get the sheet name from column 1.
+            sheet_name = item.text(1)
+            print(f"Aggregating all rows for sheet: {sheet_name}")
+            aggregated_records = []
+            # Iterate over all sheet_items; if sheet name matches, gather their rows.
+            for (file_path, s_name), sheet_item in self.sheet_items.items():
+                if s_name == sheet_name:
+                    for i in range(sheet_item.childCount()):
+                        row_item = sheet_item.child(i)
+                        r_data = row_item.data(0, Qt.UserRole + 1)
+                        if r_data is not None:
+                            # Extract row number from the row-level node text.
+                            row_text = row_item.text(2)
+                            aggregated_records.append((os.path.basename(file_path), row_text, r_data[0], r_data[1]))
+            self.show_aggregated_detail(aggregated_records)
         else:
+            # For file-level nodes, clear the detail view.
             self.detail_table.clear()
             self.detail_table.setRowCount(0)
             self.detail_table.setColumnCount(0)
 
     def show_detail(self, columns, values):
+        # Display a single row's detail.
         self.detail_table.clear()
         self.detail_table.setColumnCount(len(columns))
         self.detail_table.setRowCount(1)
@@ -283,8 +273,35 @@ class ExcelSearchApp(QMainWindow):
             self.detail_table.setItem(0, col, item)
         self.detail_table.resizeColumnsToContents()
 
+    def show_aggregated_detail(self, aggregated_records):
+        """
+        Display aggregated rows from multiple Excel files for a given sheet name.
+        Each record is a tuple: (Source, Row, columns, values)
+        """
+        self.detail_table.clear()
+        if not aggregated_records:
+            self.detail_table.setRowCount(0)
+            self.detail_table.setColumnCount(0)
+            return
+
+        # Assume the columns from the first record represent the common columns.
+        common_columns = aggregated_records[0][2]
+        headers = ["Source", "Row"] + common_columns
+        self.detail_table.setColumnCount(len(headers))
+        self.detail_table.setHorizontalHeaderLabels(headers)
+        self.detail_table.setRowCount(len(aggregated_records))
+        
+        for row_index, record in enumerate(aggregated_records):
+            source, row_text, cols, values = record
+            self.detail_table.setItem(row_index, 0, QTableWidgetItem(source))
+            self.detail_table.setItem(row_index, 1, QTableWidgetItem(row_text))
+            for col_index, value in enumerate(values):
+                self.detail_table.setItem(row_index, 2 + col_index, QTableWidgetItem(str(value)))
+        
+        self.detail_table.resizeColumnsToContents()
+
     def on_item_double_clicked(self, item, column):
-        # If a file-level item is double-clicked, try to open the file.
+        # If a file-level node is double-clicked, open the file.
         if item.parent() is None:
             file_path = item.data(0, Qt.UserRole)
             if file_path:
@@ -299,7 +316,7 @@ class ExcelSearchApp(QMainWindow):
             else:
                 subprocess.call(('xdg-open', file_path))
         except Exception as e:
-            print(f"ERROR: Could not open file {file_path}: {e}")
+            print(f"Error opening file {file_path}: {e}")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
