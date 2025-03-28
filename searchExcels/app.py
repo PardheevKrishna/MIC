@@ -11,6 +11,9 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from rapidfuzz import fuzz
 import subprocess
 
+# Set this to True to enable debug print statements.
+DEBUG = True
+
 # Worker thread to process Excel files asynchronously.
 class SearchWorker(QThread):
     # Signal to emit when a row match is found.
@@ -22,39 +25,54 @@ class SearchWorker(QThread):
         super().__init__(parent)
         self.folder_path = folder_path
         self.search_term = search_term.strip()
-    
+        self.search_term_lower = self.search_term.lower()  # Lowercase once for reuse
+
     def run(self):
+        if DEBUG:
+            print(f"DEBUG: Search started for term: {self.search_term}")
+
         # Get list of Excel files (.xlsx and .xls)
         file_list = glob.glob(os.path.join(self.folder_path, "*.xlsx")) + \
                     glob.glob(os.path.join(self.folder_path, "*.xls"))
+        if DEBUG:
+            print(f"DEBUG: Found {len(file_list)} files in folder: {self.folder_path}")
         
         for file_path in file_list:
+            if DEBUG:
+                print(f"DEBUG: Reading file: {file_path}")
             try:
                 # Load all sheets as a dictionary {sheet_name: DataFrame}
                 sheets = pd.read_excel(file_path, sheet_name=None)
             except Exception as e:
-                print(f"Error reading {file_path}: {e}")
+                print(f"ERROR: Could not read {file_path}: {e}")
                 continue
 
             # Process each sheet
             for sheet_name, df in sheets.items():
+                if DEBUG:
+                    print(f"DEBUG: Processing sheet: {sheet_name} in file: {file_path}")
                 # Iterate over each row of the DataFrame
                 for idx, row in df.iterrows():
                     row_matched = False
-                    # Check every cell in the row
+                    # Check every cell in the row for a fuzzy match.
                     for col in df.columns:
                         cell_value = row[col]
                         if pd.isna(cell_value):
                             continue
                         cell_str = str(cell_value)
-                        similarity = fuzz.ratio(self.search_term.lower(), cell_str.lower())
+                        similarity = fuzz.ratio(self.search_term_lower, cell_str.lower())
                         if similarity >= 80:
                             row_matched = True
-                            break  # Once one cell qualifies, we mark the entire row
+                            break  # Once one cell qualifies, mark the entire row as matched.
                     if row_matched:
                         # Save entire row data as a tuple: (columns, values)
                         row_data = (df.columns.tolist(), row.tolist())
+                        if DEBUG:
+                            print(f"DEBUG: Match found in file: {os.path.basename(file_path)}, sheet: {sheet_name}, row: {idx}")
                         self.resultFound.emit(file_path, sheet_name, idx, row_data)
+
+        if DEBUG:
+            print("DEBUG: Search completed.")
         self.finished.emit()
 
 
@@ -173,12 +191,18 @@ class ExcelSearchApp(QMainWindow):
         if folder:
             self.folder_path = folder
             self.folder_label.setText(f"Folder: {folder}")
+            if DEBUG:
+                print(f"DEBUG: Folder selected: {folder}")
 
     def start_search(self):
         search_term = self.search_input.text().strip()
         if not search_term:
+            if DEBUG:
+                print("DEBUG: No search term entered.")
             return
         if not self.folder_path:
+            if DEBUG:
+                print("DEBUG: No folder selected.")
             return
 
         # Clear previous results
@@ -189,6 +213,8 @@ class ExcelSearchApp(QMainWindow):
 
         # Disable search button while processing.
         self.search_button.setEnabled(False)
+        if DEBUG:
+            print("DEBUG: Starting search...")
 
         # Create and start the worker thread.
         self.worker = SearchWorker(self.folder_path, search_term)
@@ -199,6 +225,7 @@ class ExcelSearchApp(QMainWindow):
     def handle_result(self, file_path, sheet_name, row_index, row_data):
         # file_path: full file path
         # row_data: tuple (columns, values)
+        print(f"DEBUG: Match found - File: {os.path.basename(file_path)}, Sheet: {sheet_name}, Row: {row_index}")
 
         # Create or get the file-level item.
         file_key = file_path
@@ -227,6 +254,7 @@ class ExcelSearchApp(QMainWindow):
         sheet_item.addChild(row_item)
 
     def search_finished(self):
+        print("DEBUG: Search finished.")
         self.search_button.setEnabled(True)
         self.result_tree.expandAll()
 
@@ -263,7 +291,6 @@ class ExcelSearchApp(QMainWindow):
                 self.open_file(file_path)
 
     def open_file(self, file_path):
-        # Platform-dependent: os.startfile works on Windows.
         try:
             if sys.platform.startswith('win'):
                 os.startfile(file_path)
@@ -272,7 +299,7 @@ class ExcelSearchApp(QMainWindow):
             else:
                 subprocess.call(('xdg-open', file_path))
         except Exception as e:
-            print(f"Error opening file {file_path}: {e}")
+            print(f"ERROR: Could not open file {file_path}: {e}")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
