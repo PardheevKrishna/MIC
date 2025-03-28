@@ -112,17 +112,22 @@ class ExcelSearchApp(QMainWindow):
         # Page 0: Single-row detail table.
         self.detail_table = QTableWidget()
         self.detail_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        # Set dark background on the detail table.
+        self.detail_table.setStyleSheet("background-color: #27293d; color: #ffffff;")
         self.detail_stack.addWidget(self.detail_table)
 
         # Page 1: Aggregated detail view using a scroll area.
         self.detail_scroll = QScrollArea()
         self.detail_scroll.setWidgetResizable(True)
+        # Set dark background on the scroll area.
+        self.detail_scroll.setStyleSheet("background-color: #27293d;")
         self.detail_container = QWidget()
+        self.detail_container.setStyleSheet("background-color: #27293d;")
         self.detail_layout = QVBoxLayout(self.detail_container)
         self.detail_scroll.setWidget(self.detail_container)
         self.detail_stack.addWidget(self.detail_scroll)
 
-        # Use modern styling.
+        # Modern styling.
         self.setStyleSheet("""
             QMainWindow { background-color: #1e1e2f; font-family: 'Segoe UI', sans-serif; }
             QLabel { font-size: 14px; color: #ffffff; }
@@ -150,7 +155,6 @@ class ExcelSearchApp(QMainWindow):
         if not search_term or not self.folder_path:
             return
         self.result_tree.clear()
-        # Clear both detail views.
         self.detail_table.clear()
         self.clear_detail_container()
         self.file_items.clear()
@@ -171,7 +175,6 @@ class ExcelSearchApp(QMainWindow):
             self.result_tree.addTopLevelItem(file_item)
         else:
             file_item = self.file_items[file_key]
-
         sheet_key = (file_path, sheet_name)
         if sheet_key not in self.sheet_items:
             sheet_item = QTreeWidgetItem(["", sheet_name, ""])
@@ -179,7 +182,6 @@ class ExcelSearchApp(QMainWindow):
             file_item.addChild(sheet_item)
         else:
             sheet_item = self.sheet_items[sheet_key]
-
         row_item = QTreeWidgetItem(["", "", f"Row {row_index}"])
         row_item.setData(0, Qt.UserRole + 1, row_data)
         sheet_item.addChild(row_item)
@@ -196,12 +198,10 @@ class ExcelSearchApp(QMainWindow):
         item = selected_items[0]
         row_data = item.data(0, Qt.UserRole + 1)
         if row_data is not None:
-            # Single row detail: show in detail_table (Page 0).
             columns, values = row_data
             self.show_single_detail(columns, values)
             self.detail_stack.setCurrentIndex(0)
         elif item.parent() is not None:
-            # Aggregated detail for sheet-level node.
             sheet_name = item.text(1)
             print(f"Aggregating rows for sheet: {sheet_name}")
             aggregated_records = []
@@ -229,7 +229,6 @@ class ExcelSearchApp(QMainWindow):
         self.detail_table.resizeColumnsToContents()
 
     def clear_detail_container(self):
-        # Remove all widgets from the container.
         while self.detail_layout.count():
             child = self.detail_layout.takeAt(0)
             if child.widget():
@@ -237,16 +236,14 @@ class ExcelSearchApp(QMainWindow):
 
     def show_aggregated_detail(self, aggregated_records):
         """
-        Group aggregated records by source (file). For each group:
-          - Create a QTableWidget that shows the sheet's column headers and all matching rows.
-          - Add a QLabel above the table with the file name.
-          - Stack these tables vertically inside the detail container.
+        Group aggregated records by source (file). For each group, create a table
+        that shows the sheet's column headers and all matching rows.
+        The tables are stacked vertically in the detail container.
         """
         self.clear_detail_container()
         if not aggregated_records:
             return
 
-        # Group records by source.
         groups = {}
         for record in aggregated_records:
             source, row_text, cols, values = record
@@ -254,25 +251,22 @@ class ExcelSearchApp(QMainWindow):
 
         for source in sorted(groups.keys()):
             group_rows = groups[source]
-            # Assume all rows in a group have the same columns.
             header_cols = group_rows[0][1]
-            # Create a label for the source.
             source_label = QLabel(f"<b>File: {source}</b>")
             source_label.setStyleSheet("color: #ffffff; margin-top: 10px;")
             self.detail_layout.addWidget(source_label)
-            # Create a table.
             table = QTableWidget()
             table.setEditTriggers(QTableWidget.NoEditTriggers)
             table.setColumnCount(len(header_cols))
             table.setHorizontalHeaderLabels(header_cols)
             table.setRowCount(len(group_rows))
+            # Set table style to dark.
+            table.setStyleSheet("background-color: #27293d; color: #ffffff;")
             for i, (row_text, cols, values) in enumerate(group_rows):
-                # Fill each row.
                 for j, val in enumerate(values):
                     table.setItem(i, j, QTableWidgetItem(str(val)))
             table.resizeColumnsToContents()
             self.detail_layout.addWidget(table)
-        # Add stretch at the end.
         self.detail_layout.addStretch()
 
     def on_item_double_clicked(self, item, column):
