@@ -14,6 +14,7 @@ import subprocess
 # Worker thread to process Excel files asynchronously.
 class SearchWorker(QThread):
     # Signal to emit when a row match is found.
+    # It sends: file_path, sheet_name, row_index, row_data (tuple: (columns, values))
     resultFound = pyqtSignal(str, str, int, object)
     finished = pyqtSignal()
     
@@ -276,7 +277,7 @@ class ExcelSearchApp(QMainWindow):
         """
         Display aggregated rows from multiple Excel files for a given sheet name.
         Each record is a tuple: (Source, Row, columns, values)
-        This version shows all rows one below the other, with each file's data.
+        This version shows each record in one row with details in a single multi-line cell.
         """
         self.detail_table.clear()
         if not aggregated_records:
@@ -284,14 +285,7 @@ class ExcelSearchApp(QMainWindow):
             self.detail_table.setColumnCount(0)
             return
 
-        # Create headers: Source, Row, then each sheet's columns.
-        headers = ["Source", "Row"]
-        for record in aggregated_records:
-            cols = record[2]
-            for col in cols:
-                if col not in headers:
-                    headers.append(col)
-
+        headers = ["Source", "Row", "Details"]
         self.detail_table.setColumnCount(len(headers))
         self.detail_table.setHorizontalHeaderLabels(headers)
         self.detail_table.setRowCount(len(aggregated_records))
@@ -300,10 +294,12 @@ class ExcelSearchApp(QMainWindow):
             source, row_text, cols, values = record
             self.detail_table.setItem(row_index, 0, QTableWidgetItem(source))
             self.detail_table.setItem(row_index, 1, QTableWidgetItem(row_text))
-            row_dict = dict(zip(cols, values))
-            for col_index, col in enumerate(cols):
-                column_index = headers.index(col)  # Get the column index dynamically
-                self.detail_table.setItem(row_index, column_index, QTableWidgetItem(str(row_dict.get(col, ""))))
+            # Build a multi-line string with each column-value pair on a new line.
+            detail_lines = []
+            for col, value in zip(cols, values):
+                detail_lines.append(f"{col}: {value}")
+            details_str = "\n".join(detail_lines)
+            self.detail_table.setItem(row_index, 2, QTableWidgetItem(details_str))
 
         self.detail_table.resizeColumnsToContents()
 
