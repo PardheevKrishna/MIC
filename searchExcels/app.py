@@ -2,7 +2,7 @@ import sys
 import os
 import glob
 import pandas as pd
-import textwrap
+import subprocess
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QTreeWidget, QTreeWidgetItem, QLabel,
@@ -11,7 +11,10 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from rapidfuzz import fuzz
-import subprocess
+
+# Helper function to insert newline characters every 'width' characters.
+def wrap_text(text, width=250):
+    return "\n".join(text[i:i+width] for i in range(0, len(text), width))
 
 # Worker thread to process Excel files asynchronously.
 class SearchWorker(QThread):
@@ -43,14 +46,19 @@ class SearchWorker(QThread):
                 print(f"Processing sheet: {sheet_name} in file: {os.path.basename(file_path)}")
                 for idx, row in df.iterrows():
                     row_matched = False
+                    # Check every cell: split the cell text into words and compare each word.
                     for col in df.columns:
                         cell_value = row[col]
                         if pd.isna(cell_value):
                             continue
                         cell_str = str(cell_value)
-                        similarity = fuzz.ratio(self.search_term_lower, cell_str.lower())
-                        if similarity >= 80:
-                            row_matched = True
+                        words = cell_str.split()
+                        for word in words:
+                            similarity = fuzz.ratio(self.search_term_lower, word.lower())
+                            if similarity >= 80:
+                                row_matched = True
+                                break
+                        if row_matched:
                             break
                     if row_matched:
                         row_data = (df.columns.tolist(), row.tolist())
@@ -227,7 +235,6 @@ class ExcelSearchApp(QMainWindow):
         self.detail_table.setColumnCount(len(columns))
         self.detail_table.setRowCount(1)
         self.detail_table.setHorizontalHeaderLabels(columns)
-        # Note: Corrected index order: row, then column.
         for col, val in enumerate(values):
             self.detail_table.setItem(0, col, QTableWidgetItem(str(val)))
         self.detail_table.resizeColumnsToContents()
@@ -279,8 +286,8 @@ class ExcelSearchApp(QMainWindow):
           - Corporate Finance Submission Field Description
           - Transformation/Business Logic
         The first column will be the Excel file name (Source).
-        If any cell's text exceeds 250 characters, newlines are inserted at that width,
-        and row heights are automatically adjusted so that the text wraps.
+        If any cell's text exceeds 250 characters, newline characters are inserted dynamically
+        after every 250 characters, and row heights are automatically adjusted so that the text wraps.
         """
         self.clear_detail_container()
         if not aggregated_records:
@@ -300,8 +307,6 @@ class ExcelSearchApp(QMainWindow):
         table.setHorizontalHeaderLabels(headers)
         table.setRowCount(len(aggregated_records))
         table.setStyleSheet("background-color: #27293d; color: #ffffff;")
-        
-        # Enable word wrap (although we'll insert newlines manually if needed).
         table.setWordWrap(True)
         
         for i, record in enumerate(aggregated_records):
@@ -310,9 +315,9 @@ class ExcelSearchApp(QMainWindow):
             table.setItem(i, 0, QTableWidgetItem(source))
             for j, col in enumerate(required_cols):
                 cell_val = str(row_dict.get(col, ""))
-                # If cell text is longer than 250 characters, insert newline breaks.
+                # Insert newline characters dynamically after every 250 characters.
                 if len(cell_val) > 250:
-                    wrapped_val = textwrap.fill(cell_val, width=250)
+                    wrapped_val = "\n".join(cell_val[k:k+250] for k in range(0, len(cell_val), 250))
                 else:
                     wrapped_val = cell_val
                 table.setItem(i, j+1, QTableWidgetItem(wrapped_val))
