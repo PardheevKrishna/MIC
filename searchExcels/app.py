@@ -2,7 +2,7 @@ import sys
 import os
 import glob
 import pandas as pd
-import textwrap
+import textwrap  # Not used for wrapping now
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QTreeWidget, QTreeWidgetItem, QLabel,
@@ -212,7 +212,7 @@ class ExcelSearchApp(QMainWindow):
                         if r_data is not None:
                             row_text = row_item.text(2)
                             aggregated_records.append((os.path.basename(file_path), row_text, r_data[0], r_data[1]))
-            # If the sheet is "1. Data Dictionary", use the new detail view.
+            # For "1. Data Dictionary" use the custom view.
             if sheet_name == "1. Data Dictionary":
                 self.show_data_dictionary_detail(aggregated_records)
             else:
@@ -228,7 +228,7 @@ class ExcelSearchApp(QMainWindow):
         self.detail_table.setRowCount(1)
         self.detail_table.setHorizontalHeaderLabels(columns)
         for col, val in enumerate(values):
-            self.detail_table.setItem(0, col, QTableWidgetItem(str(val)))
+            self.detail_table.setItem(col, 0, QTableWidgetItem(str(val)))
         self.detail_table.resizeColumnsToContents()
 
     def clear_detail_container(self):
@@ -278,7 +278,8 @@ class ExcelSearchApp(QMainWindow):
           - Corporate Finance Submission Field Description
           - Transformation/Business Logic
         The first column will be the Excel file name (Source).
-        Text is wrapped (using a fixed width of 50 characters) for better readability.
+        The QTableWidget is configured with word wrap enabled and row heights
+        are automatically resized so that long text wraps onto new lines.
         """
         self.clear_detail_container()
         if not aggregated_records:
@@ -291,24 +292,28 @@ class ExcelSearchApp(QMainWindow):
         ]
         headers = ["Source"] + required_cols
 
-        # Combine all records into one table.
+        # Create a single table for all aggregated records.
         table = QTableWidget()
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setColumnCount(len(headers))
         table.setHorizontalHeaderLabels(headers)
         table.setRowCount(len(aggregated_records))
         table.setStyleSheet("background-color: #27293d; color: #ffffff;")
+        
+        # Enable word wrap.
+        table.setWordWrap(True)
+        
         for i, record in enumerate(aggregated_records):
             source, row_text, cols, values = record
             row_dict = dict(zip(cols, values))
             table.setItem(i, 0, QTableWidgetItem(source))
             for j, col in enumerate(required_cols):
-                # Get the cell value if available, else blank.
                 cell_val = row_dict.get(col, "")
-                # Wrap the text using textwrap.fill.
-                wrapped_val = textwrap.fill(str(cell_val), width=50)
-                table.setItem(i, j+1, QTableWidgetItem(wrapped_val))
+                table.setItem(i, j+1, QTableWidgetItem(str(cell_val)))
+        
         table.resizeColumnsToContents()
+        table.resizeRowsToContents()  # Adjust row heights to show wrapped text
+        
         self.detail_layout.addWidget(table)
         self.detail_layout.addStretch()
 
