@@ -2,7 +2,7 @@ import sys
 import os
 import glob
 import pandas as pd
-import textwrap  # Not used for wrapping now
+import textwrap
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QTreeWidget, QTreeWidgetItem, QLabel,
@@ -212,7 +212,7 @@ class ExcelSearchApp(QMainWindow):
                         if r_data is not None:
                             row_text = row_item.text(2)
                             aggregated_records.append((os.path.basename(file_path), row_text, r_data[0], r_data[1]))
-            # For "1. Data Dictionary" use the custom view.
+            # For "1. Data Dictionary", use the custom view.
             if sheet_name == "1. Data Dictionary":
                 self.show_data_dictionary_detail(aggregated_records)
             else:
@@ -227,8 +227,9 @@ class ExcelSearchApp(QMainWindow):
         self.detail_table.setColumnCount(len(columns))
         self.detail_table.setRowCount(1)
         self.detail_table.setHorizontalHeaderLabels(columns)
+        # Note: Corrected index order: row, then column.
         for col, val in enumerate(values):
-            self.detail_table.setItem(col, 0, QTableWidgetItem(str(val)))
+            self.detail_table.setItem(0, col, QTableWidgetItem(str(val)))
         self.detail_table.resizeColumnsToContents()
 
     def clear_detail_container(self):
@@ -278,8 +279,8 @@ class ExcelSearchApp(QMainWindow):
           - Corporate Finance Submission Field Description
           - Transformation/Business Logic
         The first column will be the Excel file name (Source).
-        The QTableWidget is configured with word wrap enabled and row heights
-        are automatically resized so that long text wraps onto new lines.
+        If any cell's text exceeds 250 characters, newlines are inserted at that width,
+        and row heights are automatically adjusted so that the text wraps.
         """
         self.clear_detail_container()
         if not aggregated_records:
@@ -300,7 +301,7 @@ class ExcelSearchApp(QMainWindow):
         table.setRowCount(len(aggregated_records))
         table.setStyleSheet("background-color: #27293d; color: #ffffff;")
         
-        # Enable word wrap.
+        # Enable word wrap (although we'll insert newlines manually if needed).
         table.setWordWrap(True)
         
         for i, record in enumerate(aggregated_records):
@@ -308,12 +309,16 @@ class ExcelSearchApp(QMainWindow):
             row_dict = dict(zip(cols, values))
             table.setItem(i, 0, QTableWidgetItem(source))
             for j, col in enumerate(required_cols):
-                cell_val = row_dict.get(col, "")
-                table.setItem(i, j+1, QTableWidgetItem(str(cell_val)))
+                cell_val = str(row_dict.get(col, ""))
+                # If cell text is longer than 250 characters, insert newline breaks.
+                if len(cell_val) > 250:
+                    wrapped_val = textwrap.fill(cell_val, width=250)
+                else:
+                    wrapped_val = cell_val
+                table.setItem(i, j+1, QTableWidgetItem(wrapped_val))
         
         table.resizeColumnsToContents()
         table.resizeRowsToContents()  # Adjust row heights to show wrapped text
-        
         self.detail_layout.addWidget(table)
         self.detail_layout.addStretch()
 
