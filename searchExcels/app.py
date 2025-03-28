@@ -13,7 +13,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from rapidfuzz import fuzz
 
 # Helper function to insert newline characters every 'width' characters.
-def wrap_text(text, width=250):
+def wrap_text(text, width=100):
     return "\n".join(text[i:i+width] for i in range(0, len(text), width))
 
 # Worker thread to process Excel files asynchronously.
@@ -46,7 +46,7 @@ class SearchWorker(QThread):
                 print(f"Processing sheet: {sheet_name} in file: {os.path.basename(file_path)}")
                 for idx, row in df.iterrows():
                     row_matched = False
-                    # Check every cell: split the cell text into words and compare each word.
+                    # For each cell, split into words and compare each word.
                     for col in df.columns:
                         cell_value = row[col]
                         if pd.isna(cell_value):
@@ -286,8 +286,10 @@ class ExcelSearchApp(QMainWindow):
           - Corporate Finance Submission Field Description
           - Transformation/Business Logic
         The first column will be the Excel file name (Source).
-        If any cell's text exceeds 250 characters, newline characters are inserted dynamically
-        after every 250 characters, and row heights are automatically adjusted so that the text wraps.
+        If any cell's text exceeds 100 characters, newline characters are inserted dynamically
+        after every 100 characters, and row heights are automatically adjusted so that the text wraps.
+        Additionally, the header for the second column is set to include a newline
+        so it displays as "Corporate Finance Submission\nField Description".
         """
         self.clear_detail_container()
         if not aggregated_records:
@@ -295,10 +297,20 @@ class ExcelSearchApp(QMainWindow):
 
         required_cols = [
             "CorporateFinanceSubmissionFieldName",
-            "Corporate Finance Submission Field Description",
+            "Corporate Finance Submission Field Description",  # We'll modify header text below.
             "Transformation/Business Logic"
         ]
-        headers = ["Source"] + required_cols
+        # Set the header for the second column with an explicit newline.
+        headers = ["Source", "Corporate Finance Submission\nField Description"] + [required_cols[0], required_cols[2]]
+        # Note: Rearranging headers so that required columns order is:
+        # Source, (modified second header), first column, third column.
+        # If you need a different order, adjust accordingly.
+        # For this example, let's assume the required order is:
+        # Source, CorporateFinanceSubmissionFieldName, Corporate Finance Submission Field Description, Transformation/Business Logic.
+        headers = ["Source", 
+                   "CorporateFinanceSubmissionFieldName", 
+                   "Corporate Finance Submission\nField Description", 
+                   "Transformation/Business Logic"]
 
         # Create a single table for all aggregated records.
         table = QTableWidget()
@@ -313,13 +325,17 @@ class ExcelSearchApp(QMainWindow):
             source, row_text, cols, values = record
             row_dict = dict(zip(cols, values))
             table.setItem(i, 0, QTableWidgetItem(source))
+            # For each required column, wrap text dynamically after every 100 characters.
             for j, col in enumerate(required_cols):
                 cell_val = str(row_dict.get(col, ""))
-                # Insert newline characters dynamically after every 250 characters.
-                if len(cell_val) > 250:
-                    wrapped_val = "\n".join(cell_val[k:k+250] for k in range(0, len(cell_val), 250))
+                if len(cell_val) > 100:
+                    wrapped_val = "\n".join(cell_val[k:k+100] for k in range(0, len(cell_val), 100))
                 else:
                     wrapped_val = cell_val
+                # Place the cell value in the appropriate column.
+                # Mapping: column 1: CorporateFinanceSubmissionFieldName,
+                # column 2: Corporate Finance Submission\nField Description,
+                # column 3: Transformation/Business Logic.
                 table.setItem(i, j+1, QTableWidgetItem(wrapped_val))
         
         table.resizeColumnsToContents()
