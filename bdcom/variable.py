@@ -20,7 +20,7 @@ def extract_sas_variables(sas_code):
     # Extract potential SAS identifiers
     tokens = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', cleaned_code)
     
-    # Exclusions: SAS reserved keywords, functions, etc.
+    # Exclusions: SAS reserved keywords, functions, etc. (but we will keep variables like 'Delete')
     sas_exclusions = {
         "DATA", "SET", "MERGE", "UPDATE", "BY", "IF", "THEN", "ELSE", "ELSEIF", "DO", "END", "OUTPUT",
         "DROP", "KEEP", "RENAME", "LABEL", "FORMAT", "INFORMAT", "LENGTH", "ATTRIB", "ARRAY", "RETAIN",
@@ -30,6 +30,7 @@ def extract_sas_variables(sas_code):
     }
     
     variables = {token for token in tokens if token.upper() not in sas_exclusions}
+    
     return variables
 
 def update_sql_with_variables(sql_code, extracted_vars):
@@ -136,7 +137,7 @@ sql_df['new_sql_code'] = new_sql_code_list
 sql_df['sas_code'] = sas_code_list
 
 # Save the updated DataFrame to a new Excel file.
-output_filename = 'updated_sql_file_with_variables_v2.xlsx'
+output_filename = 'updated_sql_file_with_variables_v3.xlsx'
 with pd.ExcelWriter(output_filename) as writer:
     sql_df.to_excel(writer, sheet_name='Data', index=False)
 
