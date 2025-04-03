@@ -1,21 +1,23 @@
 import pandas as pd
 import re
 
-# Function to extract SAS variables from SAS code
 def extract_sas_variables(sas_code):
-    # Check if sas_code is a string. If it's not, return an empty set
+    """
+    Extract SAS variable names from a given SAS code string.
+    Non-string inputs return an empty set.
+    """
     if not isinstance(sas_code, str):
         return set()
-
-    # Remove quoted strings
+    
+    # Remove various quoted strings (standard and smart quotes)
     cleaned_code = re.sub(r'["\'].+?["\']', '', sas_code)
     cleaned_code = re.sub(r'[\u2018].+?[\u2019]', '', cleaned_code)
     cleaned_code = re.sub(r'[\u201C].+?[\u201D]', '', cleaned_code)
     
-    # Extract SAS variable names
+    # Extract potential SAS identifiers
     tokens = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', cleaned_code)
     
-    # SAS reserved keywords and functions
+    # Exclude common SAS reserved words, functions, etc.
     sas_exclusions = {
         "DATA", "SET", "MERGE", "UPDATE", "BY", "IF", "THEN", "ELSE", "ELSEIF", "DO", "END", "OUTPUT",
         "DROP", "KEEP", "RENAME", "LABEL", "FORMAT", "INFORMAT", "LENGTH", "ATTRIB", "ARRAY", "RETAIN",
@@ -24,71 +26,61 @@ def extract_sas_variables(sas_code):
         # Add more exclusions as needed...
     }
     
-    # Filter out exclusions
     variables = {token for token in tokens if token.upper() not in sas_exclusions}
-    
     return variables
 
-# Load both Excel files
+# Load the Excel files (ensure the file paths are correct)
 derivation_df = pd.read_excel('data derivation.xlsx', sheet_name='2.  First Mortgage File')
 sql_df = pd.read_excel('myexcel.xlsx', sheet_name='Data')
 
-# Process the derivation sheet to extract variables and source fields
+# Group rows by business name (the variable name) so we can concatenate SAS code and collect source fields
 variable_to_source_map = {}
 
-# Handle grouped SAS code (grouping by business name)
-current_variable_name = None
-sas_code_group = ""
+# Group by the business name column; drop rows where the business name is missing
+grouped = derivation_df.groupby('Variable Name\n(Business Name)', dropna=True)
 
-# Process the rows from the derivation file
-for i, row in derivation_df.iterrows():
-    variable_name = row['Variable Name\n(Business Name)']
-    sas_code = row['Logic to Populate FR Y-14M Field']
-    source_fields = row['CLRTY/Source Fields Used'].splitlines()
+for var_name, group in grouped:
+    # Concatenate all SAS code rows for this business name into one block
+    sas_code_block = " ".join(group['Logic to Populate FR Y-14M Field'].astype(str).tolist())
+    sas_vars = extract_sas_variables(sas_code_block)
     
-    # If the variable name changes, process the previous block
-    if variable_name != current_variable_name:
-        if current_variable_name is not None:
-            # Process the previous variable's group
-            sas_vars = extract_sas_variables(sas_code_group)
-            combined_vars = set(source_fields) | sas_vars  # Union of source fields and extracted variables
-            variable_to_source_map[current_variable_name] = combined_vars
-        # Reset for new variable name
-        sas_code_group = sas_code
-        current_variable_name = variable_name
-    else:
-        # If the variable name is the same, append the SAS code
-        sas_code_group += " " + str(sas_code)
+    # Collect all manually provided source fields from each row; skip non-string values
+    source_fields_set = set()
+    for val in group['CLRTY/Source Fields Used']:
+        if isinstance(val, str):
+            # In case there are multiple lines in one cell, split them; otherwise, add the value directly.
+            for field in val.splitlines():
+                field = field.strip()
+                if field:
+                    source_fields_set.add(field)
+    
+    # Combine the extracted SAS variables with the manually provided source fields
+    combined_vars = source_fields_set | sas_vars
+    variable_to_source_map[var_name] = combined_vars
 
-# Process the last group (after the loop ends)
-if current_variable_name is not None:
-    sas_vars = extract_sas_variables(sas_code_group)
-    combined_vars = set(source_fields) | sas_vars  # Union of source fields and extracted variables
-    variable_to_source_map[current_variable_name] = combined_vars
-
-# Process the SQL logic in 'myexcel.xlsx' and update the 'value_sql_logic' with the source variables
+# Now update the SQL logic in the SQL file based on the variable-to-source mapping.
 updated_sql_logic = []
-
 for i, row in sql_df.iterrows():
     sql_code = row['value_sql_logic']
     field_name = row['field_name']
     
-    # Replace \r, \t, \n with appropriate SQL formatting
-    sql_code = sql_code.replace(r'\r', ' ')  # Adjusting return characters to space
-    sql_code = sql_code.replace(r'\t', ' ')  # Adjusting tab characters
-    sql_code = sql_code.replace(r'\n', '\n')  # Keeping newline for better readability
-
-    # Append the relevant source variables under the SELECT clause for the matching field_name
+    # Replace escape characters for proper formatting
+    sql_code = sql_code.replace(r'\r', ' ')
+    sql_code = sql_code.replace(r'\t', ' ')
+    sql_code = sql_code.replace(r'\n', '\n')
+    
+    # If a matching business name exists, append its source variables to the SELECT clause.
+    # Here we assume that the business name (field_name) in myexcel.xlsx is in uppercase with no spaces.
     if field_name in variable_to_source_map:
-        new_select_clause = "\n".join(f"  {var}," for var in variable_to_source_map[field_name])
-        sql_code = sql_code.replace("SELECT", f"SELECT\n{new_select_clause}", 1)
+        select_vars = "\n".join(f"  {var}," for var in variable_to_source_map[field_name])
+        # Insert the source variables right after the SELECT keyword.
+        sql_code = sql_code.replace("SELECT", f"SELECT\n{select_vars}", 1)
     
     updated_sql_logic.append(sql_code)
 
-# Update the SQL dataframe with the new SQL logic
+# Update the DataFrame and save to a new Excel file.
 sql_df['value_sql_logic'] = updated_sql_logic
 
-# Save the updated DataFrame into a new Excel file
 with pd.ExcelWriter('updated_sql_file.xlsx') as writer:
     sql_df.to_excel(writer, sheet_name='Data', index=False)
 
