@@ -1,86 +1,76 @@
+import pandas as pd
+import openpyxl
 import re
 
+# Function to extract SAS variables from SAS code
 def extract_sas_variables(sas_code):
-    # Step 1: Remove quoted strings using three substitutions.
-    # Remove standard quoted strings: e.g., "LOAN" or 'LOAN'
+    # Remove quoted strings
     cleaned_code = re.sub(r'["\'].+?["\']', '', sas_code)
-    # Remove smart single-quoted strings: e.g., ‘LOAN’ 
     cleaned_code = re.sub(r'[\u2018].+?[\u2019]', '', cleaned_code)
-    # Remove smart double-quoted strings: e.g., “LOAN”
     cleaned_code = re.sub(r'[\u201C].+?[\u201D]', '', cleaned_code)
     
-    # Step 2: Extract tokens that look like SAS identifiers.
-    # SAS variable names usually start with a letter or underscore and can contain letters, digits, or underscores.
+    # Extract SAS variable names
     tokens = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', cleaned_code)
     
-    # Step 3: Exclude known SAS reserved words, built-in functions, macro keywords, automatic variables,
-    # procedure names/options, and common logical operators.
+    # SAS reserved keywords and functions
     sas_exclusions = {
-        # SAS Reserved Keywords
         "DATA", "SET", "MERGE", "UPDATE", "BY", "IF", "THEN", "ELSE", "ELSEIF", "DO", "END", "OUTPUT",
         "DROP", "KEEP", "RENAME", "LABEL", "FORMAT", "INFORMAT", "LENGTH", "ATTRIB", "ARRAY", "RETAIN",
         "RUN", "QUIT", "LIBNAME", "FILENAME", "OPTIONS", "TITLE", "FOOTNOTE", "CARDS", "DATALINES",
-        "CARDS4", "DATALINES4", "_NULL_", "_ALL_", "_NUMERIC_", "_CHARACTER_", "INPUT", "PUT", "INFILE", 
-        "FILE", "SELECT", "FROM", "WHERE", "GROUP", "HAVING", "ORDER", "CASE", "WHEN", "UNION", "ALL", 
-        "EXAMINE", "DEFINE", "OBS", "FIRSTOBS",
-        
-        # SAS Built-in Functions
-        "ABS", "ACOS", "ACOSH", "ALPHA", "ANYALNUM", "ANYALPHA", "ANYCNTRL", "ANYDIGIT", "ANYLOWER", 
-        "ANYUPPER", "ANYSPACE", "ANYXDIGIT", "ARCCOS", "ARCCOSH", "ARSIN", "ARSINH", "ARTAN", "ARTANH", 
-        "ATAN", "ATAN2", "BQUOTE", "BYTE", "CEIL", "CEILING", "COS", "COSH", "DATE", "DAY", "DECODE", 
-        "DIGIT", "FLOOR", "INDEX", "INDEXC", "INDEXW", "INPUTN", "INT", "INTCK", "INTNX", "LAG", "LBOUND", 
-        "LENGTH", "LOG", "LOG10", "MAX", "MEAN", "MEDIAN", "MIN", "MOD", "NVALID", "NOW", "NLOGB", "NROOT", 
-        "NVAR", "PV", "RANUNI", "ROUND", "SIGN", "SIN", "SINH", "SQRT", "STRIP", "SUBSTR", "SUM", "TAN", 
-        "TANH", "TRANWRD", "TRIM", "UPCASE", "LOWCASE", "COMPRESS", "COMPBL", "CAT", "CATS", "CATX", "FIND", 
-        "FINDC", "FINDW", "VERIFY", "COALESCEC", "COALESCE",
-        
-        # SAS Macro Keywords and Functions
-        "%MACRO", "%MEND", "%LET", "%IF", "%THEN", "%ELSE", "%DO", "%END", "%GOTO", "%RETURN", "%ABORT", 
-        "%PUT", "%GLOBAL", "%LOCAL", "%SYMDEL", "%INCLUDE", "%WINDOW", "%DISPLAY", "%INPUT", "%EVAL", 
-        "%SYSEVALF", "%SCAN", "%QSCAN", "%SUBSTR", "%QSUBSTR", "%INDEX", "%LENGTH", "%STR", "%NRSTR", 
-        "%QUOTE", "%NRQUOTE", "%BQUOTE", "%NRBQUOTE", "%SUPERQ", "%SYSFUNC", "%QSYSFUNC", "%CMPRES", 
-        "%QCMPRES", "%QUPCASE", "SYMPUT", "SYMPUTX", "SYMGET",
-        
-        # Automatic Variables (DATA Step)
-        "_N_", "_ERROR_", "_FILE_", "_INFILE_", "_IORC_", "_MSG_", "_CMD_",
-        
-        # SAS Automatic Macro Variables (SYS variables)
-        "SYSDATE", "SYSDATE9", "SYSDAY", "SYSTIME", "SYSCC", "SYSERR", "SYSFILRC", "SYSLIBRC", 
-        "SYSINFO", "SYSWARNINGTEXT", "SYSERRORTEXT", "SYSLAST", "SYSDBRC", "SYSDBMSG", "SQLOBS", 
-        "SQLRC", "SYSPARM", "SYSJOBID", "SYSPROCESSNAME", "SYSPROCESSID", "SYSSCP", "SYSSCPL",
-        
-        # SAS Procedure Names and Common Options
-        "PROC", "PRINT", "SORT", "MEANS", "SUMMARY", "FREQ", "TABULATE", "REPORT", "DATASETS", "SQL", 
-        "REG", "GLM", "ANOVA", "LOGISTIC", "GENMOD", "MIXED", "UNIVARIATE", "CORR", "NPAR1WAY", 
-        "LIFETEST", "PHREG", "SURVEYMEANS", "SURVEYFREQ", "SURVEYLOGISTIC", "GPLOT", "GCHART", 
-        "GREPLAY", "ARIMA", "AUTOREG", "EXPAND", "TIMESERIES", "ACECLUS", "CLUSTER", "FASTCLUS", 
-        "VARCLUS", "PRINCOMP", "DMDB", "HPFOREST", "IML", "NLIN", "QLIM", "KRIGE2D", "GLIMMIX", "PLM", 
-        "POWER", "ICPHREG", "MCMC", "STDIZE", "TRANSREG", "X12", "OUT", "NOPRINT", "NOOBS", "BY", 
-        "WHERE", "PLOTS", "ALPHA", "MAXDEC", "NWAY", "ORDER",
-        
-        # Logical Operators and Other Reserved Words
-        "NOT", "IN", "AND", "OR", "XOR", "EQ", "NE", "GT", "LT", "GE", "LE",
-        
-        # Additional Tokens
-        "XX"
+        "_NULL_", "_ALL_", "_NUMERIC_", "_CHARACTER_", "INPUT", "PUT", "INFILE", "FILE", "SELECT", "FROM",
+        # Add more exclusions as needed...
     }
     
-    # Filter tokens by removing any that match the exclusion list (using case-insensitive matching)
+    # Filter out exclusions
     variables = {token for token in tokens if token.upper() not in sas_exclusions}
     
     return variables
 
-# Example SAS code snippet
-sas_code = '''
-IF UPCASE(COALESCEC(product_cd_vo, product_cd_m_s)) = ‘LOAN’
-Then propstate = UPCASE(COMPBL(STRIP(property_state_cd)));
-Else If COMPRESS(property_state_cd_vo) Not In(", XX")
-Then propstate = UPCASE(COMPBL(STRIP(property_state_cd_vo)));
-Else If COMPRESS(propstate_pm) Not In(", ‘LOAN’")
-Then propstate = UPCASE(COMPBL(STRIP(propstate_pm)));
-Else propstate = "";
-AND;
-'''
+# Load both Excel files
+derivation_df = pd.read_excel('data derivation.xlsx', sheet_name='2.  First Mortgage File')
+sql_df = pd.read_excel('myexcel.xlsx', sheet_name='Data')
 
-extracted_vars = extract_sas_variables(sas_code)
-print("Extracted Variables:", extracted_vars)
+# Process the derivation sheet to extract variables and source fields
+variable_to_source_map = {}
+
+# Process the rows from the derivation file
+for i, row in derivation_df.iterrows():
+    variable_name = row['Variable Name\n(Business Name)']
+    sas_code = row['Logic to Populate FR Y-14M Field']
+    source_fields = row['CLRTY/Source Fields Used'].splitlines()
+    
+    # Extract SAS variables
+    sas_vars = extract_sas_variables(sas_code)
+    
+    # Combine source fields with extracted SAS variables (removing duplicates)
+    combined_vars = set(source_fields) | sas_vars  # Union of source fields and extracted variables
+    
+    variable_to_source_map[variable_name] = combined_vars
+
+# Process the SQL logic in 'myexcel.xlsx' and update the 'value_sql_logic' with the source variables
+updated_sql_logic = []
+
+for i, row in sql_df.iterrows():
+    sql_code = row['value_sql_logic']
+    field_name = row['field_name']
+    
+    # Replace \r, \t, \n with appropriate SQL formatting
+    sql_code = sql_code.replace(r'\r', ' ')  # Adjusting return characters to space
+    sql_code = sql_code.replace(r'\t', ' ')  # Adjusting tab characters
+    sql_code = sql_code.replace(r'\n', '\n')  # Keeping newline for better readability
+
+    # Append the relevant source variables under the SELECT clause for the matching field_name
+    if field_name in variable_to_source_map:
+        new_select_clause = "\n".join(f"  {var}," for var in variable_to_source_map[field_name])
+        sql_code = sql_code.replace("SELECT", f"SELECT\n{new_select_clause}", 1)
+    
+    updated_sql_logic.append(sql_code)
+
+# Update the SQL dataframe with the new SQL logic
+sql_df['value_sql_logic'] = updated_sql_logic
+
+# Save the updated DataFrame into a new Excel file
+with pd.ExcelWriter('updated_sql_file.xlsx') as writer:
+    sql_df.to_excel(writer, sheet_name='Data', index=False)
+
+print("SQL logic updated and saved to 'updated_sql_file.xlsx'.")
