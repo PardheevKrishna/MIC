@@ -45,10 +45,10 @@ def update_sql_with_variables(sql_code, extracted_vars):
     # Extract the existing variables in SELECT clause and clean them up
     existing_vars_str = select_clause_match.group(1).strip()
     existing_vars = {var.strip() for var in existing_vars_str.split(',')}
-
+    
     # Add the new variables, avoiding duplicates
     all_vars = existing_vars | extracted_vars  # Combine existing and new variables
-
+    
     # Create the new SELECT clause
     new_select_clause = "SELECT\n" + "\n".join(f"  {var}," for var in sorted(all_vars)) + "\n"
 
@@ -138,7 +138,7 @@ sql_df['new_sql_code'] = new_sql_code_list
 sql_df['sas_code'] = sas_code_list
 
 # Save the updated DataFrame to a new Excel file.
-output_filename = 'updated_sql_file_with_variables_v4.xlsx'
+output_filename = 'updated_sql_file_with_variables_v5.xlsx'
 with pd.ExcelWriter(output_filename) as writer:
     sql_df.to_excel(writer, sheet_name='Data', index=False)
 
