@@ -1,9 +1,12 @@
 import pandas as pd
-import openpyxl
 import re
 
 # Function to extract SAS variables from SAS code
 def extract_sas_variables(sas_code):
+    # Check if sas_code is a string. If it's not, return an empty set
+    if not isinstance(sas_code, str):
+        return set()
+
     # Remove quoted strings
     cleaned_code = re.sub(r'["\'].+?["\']', '', sas_code)
     cleaned_code = re.sub(r'[\u2018].+?[\u2019]', '', cleaned_code)
@@ -33,19 +36,35 @@ sql_df = pd.read_excel('myexcel.xlsx', sheet_name='Data')
 # Process the derivation sheet to extract variables and source fields
 variable_to_source_map = {}
 
+# Handle grouped SAS code (grouping by business name)
+current_variable_name = None
+sas_code_group = ""
+
 # Process the rows from the derivation file
 for i, row in derivation_df.iterrows():
     variable_name = row['Variable Name\n(Business Name)']
     sas_code = row['Logic to Populate FR Y-14M Field']
     source_fields = row['CLRTY/Source Fields Used'].splitlines()
     
-    # Extract SAS variables
-    sas_vars = extract_sas_variables(sas_code)
-    
-    # Combine source fields with extracted SAS variables (removing duplicates)
+    # If the variable name changes, process the previous block
+    if variable_name != current_variable_name:
+        if current_variable_name is not None:
+            # Process the previous variable's group
+            sas_vars = extract_sas_variables(sas_code_group)
+            combined_vars = set(source_fields) | sas_vars  # Union of source fields and extracted variables
+            variable_to_source_map[current_variable_name] = combined_vars
+        # Reset for new variable name
+        sas_code_group = sas_code
+        current_variable_name = variable_name
+    else:
+        # If the variable name is the same, append the SAS code
+        sas_code_group += " " + str(sas_code)
+
+# Process the last group (after the loop ends)
+if current_variable_name is not None:
+    sas_vars = extract_sas_variables(sas_code_group)
     combined_vars = set(source_fields) | sas_vars  # Union of source fields and extracted variables
-    
-    variable_to_source_map[variable_name] = combined_vars
+    variable_to_source_map[current_variable_name] = combined_vars
 
 # Process the SQL logic in 'myexcel.xlsx' and update the 'value_sql_logic' with the source variables
 updated_sql_logic = []
