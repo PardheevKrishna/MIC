@@ -35,7 +35,7 @@ def extract_sas_variables(sas_code):
 
 def update_sql_select_clause(sql_code, variables_to_add):
     """
-    Update the SQL SELECT clause with the missing variables.
+    Update the SQL SELECT clause with the missing variables and format the SQL.
     """
     # Find the SELECT clause and split it at "SELECT" and "FROM"
     select_start = sql_code.lower().find('select')
@@ -59,6 +59,12 @@ def update_sql_select_clause(sql_code, variables_to_add):
         # Add missing variables to the SELECT clause
         new_select_clause = select_clause + ", " + ", ".join(new_vars)
         sql_code = sql_code[:select_start + 6 + len(select_clause)] + new_select_clause + sql_code[from_start:]
+
+    # Format the SELECT clause so each variable appears on a new line
+    select_clause_formatted = "SELECT\n" + ",\n".join(f"  {var}" for var in sorted(existing_vars | set(new_vars))) + "\n"
+
+    # Ensure there's a space between the last variable and the "FROM"
+    sql_code = sql_code[:select_start + 6] + select_clause_formatted + sql_code[from_start:]
     
     return sql_code
 
@@ -121,7 +127,7 @@ for idx, row in sql_df.iterrows():
         combined_vars = normalized_map[field_name]['combined_vars']
         sas_code_for_field = normalized_map[field_name]['sas_code']
         
-        # Update the SQL with the missing variables (if they are not already in SELECT)
+        # Add missing variables to SELECT clause
         updated_sql = update_sql_select_clause(updated_sql, combined_vars)
     else:
         combined_vars = []
