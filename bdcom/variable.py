@@ -33,29 +33,34 @@ def extract_sas_variables(sas_code):
     
     return variables
 
-def add_missing_variables_to_select(sql_code, variables_to_add):
+def update_sql_select_clause(sql_code, variables_to_add):
     """
-    Add missing variables to the SELECT clause, ensuring no duplicates.
+    Update the SQL SELECT clause with the missing variables.
     """
-    # Find the SELECT clause and existing variables
-    select_clause_match = re.search(r"SELECT\s+(.*?)\s+FROM", sql_code, re.DOTALL)
-    if not select_clause_match:
-        return sql_code  # If SELECT is not found, return the code unchanged
+    # Find the SELECT clause and split it at "SELECT" and "FROM"
+    select_start = sql_code.lower().find('select')
+    from_start = sql_code.lower().find('from')
     
-    # Extract existing variables in SELECT clause
-    existing_vars_str = select_clause_match.group(1).strip()
-    existing_vars = {var.strip() for var in existing_vars_str.split(',')}
-    
+    if select_start == -1 or from_start == -1:
+        print(f"Could not find SELECT or FROM in SQL: {sql_code}")
+        return sql_code  # If SELECT or FROM is not found, return the code unchanged
+
+    # Extract the SELECT clause from the SQL
+    select_clause = sql_code[select_start + 6:from_start].strip()  # Remove 'SELECT' and get the fields
+    select_clause = select_clause.replace('\n', ' ').replace('\r', ' ')  # Normalize line breaks and spaces
+
+    # Split the existing fields in SELECT clause
+    existing_vars = {var.strip() for var in select_clause.split(',')}
+
     # Add the new variables, avoiding duplicates
-    all_vars = existing_vars | variables_to_add  # Combine existing and new variables
+    new_vars = [var for var in variables_to_add if var not in existing_vars]
     
-    # Create the new SELECT clause
-    new_select_clause = "SELECT\n" + ",\n".join(f"  {var}" for var in sorted(all_vars)) + "\n"
-
-    # Replace the old SELECT clause with the new one
-    updated_sql = re.sub(r"SELECT\s+(.*?)\s+FROM", new_select_clause + "FROM", sql_code, flags=re.DOTALL)
-
-    return updated_sql
+    if new_vars:
+        # Add missing variables to the SELECT clause
+        new_select_clause = select_clause + ", " + ", ".join(new_vars)
+        sql_code = sql_code[:select_start + 6 + len(select_clause)] + new_select_clause + sql_code[from_start:]
+    
+    return sql_code
 
 # Load Excel files (ensure the file paths are correct)
 derivation_df = pd.read_excel('data derivation.xlsx', sheet_name='2.  First Mortgage File')
@@ -116,8 +121,8 @@ for idx, row in sql_df.iterrows():
         combined_vars = normalized_map[field_name]['combined_vars']
         sas_code_for_field = normalized_map[field_name]['sas_code']
         
-        # Add missing variables to SELECT clause
-        updated_sql = add_missing_variables_to_select(updated_sql, combined_vars)
+        # Update the SQL with the missing variables (if they are not already in SELECT)
+        updated_sql = update_sql_select_clause(updated_sql, combined_vars)
     else:
         combined_vars = []
         sas_code_for_field = ""
