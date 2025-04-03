@@ -22,6 +22,7 @@ def extract_sas_variables(sas_code):
     cleaned_code = re.sub(r'\'[^\']*\'D', '', cleaned_code)  # Remove date literals like '01Jan1900'D
     
     # Remove format specifiers like yymmddn8. (variables with a period at the end)
+    # This will remove variables like 'varname.' or 'yymmddn8.'
     cleaned_code = re.sub(r'\s+[A-Za-z_][A-Za-z0-9_]*\.\s*', '', cleaned_code)  # Remove format specifiers like yymmddn8.
 
     # Remove macro variables like &enddt (anything starting with &)
@@ -156,7 +157,7 @@ sql_df['new_sql_code'] = new_sql_code_list
 sql_df['sas_code'] = sas_code_list
 
 # Save the updated DataFrame to a new Excel file.
-output_filename = 'updated_sql_file_with_variables_v12.xlsx'
+output_filename = 'updated_sql_file_with_variables_v13.xlsx'
 with pd.ExcelWriter(output_filename) as writer:
     sql_df.to_excel(writer, sheet_name='Data', index=False)
 
