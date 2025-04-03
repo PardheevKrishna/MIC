@@ -38,10 +38,13 @@ def update_sql_with_variables(sql_code, extracted_vars):
     Update the SQL SELECT clause with the extracted variables, ensuring no duplicates.
     """
     # Improved regex to handle multi-line SQL with flexible spacing
-    select_clause_match = re.search(r"SELECT\s+(.*?)\s+FROM", sql_code, re.DOTALL)
-    if not select_clause_match:
+    select_clause_match = re.search(r"SELECT\s+(.+?)\s+FROM", sql_code, re.DOTALL)
+    
+    # Print the SQL for debugging
+    if select_clause_match is None:
+        print("No match for SELECT clause in SQL code:\n", sql_code)  # Debug print
         return sql_code  # If SELECT is not found, return the code unchanged
-
+    
     # Extract existing variables in SELECT clause and clean them up
     existing_vars_str = select_clause_match.group(1).strip()
     existing_vars = {var.strip() for var in existing_vars_str.split(',')}
@@ -53,7 +56,7 @@ def update_sql_with_variables(sql_code, extracted_vars):
     new_select_clause = "SELECT\n" + existing_vars_str + ",\n" + ",\n".join(f"  {var}" for var in sorted(all_vars)) + "\n"
 
     # Replace the old SELECT clause with the new one
-    updated_sql = re.sub(r"SELECT\s+(.*?)\s+FROM", new_select_clause + "FROM", sql_code, flags=re.DOTALL)
+    updated_sql = re.sub(r"SELECT\s+(.+?)\s+FROM", new_select_clause + "FROM", sql_code, flags=re.DOTALL)
 
     return updated_sql
 
@@ -135,7 +138,7 @@ sql_df['new_sql_code'] = new_sql_code_list
 sql_df['sas_code'] = sas_code_list
 
 # Save the updated DataFrame to a new Excel file.
-output_filename = 'updated_sql_file_with_variables_v8.xlsx'
+output_filename = 'updated_sql_file_with_variables_v9.xlsx'
 with pd.ExcelWriter(output_filename) as writer:
     sql_df.to_excel(writer, sheet_name='Data', index=False)
 
