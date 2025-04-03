@@ -32,6 +32,29 @@ def extract_sas_variables(sas_code):
     variables = {token for token in tokens if token.upper() not in sas_exclusions}
     return variables
 
+def update_sql_with_variables(sql_code, extracted_vars):
+    """
+    Update the SQL SELECT clause with the extracted variables, ensuring no duplicates.
+    """
+    # Extract the existing variables in the SQL's SELECT clause
+    select_clause_match = re.search(r"SELECT(.*?)FROM", sql_code, re.DOTALL)
+    if not select_clause_match:
+        return sql_code
+    
+    existing_vars = select_clause_match.group(1).strip().split(',')
+    existing_vars = {var.strip() for var in existing_vars}
+    
+    # Add the new variables, avoiding duplicates
+    all_vars = existing_vars | extracted_vars  # Combine existing and new variables
+
+    # Create the new SELECT clause
+    new_select_clause = "SELECT\n" + "\n".join(f"  {var}," for var in sorted(all_vars)) + "\n"
+
+    # Replace the old SELECT clause with the new one
+    updated_sql = re.sub(r"SELECT(.*?)FROM", new_select_clause + "FROM", sql_code, flags=re.DOTALL)
+
+    return updated_sql
+
 # Load Excel files (ensure the file paths are correct)
 derivation_df = pd.read_excel('data derivation.xlsx', sheet_name='2.  First Mortgage File')
 sql_df = pd.read_excel('myexcel.xlsx', sheet_name='Data')
@@ -94,10 +117,8 @@ for idx, row in sql_df.iterrows():
         # Create a comma-separated string of variables.
         all_vars_str = ", ".join(sorted(combined_vars))
         
-        # Create the new SELECT clause with each variable on a new line.
-        new_select_clause = "\n".join(f"  {var}," for var in sorted(combined_vars))
-        # Insert the new select clause right after the first occurrence of "SELECT".
-        updated_sql = updated_sql.replace("SELECT", f"SELECT\n{new_select_clause}", 1)
+        # Update the SQL with the extracted variables
+        updated_sql = update_sql_with_variables(updated_sql, combined_vars)
     else:
         all_vars_str = ""
         sas_code_for_field = ""
@@ -115,7 +136,7 @@ sql_df['new_sql_code'] = new_sql_code_list
 sql_df['sas_code'] = sas_code_list
 
 # Save the updated DataFrame to a new Excel file.
-output_filename = 'updated_sql_file_with_variables.xlsx'
+output_filename = 'updated_sql_file_with_variables_v2.xlsx'
 with pd.ExcelWriter(output_filename) as writer:
     sql_df.to_excel(writer, sheet_name='Data', index=False)
 
