@@ -49,16 +49,15 @@ def update_sql_select_clause(sql_code, variables_to_add):
     select_clause = sql_code[select_start + 6:from_start].strip()  # Remove 'SELECT' and get the fields
     select_clause = select_clause.replace('\n', ' ').replace('\r', ' ')  # Normalize line breaks and spaces
 
-    # Split the existing fields in SELECT clause
-    existing_vars = {var.strip() for var in select_clause.split(',')}
-
-    # Add the new variables, avoiding duplicates
-    new_vars = [var for var in variables_to_add if var not in existing_vars]
+    # Split the existing fields in SELECT clause and convert to lowercase for case-insensitive comparison
+    existing_vars = {var.strip().lower() for var in select_clause.split(',')}
+    
+    # Add the new variables, avoiding duplicates (case-insensitive check)
+    new_vars = [var for var in variables_to_add if var.lower() not in existing_vars]
     
     if new_vars:
         # Add missing variables to the SELECT clause
-        new_select_clause = select_clause + ", " + ", ".join(new_vars)
-        sql_code = sql_code[:select_start + 6 + len(select_clause)] + new_select_clause + sql_code[from_start:]
+        select_clause += ", " + ", ".join(new_vars)
 
     # Format the SELECT clause so each variable appears on a new line
     select_clause_formatted = "SELECT\n" + ",\n".join(f"  {var}" for var in sorted(existing_vars | set(new_vars))) + "\n"
@@ -146,7 +145,7 @@ sql_df['new_sql_code'] = new_sql_code_list
 sql_df['sas_code'] = sas_code_list
 
 # Save the updated DataFrame to a new Excel file.
-output_filename = 'updated_sql_file_with_variables_v10.xlsx'
+output_filename = 'updated_sql_file_with_variables_v11.xlsx'
 with pd.ExcelWriter(output_filename) as writer:
     sql_df.to_excel(writer, sheet_name='Data', index=False)
 
