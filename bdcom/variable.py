@@ -33,30 +33,27 @@ def extract_sas_variables(sas_code):
     
     return variables
 
-def update_sql_with_variables(sql_code, extracted_vars):
+def add_missing_variables_to_select(sql_code, variables_to_add):
     """
-    Update the SQL SELECT clause with the extracted variables, ensuring no duplicates.
+    Add missing variables to the SELECT clause, ensuring no duplicates.
     """
-    # Improved regex to handle multi-line SQL with flexible spacing
-    select_clause_match = re.search(r"SELECT\s+(.+?)\s+FROM", sql_code, re.DOTALL)
-    
-    # Print the SQL for debugging
-    if select_clause_match is None:
-        print("No match for SELECT clause in SQL code:\n", sql_code)  # Debug print
+    # Find the SELECT clause and existing variables
+    select_clause_match = re.search(r"SELECT\s+(.*?)\s+FROM", sql_code, re.DOTALL)
+    if not select_clause_match:
         return sql_code  # If SELECT is not found, return the code unchanged
     
-    # Extract existing variables in SELECT clause and clean them up
+    # Extract existing variables in SELECT clause
     existing_vars_str = select_clause_match.group(1).strip()
     existing_vars = {var.strip() for var in existing_vars_str.split(',')}
     
     # Add the new variables, avoiding duplicates
-    all_vars = existing_vars | extracted_vars  # Combine existing and new variables
+    all_vars = existing_vars | variables_to_add  # Combine existing and new variables
     
     # Create the new SELECT clause
-    new_select_clause = "SELECT\n" + existing_vars_str + ",\n" + ",\n".join(f"  {var}" for var in sorted(all_vars)) + "\n"
+    new_select_clause = "SELECT\n" + ",\n".join(f"  {var}" for var in sorted(all_vars)) + "\n"
 
     # Replace the old SELECT clause with the new one
-    updated_sql = re.sub(r"SELECT\s+(.+?)\s+FROM", new_select_clause + "FROM", sql_code, flags=re.DOTALL)
+    updated_sql = re.sub(r"SELECT\s+(.*?)\s+FROM", new_select_clause + "FROM", sql_code, flags=re.DOTALL)
 
     return updated_sql
 
@@ -119,8 +116,8 @@ for idx, row in sql_df.iterrows():
         combined_vars = normalized_map[field_name]['combined_vars']
         sas_code_for_field = normalized_map[field_name]['sas_code']
         
-        # Update the SQL with the extracted variables (if they are not already in SELECT)
-        updated_sql = update_sql_with_variables(updated_sql, combined_vars)
+        # Add missing variables to SELECT clause
+        updated_sql = add_missing_variables_to_select(updated_sql, combined_vars)
     else:
         combined_vars = []
         sas_code_for_field = ""
@@ -138,7 +135,7 @@ sql_df['new_sql_code'] = new_sql_code_list
 sql_df['sas_code'] = sas_code_list
 
 # Save the updated DataFrame to a new Excel file.
-output_filename = 'updated_sql_file_with_variables_v9.xlsx'
+output_filename = 'updated_sql_file_with_variables_v10.xlsx'
 with pd.ExcelWriter(output_filename) as writer:
     sql_df.to_excel(writer, sheet_name='Data', index=False)
 
