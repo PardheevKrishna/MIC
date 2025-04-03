@@ -4,7 +4,7 @@ import re
 def extract_sas_variables(sas_code):
     """
     Extract SAS variable names from a given SAS code string, excluding comments,
-    literals, date constants, and macro variables.
+    literals, date constants, format specifiers, and macro variables.
     """
     if not isinstance(sas_code, str):
         return set()
@@ -18,12 +18,16 @@ def extract_sas_variables(sas_code):
     cleaned_code = re.sub(r'[\u2018].+?[\u2019]', '', cleaned_code)
     cleaned_code = re.sub(r'[\u201C].+?[\u201D]', '', cleaned_code)
 
-    # Remove date literals and format specifiers (e.g., '01Jan1900'D, yymmddn8.)
+    # Remove date literals like '01Jan1900'D (d literal)
     cleaned_code = re.sub(r'\'[^\']*\'D', '', cleaned_code)  # Remove date literals like '01Jan1900'D
+    
+    # Remove format specifiers like yymmddn8. (variables with a period at the end)
     cleaned_code = re.sub(r'\s+[A-Za-z_][A-Za-z0-9_]*\.\s*', '', cleaned_code)  # Remove format specifiers like yymmddn8.
+
+    # Remove macro variables like &enddt (anything starting with &)
     cleaned_code = re.sub(r'\&\w+', '', cleaned_code)  # Remove macro variables like &enddt
 
-    # Extract potential SAS identifiers
+    # Extract potential SAS identifiers (variable names)
     tokens = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', cleaned_code)
     
     # Exclusions: SAS reserved keywords, functions, etc.
@@ -35,6 +39,7 @@ def extract_sas_variables(sas_code):
         # Add additional exclusions as needed.
     }
     
+    # Return only tokens that are not excluded
     variables = {token for token in tokens if token.upper() not in sas_exclusions}
     
     return variables
