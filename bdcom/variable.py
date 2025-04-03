@@ -3,7 +3,8 @@ import re
 
 def extract_sas_variables(sas_code):
     """
-    Extract SAS variable names from a given SAS code string, excluding comments.
+    Extract SAS variable names from a given SAS code string, excluding comments,
+    literals, date constants, and macro variables.
     """
     if not isinstance(sas_code, str):
         return set()
@@ -16,6 +17,11 @@ def extract_sas_variables(sas_code):
     cleaned_code = re.sub(r'["\'].+?["\']', '', sas_code_no_comments)
     cleaned_code = re.sub(r'[\u2018].+?[\u2019]', '', cleaned_code)
     cleaned_code = re.sub(r'[\u201C].+?[\u201D]', '', cleaned_code)
+
+    # Remove date literals and format specifiers (e.g., '01Jan1900'D, yymmddn8.)
+    cleaned_code = re.sub(r'\'[^\']*\'D', '', cleaned_code)  # Remove date literals like '01Jan1900'D
+    cleaned_code = re.sub(r'\s+[A-Za-z_][A-Za-z0-9_]*\.\s*', '', cleaned_code)  # Remove format specifiers like yymmddn8.
+    cleaned_code = re.sub(r'\&\w+', '', cleaned_code)  # Remove macro variables like &enddt
 
     # Extract potential SAS identifiers
     tokens = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', cleaned_code)
@@ -50,7 +56,7 @@ def update_sql_select_clause(sql_code, variables_to_add):
     select_clause = select_clause.replace('\n', ' ').replace('\r', ' ')  # Normalize line breaks and spaces
 
     # Split the existing fields in SELECT clause and convert to lowercase for case-insensitive comparison
-    existing_vars = {var.strip().lower() for var in select_clause.split(',')}
+    existing_vars = {var.strip() for var in select_clause.split(',')}
     
     # Add the new variables, avoiding duplicates (case-insensitive check)
     new_vars = [var for var in variables_to_add if var.lower() not in existing_vars]
@@ -145,7 +151,7 @@ sql_df['new_sql_code'] = new_sql_code_list
 sql_df['sas_code'] = sas_code_list
 
 # Save the updated DataFrame to a new Excel file.
-output_filename = 'updated_sql_file_with_variables_v11.xlsx'
+output_filename = 'updated_sql_file_with_variables_v12.xlsx'
 with pd.ExcelWriter(output_filename) as writer:
     sql_df.to_excel(writer, sheet_name='Data', index=False)
 
