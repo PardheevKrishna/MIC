@@ -33,29 +33,29 @@ def extract_sas_variables(sas_code):
     
     return variables
 
-def update_sql_with_variables(sql_code, extracted_vars):
+def update_sql_select_clause(sql_code, variables_to_add):
     """
-    Update the SQL SELECT clause with the extracted variables, ensuring no duplicates.
+    Updates the SELECT clause of the SQL code with new variables if they're not already present.
     """
-    # Extract the existing variables in the SQL's SELECT clause
-    select_clause_match = re.search(r"SELECT\s+(.*?)\s+FROM", sql_code, re.DOTALL)
+    # Find the SELECT clause and existing variables
+    select_clause_match = re.search(r"SELECT(.*?)FROM", sql_code, re.DOTALL)
     if not select_clause_match:
-        return sql_code
-    
-    # Extract the existing variables in SELECT clause and clean them up
+        return sql_code  # If SELECT is not found, return the code unchanged
+
+    # Extract existing variables in SELECT clause
     existing_vars_str = select_clause_match.group(1).strip()
     existing_vars = {var.strip() for var in existing_vars_str.split(',')}
     
-    # Add the new variables, avoiding duplicates
-    all_vars = existing_vars | extracted_vars  # Combine existing and new variables
+    # Add variables to the SELECT clause only if they're not already present
+    new_vars = [var for var in variables_to_add if var not in existing_vars]
     
-    # Create the new SELECT clause
-    new_select_clause = "SELECT\n" + "\n".join(f"  {var}," for var in sorted(all_vars)) + "\n"
+    # If there are new variables, add them to the SELECT clause
+    if new_vars:
+        new_select_clause = "SELECT\n" + existing_vars_str + ",\n" + ",\n".join(f"  {var}" for var in new_vars) + "\n"
+        updated_sql = re.sub(r"SELECT(.*?)FROM", new_select_clause + "FROM", sql_code, flags=re.DOTALL)
+        return updated_sql
 
-    # Replace the old SELECT clause with the new one
-    updated_sql = re.sub(r"SELECT\s+(.*?)\s+FROM", new_select_clause + "FROM", sql_code, flags=re.DOTALL)
-
-    return updated_sql
+    return sql_code
 
 # Load Excel files (ensure the file paths are correct)
 derivation_df = pd.read_excel('data derivation.xlsx', sheet_name='2.  First Mortgage File')
@@ -64,7 +64,6 @@ sql_df = pd.read_excel('myexcel.xlsx', sheet_name='Data')
 # Create dictionaries to store for each business name:
 # - The concatenated SAS code
 # - The union of manually provided source fields and SAS variables
-# We'll normalize the business name (remove spaces and uppercase) to match the SQL file.
 normalized_map = {}
 
 # Group the derivation file by the business name column.
@@ -116,17 +115,15 @@ for idx, row in sql_df.iterrows():
         # Get combined variables and sas code from the mapping.
         combined_vars = normalized_map[field_name]['combined_vars']
         sas_code_for_field = normalized_map[field_name]['sas_code']
-        # Create a comma-separated string of variables.
-        all_vars_str = ", ".join(sorted(combined_vars))
         
-        # Update the SQL with the extracted variables
-        updated_sql = update_sql_with_variables(updated_sql, combined_vars)
+        # Update the SQL with the extracted variables (if they are not already in SELECT)
+        updated_sql = update_sql_select_clause(updated_sql, combined_vars)
     else:
-        all_vars_str = ""
+        combined_vars = []
         sas_code_for_field = ""
     
     # Append the details to the corresponding lists.
-    all_var_names_list.append(all_vars_str)
+    all_var_names_list.append(", ".join(sorted(combined_vars)))
     old_sql_code_list.append(formatted_old_sql)
     new_sql_code_list.append(updated_sql)
     sas_code_list.append(sas_code_for_field)
@@ -138,7 +135,7 @@ sql_df['new_sql_code'] = new_sql_code_list
 sql_df['sas_code'] = sas_code_list
 
 # Save the updated DataFrame to a new Excel file.
-output_filename = 'updated_sql_file_with_variables_v6.xlsx'
+output_filename = 'updated_sql_file_with_variables_v7.xlsx'
 with pd.ExcelWriter(output_filename) as writer:
     sql_df.to_excel(writer, sheet_name='Data', index=False)
 
