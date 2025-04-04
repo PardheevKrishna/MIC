@@ -4,9 +4,8 @@ st.set_page_config(page_title="DQE Analysis", layout="wide", initial_sidebar_sta
 import pandas as pd
 import os
 import datetime
-import re
-from dateutil.relativedelta import relativedelta
 from io import BytesIO
+from dateutil.relativedelta import relativedelta
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
 #############################################
@@ -129,9 +128,6 @@ def main():
     # Process the DQE analysis.
     dqe_result = process_dqe_analysis(data_input_df, thresholds_df, analysis_date_dt)
 
-    # Replace any "nan" strings with empty strings.
-    dqe_result = dqe_result.replace("nan", "")
-
     # Configure AgGrid to display the DQE analysis with filtering enabled on every column.
     gb = GridOptionsBuilder.from_dataframe(dqe_result)
     gb.configure_default_column(filter=True, editable=True, cellStyle={'white-space': 'normal', 'line-height': '1.2em', 'width': 150})
@@ -143,7 +139,7 @@ def main():
     grid_opts = gb.build()
 
     # Display the grid.
-    grid_response = AgGrid(
+    AgGrid(
         dqe_result,
         gridOptions=grid_opts,
         update_mode=GridUpdateMode.VALUE_CHANGED,
@@ -152,15 +148,11 @@ def main():
         height=compute_grid_height(dqe_result, 40, 80),
         use_container_width=True
     )
-    updated_dqe = pd.DataFrame(grid_response["data"]).replace("nan", "", regex=True)
-
-    st.write("### Updated DQE Analysis (after editing Error Comments)")
-    st.dataframe(updated_dqe)
 
     # Provide a download button for the result as a new Excel file.
     towrite = BytesIO()
     with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
-        updated_dqe.to_excel(writer, index=False, sheet_name="DQE Analysis")
+        dqe_result.to_excel(writer, index=False, sheet_name="DQE Analysis")
     towrite.seek(0)
     st.download_button(
         label="Download DQE Analysis Report as Excel",
