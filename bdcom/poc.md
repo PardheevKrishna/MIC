@@ -1,8 +1,6 @@
-Below is a revised complete markdown file that properly closes code blocks so that only the intended sections are formatted as code. Make sure to include a blank line before and after each code block and verify that every opening triple backtick (```) has a matching closing triple backtick.
+# Running SAS Code from a .sas File Faster with Python – All-in-One POC
 
-# Running SAS Code from a .sas File Faster with Python – Proof-of-Concept (POC)
-
-This document provides a step-by-step guide on how to execute SAS code stored in an external `.sas` file using the [saspy](https://github.com/sassoftware/saspy) library, and then leverage Python’s advanced data processing frameworks (such as Pandas, Dask, and PySpark) to enhance performance.
+This document demonstrates a complete Proof-of-Concept (POC) that reads SAS code stored in an external `.sas` file, executes it via SASPy, and then leverages multiple Python libraries—Pandas, Dask, and PySpark—for high-performance data processing. The single Python script below measures the performance at each stage to help you evaluate improvements throughout your processing pipeline.
 
 ---
 
@@ -12,21 +10,16 @@ This document provides a step-by-step guide on how to execute SAS code stored in
 - [Installing and Configuring SASPy](#installing-and-configuring-saspy)
   - [Installing SASPy](#installing-saspy)
   - [Configuring the SASPy Connection](#configuring-the-saspy-connection)
-- [Running SAS Code from a .sas File](#running-sas-code-from-a-sas-file)
-- [Proof-of-Concept (POC)](#proof-of-concept-poc)
-- [Using Additional Python Libraries for Performance](#using-additional-python-libraries-for-performance)
-  - [Pandas](#pandas)
-  - [Dask](#dask)
-  - [PySpark](#pyspark)
+- [Proof-of-Concept (POC): All-in-One Processing](#proof-of-concept-poc-all-in-one-processing)
 - [Conclusion](#conclusion)
 
 ---
 
 ## Prerequisites
 
-- **SAS Environment:** Access to a licensed SAS installation or SAS University Edition.
-- **Python 3.x:** A recent version of Python must be installed.
-- **Required Python Libraries:** `saspy`, `pandas`, `dask`, and `pyspark`.
+- **SAS Environment:** A licensed SAS installation or SAS University Edition.
+- **Python 3.x:** Ensure a recent version is installed.
+- **Required Python Libraries:** `saspy`, `pandas`, `dask`, and `pyspark` must be installed.
 
 ---
 
@@ -38,13 +31,11 @@ Install SASPy using pip:
 
 ```bash
 pip install saspy
-```
 
-## Configuring the SASPy Connection
+Configuring the SASPy Connection
 
-Create or update a configuration file (typically named sascfg_personal.py) in your working directory. For example:
+Create or update your SASPy configuration file (typically sascfg_personal.py) in your working directory. An example configuration for a local SAS environment is:
 
-```bash
 SAS_config_names = ['default']
 
 default = {
@@ -54,145 +45,103 @@ default = {
     'authkey': 'saspykey',      # Optional authentication key
     'encoding': 'utf-8'         # Character encoding
 }
-```
 
-Test the configuration with the following Python snippet:
+Test your configuration by launching a SAS session:
 
-```bash
 import saspy
 sas = saspy.SASsession(cfgname='default')
 print(sas)
-```
 
-If a SAS session launches successfully, your configuration is correct.
+If the session starts successfully, your configuration is valid.
 
 ⸻
 
-# Running SAS Code from a .sas File
+Proof-of-Concept (POC): All-in-One Processing
 
-Assume you have a SAS file named my_script.sas with the following content:
+Below is a complete Python script that demonstrates the entire workflow. This single code block uses SASPy to execute SAS code from a file, converts the resulting SAS dataset into a Pandas DataFrame, and then processes the data using Dask and PySpark—all while measuring performance at each step.
 
-```bash
+Assumption: A SAS script named my_script.sas exists in the working directory with content such as:
+
 /* my_script.sas */
 data work.test;
     set sashelp.class;
 run;
-```
 
-Now, you can execute this SAS code from Python as follows:
+# The following is a complete Python script demonstrating the integrated workflow.
 
-```bash
-import saspy
-
-# Start the SAS session
-sas = saspy.SASsession(cfgname='default')
-
-# Read SAS code from the file
-with open('my_script.sas', 'r') as file:
-    sas_code = file.read()
-
-# Submit the SAS code
-result = sas.submit(sas_code)
-print("SAS Log:")
-print(result['LOG'])
-```
-
-
-⸻
-
-## Proof-of-Concept (POC)
-
-Below is a complete Python script demonstrating the full workflow: reading SAS code from a file, executing it, converting the resulting SAS dataset to a Pandas DataFrame, and measuring performance.
-
-```bash
 import saspy
 import time
 import pandas as pd
+import dask.dataframe as dd
+from pyspark.sql import SparkSession
 
+# -----------------------------------------------
 # 1. Start the SAS session
+# -----------------------------------------------
 sas = saspy.SASsession(cfgname='default')
 
+# -----------------------------------------------
 # 2. Read SAS code from 'my_script.sas'
+# -----------------------------------------------
 with open('my_script.sas', 'r') as file:
     sas_code = file.read()
 
-# 3. Submit the SAS code and measure execution time
+# -----------------------------------------------
+# 3. Submit SAS code and measure execution time
+# -----------------------------------------------
 start_time = time.time()
 result = sas.submit(sas_code)
 sas_elapsed = time.time() - start_time
 print("SAS Code Execution Time: {:.3f} seconds".format(sas_elapsed))
 print("SAS Log:\n", result['LOG'])
 
-# 4. Convert the SAS dataset (WORK.TEST) into a Pandas DataFrame and measure the time taken
+# -----------------------------------------------
+# 4. Convert SAS dataset (WORK.TEST) to a Pandas DataFrame
+# -----------------------------------------------
 start_time = time.time()
-df = sas.sd2df(table='test', libref='work')
-conversion_elapsed = time.time() - start_time
-print("Data Conversion Time: {:.3f} seconds".format(conversion_elapsed))
-print("Data Preview:\n", df.head())
+df_pandas = sas.sd2df(table='test', libref='work')
+pandas_conversion_time = time.time() - start_time
+print("Pandas Conversion Time: {:.3f} seconds".format(pandas_conversion_time))
+print("Pandas DataFrame Preview:\n", df_pandas.head())
 
-# 5. Process data using Pandas (calculating summary statistics) and measure processing time
+# -----------------------------------------------
+# 5. Process data using Pandas (summary statistics)
+# -----------------------------------------------
 start_time = time.time()
-summary = df.describe()
-processing_elapsed = time.time() - start_time
-print("Pandas Computation Time: {:.3f} seconds".format(processing_elapsed))
-print("Summary Statistics:\n", summary)
+summary = df_pandas.describe()
+pandas_processing_time = time.time() - start_time
+print("Pandas Processing Time: {:.3f} seconds".format(pandas_processing_time))
+print("Pandas Summary Statistics:\n", summary)
 
-```
+# -----------------------------------------------
+# 6. Convert to a Dask DataFrame and compute (e.g., mean of 'Age')
+# -----------------------------------------------
+start_time = time.time()
+ddf = dd.from_pandas(df_pandas, npartitions=4)
+mean_age_dask = ddf['Age'].mean().compute()
+dask_time = time.time() - start_time
+print("Dask Processing Time: {:.3f} seconds".format(dask_time))
+print("Dask Mean Age: ", mean_age_dask)
 
-
-⸻
-
-## Using Additional Python Libraries for Performance
-
-# Pandas
-
-Pandas offers efficient, in-memory data processing. For example:
-
-```bash
-summary = df.describe()
-print(summary)
-```
-
-# Dask
-
-Dask allows you to scale Pandas workflows by processing data in parallel and out-of-core:
-
-```bash
-import dask.dataframe as dd
-
-# Convert the Pandas DataFrame to a Dask DataFrame with 4 partitions
-ddf = dd.from_pandas(df, npartitions=4)
-mean_age = ddf['Age'].mean().compute()
-print("Mean Age:", mean_age)
-```
-
-# PySpark
-
-PySpark is ideal for distributed data processing on large datasets:
-
-```bash
-from pyspark.sql import SparkSession
-
-# Initialize a Spark session
+# -----------------------------------------------
+# 7. Initialize Spark, convert to a PySpark DataFrame, and perform an SQL query
+# -----------------------------------------------
 spark = SparkSession.builder.appName("SAS Data Processing").getOrCreate()
-
-# Convert the Pandas DataFrame to a Spark DataFrame
-spark_df = spark.createDataFrame(df)
+start_time = time.time()
+spark_df = spark.createDataFrame(df_pandas)
 spark_df.createOrReplaceTempView("test")
-result_df = spark.sql("SELECT AVG(Age) as avg_age FROM test")
-result_df.show()
-```
+spark_result = spark.sql("SELECT AVG(Age) as avg_age FROM test").collect()
+spark_time = time.time() - start_time
+print("PySpark Processing Time: {:.3f} seconds".format(spark_time))
+print("PySpark Avg Age: ", spark_result[0]['avg_age'])
+
 
 
 ⸻
 
-## Conclusion
+Conclusion
 
-By storing SAS code in an external .sas file and executing it with SASPy, you can seamlessly integrate SAS workflows into Python. Leveraging additional Python libraries like Pandas, Dask, and PySpark allows you to build flexible, high-performance data processing pipelines.
+This all-in-one POC illustrates how you can seamlessly integrate SAS code execution using SASPy with advanced data processing libraries in Python. By converting the output to a Pandas DataFrame and further leveraging Dask and PySpark for scalable computations, you can build an efficient, high-performance data processing pipeline.
 
 Happy coding and efficient data processing!
 
----
-
-**Key Tip:**  
-Always ensure that every code block is correctly closed by using triple backticks (`\`\`\``) on their own line. This prevents the markdown parser from treating subsequent text as part of the code block.
