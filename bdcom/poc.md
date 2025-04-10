@@ -142,30 +142,35 @@ print("Summary Statistics:\n", summary)
 
 ⸻
 
-Using Additional Python Libraries for Performance
+## Using Additional Python Libraries for Performance
 
-Pandas
+# Pandas
 
 Pandas offers efficient, in-memory data processing. For example:
 
+```bash
 summary = df.describe()
 print(summary)
+```
 
-Dask
+# Dask
 
 Dask allows you to scale Pandas workflows by processing data in parallel and out-of-core:
 
+```bash
 import dask.dataframe as dd
 
 # Convert the Pandas DataFrame to a Dask DataFrame with 4 partitions
 ddf = dd.from_pandas(df, npartitions=4)
 mean_age = ddf['Age'].mean().compute()
 print("Mean Age:", mean_age)
+```
 
-PySpark
+# PySpark
 
 PySpark is ideal for distributed data processing on large datasets:
 
+```bash
 from pyspark.sql import SparkSession
 
 # Initialize a Spark session
@@ -176,12 +181,12 @@ spark_df = spark.createDataFrame(df)
 spark_df.createOrReplaceTempView("test")
 result_df = spark.sql("SELECT AVG(Age) as avg_age FROM test")
 result_df.show()
-
+```
 
 
 ⸻
 
-Conclusion
+## Conclusion
 
 By storing SAS code in an external .sas file and executing it with SASPy, you can seamlessly integrate SAS workflows into Python. Leveraging additional Python libraries like Pandas, Dask, and PySpark allows you to build flexible, high-performance data processing pipelines.
 
