@@ -44,6 +44,7 @@ pip install saspy
 
 Create or update a configuration file (typically named sascfg_personal.py) in your working directory. For example:
 
+```bash
 SAS_config_names = ['default']
 
 default = {
@@ -53,28 +54,34 @@ default = {
     'authkey': 'saspykey',      # Optional authentication key
     'encoding': 'utf-8'         # Character encoding
 }
+```
 
 Test the configuration with the following Python snippet:
 
+```bash
 import saspy
 sas = saspy.SASsession(cfgname='default')
 print(sas)
+```
 
 If a SAS session launches successfully, your configuration is correct.
 
 ⸻
 
-Running SAS Code from a .sas File
+# Running SAS Code from a .sas File
 
 Assume you have a SAS file named my_script.sas with the following content:
 
+```bash
 /* my_script.sas */
 data work.test;
     set sashelp.class;
 run;
+```
 
 Now, you can execute this SAS code from Python as follows:
 
+```bash
 import saspy
 
 # Start the SAS session
@@ -88,15 +95,16 @@ with open('my_script.sas', 'r') as file:
 result = sas.submit(sas_code)
 print("SAS Log:")
 print(result['LOG'])
-
+```
 
 
 ⸻
 
-Proof-of-Concept (POC)
+## Proof-of-Concept (POC)
 
 Below is a complete Python script demonstrating the full workflow: reading SAS code from a file, executing it, converting the resulting SAS dataset to a Pandas DataFrame, and measuring performance.
 
+```bash
 import saspy
 import time
 import pandas as pd
@@ -129,6 +137,7 @@ processing_elapsed = time.time() - start_time
 print("Pandas Computation Time: {:.3f} seconds".format(processing_elapsed))
 print("Summary Statistics:\n", summary)
 
+```
 
 
 ⸻
