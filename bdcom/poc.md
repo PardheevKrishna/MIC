@@ -38,9 +38,9 @@ Install the SASPy library with pip:
 
 ```bash
 pip install saspy
-```
 
-Configuring the SASPy Connection
+
+## Configuring the SASPy Connection
 
 SASPy uses a configuration file (commonly sascfg_personal.py) to connect to your SAS session. Create or update the file in your working directory with an example configuration for a local SAS installation:
 
