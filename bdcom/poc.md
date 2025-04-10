@@ -38,8 +38,9 @@ Install SASPy using pip:
 
 ```bash
 pip install saspy
+```
 
-Configuring the SASPy Connection
+## Configuring the SASPy Connection
 
 Create or update a configuration file (typically named sascfg_personal.py) in your working directory. For example:
 
