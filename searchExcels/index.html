@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Excel Search Application</title>
+  <!-- Include SheetJS (XLSX) Library from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    /* Wells Fargo–inspired theme colours */
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #1f2a44; /* Dark navy-blue background */
+      color: #ffffff;
+    }
+    header {
+      background-color: #C8102E;  /* Wells Fargo Red */
+      padding: 10px;
+      text-align: center;
+      font-size: 24px;
+      font-weight: bold;
+    }
+    .controls {
+      padding: 10px;
+      background-color: #1f2a44;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .controls input[type="text"], .controls input[type="file"] {
+      padding: 8px;
+      border: 1px solid #ffffff;
+      border-radius: 4px;
+      background-color: rgba(255,255,255,0.1);
+      color: #ffffff;
+    }
+    .controls button {
+      padding: 8px 12px;
+      border: none;
+      background-color: #C8102E;
+      color: #ffffff;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .main {
+      display: flex;
+      height: calc(100vh - 100px);
+      overflow: hidden;
+    }
+    .tree-view {
+      width: 30%;
+      background-color: #1f2a44;
+      border-right: 1px solid rgba(255,255,255,0.2);
+      overflow-y: auto;
+      padding: 10px;
+    }
+    .tree-item {
+      cursor: pointer;
+      padding: 6px 10px;
+      margin: 4px 0;
+      border-radius: 4px;
+    }
+    .tree-item:hover, .tree-item.selected {
+      background-color: #C8102E;
+    }
+    .detail-view {
+      flex-grow: 1;
+      overflow-y: auto;
+      padding: 10px;
+      background-color: #1f2a44;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background-color: #1f2a44;
+    }
+    th, td {
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 8px;
+      text-align: left;
+      white-space: pre-wrap; /* Newline characters are rendered */
+    }
+    th {
+      background-color: #C8102E;
+    }
+  </style>
+</head>
+<body>
+  <header>Excel Search Application</header>
+  <div class="controls">
+    <label for="fileInput">Select Excel Files:</label>
+    <input type="file" id="fileInput" multiple accept=".xlsx,.xls">
+    <input type="text" id="searchInput" placeholder="Enter search term...">
+    <button id="searchButton">Search</button>
+  </div>
+  <div class="main">
+    <div class="tree-view" id="treeView">
+      <!-- Dynamically populated tree view will appear here -->
+    </div>
+    <div class="detail-view" id="detailView">
+      <!-- Aggregated detail table will appear here -->
+    </div>
+  </div>
+
+  <script>
+    // Global object to store all file data.
+    // Structure: { fileName: { sheetName: [ { rowNumber, data: { header: value, ... } } ] } }
+    const filesData = {};
+
+    // Helper: Insert newline characters into text every 'width' characters.
+    function wrap_text(text, width = 100) {
+      let result = "";
+      for (let i = 0; i < text.length; i += width) {
+        result += text.substr(i, width) + "\n";
+      }
+      return result.trim();
+    }
+
+    // Simple Levenshtein distance for fuzzy matching.
+    function levenshtein(a, b) {
+      const matrix = [];
+      const alen = a.length;
+      const blen = b.length;
+      if (alen === 0) return blen;
+      if (blen === 0) return alen;
+      for (let i = 0; i <= blen; i++) {
+        matrix[i] = [i];
+      }
+      for (let j = 0; j <= alen; j++) {
+        matrix[0][j] = j;
+      }
+      for (let i = 1; i <= blen; i++) {
+        for (let j = 1; j <= alen; j++) {
+          if (b[i-1].toLowerCase() === a[j-1].toLowerCase()) {
+            matrix[i][j] = matrix[i-1][j-1];
+          } else {
+            matrix[i][j] = Math.min(
+              matrix[i-1][j-1] + 1,
+              matrix[i][j-1] + 1,
+              matrix[i-1][j] + 1
+            );
+          }
+        }
+      }
+      return matrix[blen][alen];
+    }
+
+    function similarity(a, b) {
+      const dist = levenshtein(a, b);
+      const maxLen = Math.max(a.length, b.length);
+      return maxLen === 0 ? 100 : ((maxLen - dist) / maxLen) * 100;
+    }
+
+    // Load Excel files using SheetJS.
+    function loadExcelFiles(files) {
+      const promises = [];
+      for (let file of files) {
+        promises.push(new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, {type: 'array'});
+            resolve({file: file.name, workbook});
+          };
+          reader.onerror = reject;
+          reader.readAsArrayBuffer(file);
+        }));
+      }
+      return Promise.all(promises);
+    }
+
+    // Process loaded files and store into filesData.
+    function processFiles(loadedFiles) {
+      loadedFiles.forEach(({file, workbook}) => {
+        if (!filesData[file]) {
+          filesData[file] = {};
+        }
+        workbook.SheetNames.forEach(sheetName => {
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, {header: 1});
+          const headers = jsonData[0];
+          const rows = jsonData.slice(1);
+          if (!filesData[file][sheetName]) {
+            filesData[file][sheetName] = [];
+          }
+          rows.forEach((row, idx) => {
+            const rowObj = {};
+            headers.forEach((header, j) => {
+              rowObj[header] = row[j] !== undefined ? String(row[j]) : "";
+            });
+            filesData[file][sheetName].push({ rowNumber: idx + 2, data: rowObj });
+          });
+        });
+      });
+    }
+
+    // Fuzzy search: Checks whether any word in the cell is similar (>=80%) to the search term.
+    function cellMatches(cellText, searchTerm) {
+      const words = cellText.split(/\s+/);
+      for (let word of words) {
+        if (similarity(word, searchTerm) >= 80) return true;
+      }
+      return false;
+    }
+
+    // Search function: Iterates through filesData and returns matching rows per sheet.
+    function searchInFiles(searchTerm) {
+      const results = {}; // { sheetName: { fileName: [ { rowNumber, data } ] } }
+      const lowerSearch = searchTerm.toLowerCase();
+      for (let file in filesData) {
+        for (let sheet in filesData[file]) {
+          filesData[file][sheet].forEach(rowObj => {
+            let found = false;
+            for (let key in rowObj.data) {
+              if (cellMatches(rowObj.data[key], lowerSearch)) {
+                found = true;
+                break;
+              }
+            }
+            if (found) {
+              if (!results[sheet]) results[sheet] = {};
+              if (!results[sheet][file]) results[sheet][file] = [];
+              results[sheet][file].push(rowObj);
+            }
+          });
+        }
+      }
+      return results;
+    }
+
+    // Build tree view (left panel) from search results.
+    function buildTreeView(results) {
+      const treeView = document.getElementById("treeView");
+      treeView.innerHTML = "";
+      for (let sheet in results) {
+        const div = document.createElement("div");
+        div.className = "tree-item";
+        div.textContent = sheet;
+        div.dataset.sheet = sheet;
+        div.onclick = function() {
+          document.querySelectorAll(".tree-item").forEach(el => el.classList.remove("selected"));
+          this.classList.add("selected");
+          showDetailForSheet(sheet, results[sheet]);
+        };
+        treeView.appendChild(div);
+      }
+    }
+
+    // Show details for a given sheet.
+    // For sheet "1. Data Dictionary", show one aggregated table with specific columns.
+    function showDetailForSheet(sheet, sheetResults) {
+      const detailView = document.getElementById("detailView");
+      detailView.innerHTML = "";
+      if (sheet === "1. Data Dictionary") {
+        // Only show the required columns.
+        const requiredCols = [
+          "CorporateFinanceSubmissionFieldName",
+          "Corporate Finance Submission Field Description",
+          "Transformation/Business Logic"
+        ];
+        // Build table
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        // Headers: Source, then required columns with the second header split with a <br>.
+        const headers = [
+          "Source",
+          "CorporateFinanceSubmissionFieldName",
+          "Corporate Finance Submission<br>Field Description",
+          "Transformation/Business Logic"
+        ];
+        headers.forEach(text => {
+          const th = document.createElement("th");
+          th.innerHTML = text;
+          headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+        const tbody = document.createElement("tbody");
+        // For each file, add its rows.
+        for (let file in sheetResults) {
+          sheetResults[file].forEach(rowObj => {
+            const tr = document.createElement("tr");
+            const tdSource = document.createElement("td");
+            tdSource.textContent = file;
+            tr.appendChild(tdSource);
+            requiredCols.forEach(col => {
+              const td = document.createElement("td");
+              let cellVal = rowObj.data[col] || "";
+              // Insert newline every 100 characters.
+              if (cellVal.length > 100) {
+                cellVal = cellVal.match(/.{1,100}/g).join("\n");
+              }
+              td.textContent = cellVal;
+              tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+          });
+        }
+        table.appendChild(tbody);
+        detailView.appendChild(table);
+      } else {
+        // For other sheets, create a simple table of results.
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        ["Source", "Row", "Data"].forEach(text => {
+          const th = document.createElement("th");
+          th.textContent = text;
+          headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+        const tbody = document.createElement("tbody");
+        for (let file in sheetResults) {
+          sheetResults[file].forEach(rowObj => {
+            const tr = document.createElement("tr");
+            const tdSource = document.createElement("td");
+            tdSource.textContent = file;
+            tr.appendChild(tdSource);
+            const tdRow = document.createElement("td");
+            tdRow.textContent = rowObj.rowNumber;
+            tr.appendChild(tdRow);
+            const tdData = document.createElement("td");
+            tdData.textContent = JSON.stringify(rowObj.data);
+            tr.appendChild(tdData);
+            tbody.appendChild(tr);
+          });
+        }
+        table.appendChild(tbody);
+        detailView.appendChild(table);
+      }
+    }
+
+    // Event listener for Search button.
+    document.getElementById("searchButton").addEventListener("click", function() {
+      const fileInput = document.getElementById("fileInput");
+      const files = fileInput.files;
+      if (!files.length) {
+        alert("Please select Excel files.");
+        return;
+      }
+      loadExcelFiles(files).then(loadedFiles => {
+        processFiles(loadedFiles);
+        const searchTerm = document.getElementById("searchInput").value;
+        const results = searchInFiles(searchTerm);
+        buildTreeView(results);
+      });
+    });
+  </script>
+</body>
+</html>
