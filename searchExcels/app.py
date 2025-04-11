@@ -5,12 +5,64 @@ from rapidfuzz import fuzz
 # Set the page layout to wide.
 st.set_page_config(layout="wide", page_title="Excel Search Application")
 
-# Helper function: Insert HTML <br> tags every 'width' characters.
+##########################################
+# Helper function to wrap text using HTML.
+##########################################
 def wrap_text_html(text, width=100):
+    # Insert <br> tags every 'width' characters.
     return "<br>".join(text[i:i+width] for i in range(0, len(text), width))
 
+##########################################
+# Generate an HTML table from a DataFrame.
+##########################################
+def generate_html_table_from_df(df, wrap_width=100):
+    # Apply word wrapping to each cell if needed.
+    def wrap_cell(val):
+        s = str(val)
+        if len(s) > wrap_width:
+            return wrap_text_html(s, width=wrap_width)
+        else:
+            return s
+
+    # Define CSS to ensure cells wrap and height adjusts.
+    html = """
+    <style>
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: auto;
+      }
+      th, td {
+        border: 1px solid #ccc;
+        padding: 8px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        vertical-align: top;
+      }
+      th {
+        background-color: #3c3c4e;
+        color: #ffffff;
+      }
+    </style>
+    """
+    html += "<table><thead><tr>"
+    # Create table header.
+    for col in df.columns:
+        html += f"<th>{col}</th>"
+    html += "</tr></thead><tbody>"
+    # Create table rows.
+    for index, row in df.iterrows():
+        html += "<tr>"
+        for col in df.columns:
+            cell_val = wrap_cell(row[col])
+            html += f"<td>{cell_val}</td>"
+        html += "</tr>"
+    html += "</tbody></table>"
+    return html
+
+##########################################
 # Process a single Excel file.
-# Reads all sheets, drops columns that are entirely empty, and checks each cell's words for a fuzzy match.
+##########################################
 def process_excel_file(uploaded_file, source_name, search_term):
     results = {}
     try:
@@ -20,6 +72,7 @@ def process_excel_file(uploaded_file, source_name, search_term):
         st.error(f"Error reading {source_name}: {e}")
         return results
 
+    # Loop over each sheet.
     for sheet_name, df in excel_data.items():
         # Drop columns that are completely empty.
         df_clean = df.dropna(axis=1, how='all')
@@ -27,7 +80,7 @@ def process_excel_file(uploaded_file, source_name, search_term):
         # Process each row.
         for idx, row in df_clean.iterrows():
             row_matched = False
-            # For each cell, split into words and compare each word.
+            # Check each cell: split into words and compare each word.
             for col in df_clean.columns:
                 cell_value = row[col]
                 if pd.isna(cell_value):
@@ -47,74 +100,22 @@ def process_excel_file(uploaded_file, source_name, search_term):
                 row_dict["Sheet"] = sheet_name
                 sheet_results.append(row_dict)
         if sheet_results:
+            # Append results for the sheet.
             results[sheet_name] = results.get(sheet_name, []) + sheet_results
     return results
 
-# Generate an HTML table for the "1. Data Dictionary" sheet.
-# Only required columns are shown, empty rows (all required fields empty) are dropped,
-# and each cell's text is wrapped (with <br>) dynamically every 100 characters.
-def generate_data_dictionary_html(rows, required_cols, header_mapping, wrap_width=100):
-    # Filter out rows where all required columns are empty.
-    filtered_rows = []
-    for row in rows:
-        non_empty = any(str(row.get(col, "")).strip() for col in required_cols)
-        if non_empty:
-            filtered_rows.append(row)
-    if not filtered_rows:
-        return "<p>No matches found.</p>"
-    
-    # Build HTML table with inline CSS.
-    html = """
-    <style>
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        table-layout: fixed;
-      }
-      th, td {
-        border: 1px solid #ccc;
-        padding: 8px;
-        white-space: pre-wrap;
-        vertical-align: top;
-        word-wrap: break-word;
-      }
-      th {
-        background-color: #3c3c4e;
-        color: #ffffff;
-      }
-    </style>
-    <table>
-      <thead>
-        <tr>
-    """
-    # Table headers.
-    headers = ["Source"] + [header_mapping.get(col, col) for col in required_cols]
-    for h in headers:
-        html += f"<th>{h}</th>"
-    html += "</tr></thead><tbody>"
-    
-    # Table rows.
-    for row in filtered_rows:
-        html += "<tr>"
-        html += f"<td>{row.get('Source', '')}</td>"
-        for col in required_cols:
-            cell_val = str(row.get(col, ""))
-            if len(cell_val) > wrap_width:
-                cell_val = wrap_text_html(cell_val, width=wrap_width)
-            html += f"<td>{cell_val}</td>"
-        html += "</tr>"
-    html += "</tbody></table>"
-    return html
-
+##########################################
+# Main function
+##########################################
 def main():
     st.title("Excel Search Application")
-    st.write("Upload Excel files and enter a search term. The app searches every word in every cell for fuzzy matches. "
-             "Empty columns are dropped. For the '1. Data Dictionary' sheet, only specific columns are displayed, and "
-             "cell text is wrapped (newline inserted every 100 characters) so rows expand vertically.")
+    st.write("Upload Excel files and enter a search term. The search is performed word-by-word in every cell. "
+             "Empty columns are dropped. The results for each sheet display the Source file and Sheet name. "
+             "Cell content is wrapped (newlines inserted every 100 characters) so that row height adjusts automatically.")
 
     uploaded_files = st.file_uploader("Upload Excel files", type=["xlsx", "xls"], accept_multiple_files=True)
     search_term = st.text_input("Enter search term")
-    
+
     if st.button("Search"):
         if not uploaded_files:
             st.warning("Please upload at least one Excel file.")
@@ -132,6 +133,7 @@ def main():
                 if sheet_name not in aggregated_results:
                     aggregated_results[sheet_name] = []
                 aggregated_results[sheet_name].extend(rows)
+
         if not aggregated_results:
             st.info("No matches found.")
             return
@@ -142,25 +144,42 @@ def main():
             sources = sorted({row["Source"] for row in rows})
             expander_title = f"Sheet: {sheet_name} ({len(rows)} match{'es' if len(rows) > 1 else ''}) - Files: " + ", ".join(sources)
             with st.expander(expander_title, expanded=True):
+                # For the "1. Data Dictionary" sheet, display only required columns.
                 if sheet_name == "1. Data Dictionary":
                     required_cols = [
                         "CorporateFinanceSubmissionFieldName",
                         "Corporate Finance Submission Field Description",
                         "Transformation/Business Logic"
                     ]
-                    # Map header for "Corporate Finance Submission Field Description" to include a line break.
-                    header_mapping = {
-                        "CorporateFinanceSubmissionFieldName": "CorporateFinanceSubmissionFieldName",
-                        "Corporate Finance Submission Field Description": "Corporate Finance Submission<br>Field Description",
-                        "Transformation/Business Logic": "Transformation/Business Logic"
-                    }
-                    html = generate_data_dictionary_html(rows, required_cols, header_mapping, wrap_width=100)
-                    st.markdown(html, unsafe_allow_html=True)
+                    # Build a DataFrame with only the required columns plus Source.
+                    display_rows = []
+                    for row in rows:
+                        # Check if at least one required column is non-empty.
+                        if any(str(row.get(col, "")).strip() for col in required_cols):
+                            display_row = {
+                                "Source": row.get("Source", ""),
+                                "CorporateFinanceSubmissionFieldName": row.get("CorporateFinanceSubmissionFieldName", ""),
+                                "Corporate Finance Submission Field Description": row.get("Corporate Finance Submission Field Description", ""),
+                                "Transformation/Business Logic": row.get("Transformation/Business Logic", "")
+                            }
+                            display_rows.append(display_row)
+                    if display_rows:
+                        df_display = pd.DataFrame(display_rows)
+                        # Rename header for the second column to include a line break.
+                        df_display = df_display.rename(
+                            columns={"Corporate Finance Submission Field Description":
+                                     "Corporate Finance Submission<br>Field Description"})
+                        # Generate HTML table with wrapped content.
+                        html_table = generate_html_table_from_df(df_display, wrap_width=100)
+                        st.markdown(html_table, unsafe_allow_html=True)
+                    else:
+                        st.info("No non-empty rows found for required columns.")
                 else:
-                    # For other sheets, drop columns that are completely empty.
+                    # For other sheets, display all non-empty columns.
                     df_display = pd.DataFrame(rows)
                     df_display = df_display.dropna(axis=1, how='all')
-                    st.dataframe(df_display, use_container_width=True)
+                    html_table = generate_html_table_from_df(df_display, wrap_width=100)
+                    st.markdown(html_table, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
