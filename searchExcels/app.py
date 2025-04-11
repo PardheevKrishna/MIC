@@ -31,7 +31,7 @@ class SearchWorker(QThread):
     def run(self):
         print(f"Search started for term: {self.search_term}")
         # Get list of Excel files (.xlsx and .xls)
-        file_list = (glob.glob(os.path.join(self.folder_path, "*.xlsx")) + 
+        file_list = (glob.glob(os.path.join(self.folder_path, "*.xlsx")) +
                      glob.glob(os.path.join(self.folder_path, "*.xls")))
         print(f"Found {len(file_list)} files.")
         for file_path in file_list:
@@ -46,7 +46,7 @@ class SearchWorker(QThread):
                 print(f"Processing sheet: {sheet_name} in file: {os.path.basename(file_path)}")
                 for idx, row in df.iterrows():
                     row_matched = False
-                    # For each cell, split into words and compare each word.
+                    # Check every cell: split the cell text into words and compare each word.
                     for col in df.columns:
                         cell_value = row[col]
                         if pd.isna(cell_value):
@@ -121,34 +121,48 @@ class ExcelSearchApp(QMainWindow):
         # Page 0: Single-row detail table.
         self.detail_table = QTableWidget()
         self.detail_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.detail_table.setStyleSheet("background-color: #27293d; color: #ffffff;")
         self.detail_stack.addWidget(self.detail_table)
 
         # Page 1: Aggregated detail view using a scroll area.
         self.detail_scroll = QScrollArea()
         self.detail_scroll.setWidgetResizable(True)
-        self.detail_scroll.setStyleSheet("background-color: #27293d;")
         self.detail_container = QWidget()
-        self.detail_container.setStyleSheet("background-color: #27293d;")
         self.detail_layout = QVBoxLayout(self.detail_container)
         self.detail_scroll.setWidget(self.detail_container)
         self.detail_stack.addWidget(self.detail_scroll)
 
-        # Modern styling.
+        # Apply Wells Fargo–inspired theme: White background with red and gold accents.
+        # Wells Fargo Red: #B22234, Gold: #FFD700, White: #FFFFFF.
         self.setStyleSheet("""
-            QMainWindow { background-color: #1e1e2f; font-family: 'Segoe UI', sans-serif; }
-            QLabel { font-size: 14px; color: #ffffff; }
-            QLineEdit, QPushButton {
-                font-size: 16px; padding: 8px; border-radius: 8px;
-                border: 1px solid #3c3c4e; background-color: #27293d; color: #ffffff;
+            QMainWindow { background-color: #FFFFFF; font-family: 'Segoe UI', sans-serif; }
+            QLabel { font-size: 14px; color: #B22234; }
+            QLineEdit {
+                background-color: #FFFFFF; 
+                border: 2px solid #B22234; 
+                color: #000000; 
+                padding: 8px; 
+                border-radius: 4px;
             }
-            QLineEdit:hover, QPushButton:hover { border: 1px solid #5c5c7e; }
-            QTreeWidget, QTableWidget { background-color: #27293d; color: #ffffff; border: none; }
+            QPushButton {
+                background-color: #B22234; 
+                color: #FFFFFF; 
+                padding: 8px; 
+                border-radius: 4px; 
+                border: none;
+            }
+            QPushButton:hover { background-color: #A91D2B; }
+            QTreeWidget, QTableWidget {
+                background-color: #FFFFFF; 
+                color: #000000; 
+                border: 1px solid #B22234;
+            }
             QHeaderView::section {
-                background-color: #3c3c4e; color: #ffffff; padding: 8px; border: 1px solid #27293d;
+                background-color: #B22234; 
+                color: #FFFFFF; 
+                padding: 8px; 
+                border: none;
             }
-            QTreeWidget::item { padding: 4px; }
-            QTreeWidget::item:selected, QTableWidget::item:selected { background-color: #4a90e2; }
+            QTreeWidget::item:selected, QTableWidget::item:selected { background-color: #FFD700; }
         """)
 
     def select_folder(self):
@@ -263,14 +277,14 @@ class ExcelSearchApp(QMainWindow):
             group_rows = groups[source]
             header_cols = group_rows[0][1]
             source_label = QLabel(f"<b>File: {source}</b>")
-            source_label.setStyleSheet("color: #ffffff; margin-top: 10px;")
+            source_label.setStyleSheet("color: #B22234; margin-top: 10px;")
             self.detail_layout.addWidget(source_label)
             table = QTableWidget()
             table.setEditTriggers(QTableWidget.NoEditTriggers)
             table.setColumnCount(len(header_cols))
             table.setHorizontalHeaderLabels(header_cols)
             table.setRowCount(len(group_rows))
-            table.setStyleSheet("background-color: #27293d; color: #ffffff;")
+            table.setStyleSheet("background-color: #FFFFFF; color: #000000;")
             for i, (row_text, cols, values) in enumerate(group_rows):
                 for j, val in enumerate(values):
                     table.setItem(i, j, QTableWidgetItem(str(val)))
@@ -288,8 +302,8 @@ class ExcelSearchApp(QMainWindow):
         The first column will be the Excel file name (Source).
         If any cell's text exceeds 100 characters, newline characters are inserted dynamically
         after every 100 characters, and row heights are automatically adjusted so that the text wraps.
-        Additionally, the header for the second column is set to include a newline
-        so it displays as "Corporate Finance Submission\nField Description".
+        Also, the header for the "Corporate Finance Submission Field Description" column is modified
+        to include a newline: "Corporate Finance Submission\nField Description".
         """
         self.clear_detail_container()
         if not aggregated_records:
@@ -297,49 +311,37 @@ class ExcelSearchApp(QMainWindow):
 
         required_cols = [
             "CorporateFinanceSubmissionFieldName",
-            "Corporate Finance Submission Field Description",  # We'll modify header text below.
+            "Corporate Finance Submission Field Description",
             "Transformation/Business Logic"
         ]
-        # Set the header for the second column with an explicit newline.
-        headers = ["Source", "Corporate Finance Submission\nField Description"] + [required_cols[0], required_cols[2]]
-        # Note: Rearranging headers so that required columns order is:
-        # Source, (modified second header), first column, third column.
-        # If you need a different order, adjust accordingly.
-        # For this example, let's assume the required order is:
-        # Source, CorporateFinanceSubmissionFieldName, Corporate Finance Submission Field Description, Transformation/Business Logic.
         headers = ["Source", 
                    "CorporateFinanceSubmissionFieldName", 
                    "Corporate Finance Submission\nField Description", 
                    "Transformation/Business Logic"]
 
-        # Create a single table for all aggregated records.
         table = QTableWidget()
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setColumnCount(len(headers))
         table.setHorizontalHeaderLabels(headers)
         table.setRowCount(len(aggregated_records))
-        table.setStyleSheet("background-color: #27293d; color: #ffffff;")
+        table.setStyleSheet("background-color: #FFFFFF; color: #000000;")
         table.setWordWrap(True)
         
         for i, record in enumerate(aggregated_records):
             source, row_text, cols, values = record
             row_dict = dict(zip(cols, values))
             table.setItem(i, 0, QTableWidgetItem(source))
-            # For each required column, wrap text dynamically after every 100 characters.
             for j, col in enumerate(required_cols):
                 cell_val = str(row_dict.get(col, ""))
+                # Insert newline characters dynamically after every 100 characters.
                 if len(cell_val) > 100:
                     wrapped_val = "\n".join(cell_val[k:k+100] for k in range(0, len(cell_val), 100))
                 else:
                     wrapped_val = cell_val
-                # Place the cell value in the appropriate column.
-                # Mapping: column 1: CorporateFinanceSubmissionFieldName,
-                # column 2: Corporate Finance Submission\nField Description,
-                # column 3: Transformation/Business Logic.
                 table.setItem(i, j+1, QTableWidgetItem(wrapped_val))
         
         table.resizeColumnsToContents()
-        table.resizeRowsToContents()  # Adjust row heights to show wrapped text
+        table.resizeRowsToContents()
         self.detail_layout.addWidget(table)
         self.detail_layout.addStretch()
 
