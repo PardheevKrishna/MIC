@@ -3,11 +3,12 @@ import pandas as pd
 import textwrap
 from rapidfuzz import fuzz
 
-# Set the layout to wide.
+# Set the page layout to wide.
 st.set_page_config(layout="wide")
 
-# Helper function that inserts newline characters every 'width' characters.
+# Helper function to insert newline characters every 'width' characters.
 def wrap_text(text, width=100):
+    # This inserts newlines every 'width' characters.
     return "\n".join(text[i:i+width] for i in range(0, len(text), width))
 
 # Process a single Excel file.
@@ -23,7 +24,7 @@ def process_excel_file(uploaded_file, source_name, search_term):
     # Loop over each sheet.
     for sheet_name, df in excel_data.items():
         sheet_results = []
-        # Iterate over each row.
+        # Iterate over each row in the DataFrame.
         for idx, row in df.iterrows():
             row_matched = False
             # For each cell, split the cell text into words and compare.
@@ -33,7 +34,6 @@ def process_excel_file(uploaded_file, source_name, search_term):
                     continue
                 cell_text = str(cell_value)
                 words = cell_text.split()
-                # If any word in the cell is similar enough, mark the row as matching.
                 for word in words:
                     if fuzz.ratio(search_term.lower(), word.lower()) >= 80:
                         row_matched = True
@@ -45,7 +45,7 @@ def process_excel_file(uploaded_file, source_name, search_term):
                 row_dict = row.to_dict()
                 row_dict["Row Index"] = idx
                 row_dict["Source"] = source_name
-                row_dict["Sheet"] = sheet_name  # Include sheet name for display.
+                row_dict["Sheet"] = sheet_name  # in case you need it in display
                 sheet_results.append(row_dict)
         if sheet_results:
             results[sheet_name] = results.get(sheet_name, []) + sheet_results
@@ -54,8 +54,8 @@ def process_excel_file(uploaded_file, source_name, search_term):
 def main():
     st.title("Excel Search Application")
     st.write("Upload Excel files and enter a search term to search every word in every cell for fuzzy matches.")
-    
-    # File uploader that accepts multiple files.
+
+    # File uploader that accepts multiple Excel files.
     uploaded_files = st.file_uploader("Upload Excel files", type=["xlsx", "xls"], accept_multiple_files=True)
     search_term = st.text_input("Enter search term")
     
@@ -83,49 +83,57 @@ def main():
         st.write("### Search Results")
         # Display results grouped by sheet.
         for sheet_name, rows in aggregated_results.items():
-            # Create an expander for each sheet. Show sheet name plus list of sources.
+            # Get the unique source files for this sheet.
             sources = sorted({row["Source"] for row in rows})
             expander_title = f"Sheet: {sheet_name} ({len(rows)} match{'es' if len(rows) > 1 else ''})"
             expander_title += " - Files: " + ", ".join(sources)
             with st.expander(expander_title, expanded=True):
+                # Before creating a DataFrame, drop unnamed columns that are completely empty.
+                # We'll define a helper to do that for DataFrames.
+                def drop_empty_unnamed_cols(df):
+                    # Drop any column whose name starts with "Unnamed" and has all NaN values.
+                    unnamed = [col for col in df.columns if col.startswith("Unnamed")]
+                    for col in unnamed:
+                        if df[col].isnull().all():
+                            df = df.drop(columns=[col])
+                    return df
+
                 if sheet_name == "1. Data Dictionary":
-                    # For the "1. Data Dictionary" sheet, display only the required columns.
+                    # For this sheet, display only the required columns.
                     required_cols = [
                         "CorporateFinanceSubmissionFieldName",
                         "Corporate Finance Submission Field Description",
                         "Transformation/Business Logic"
                     ]
-                    # Build display headers. Insert a newline in the second header.
-                    display_headers = ["Source"] + [
-                        "CorporateFinanceSubmissionFieldName", 
-                        "Corporate Finance Submission\nField Description", 
-                        "Transformation/Business Logic"
-                    ]
+                    # Build display headers. The second header is modified to have a newline.
+                    display_headers = ["Source", "CorporateFinanceSubmissionFieldName", 
+                                       "Corporate Finance Submission\nField Description", 
+                                       "Transformation/Business Logic"]
                     display_rows = []
                     for row in rows:
+                        # Create a display row with only required columns.
                         display_row = {
                             "Source": row.get("Source", ""),
                             "CorporateFinanceSubmissionFieldName": row.get("CorporateFinanceSubmissionFieldName", ""),
                             "Corporate Finance Submission Field Description": row.get("Corporate Finance Submission Field Description", ""),
                             "Transformation/Business Logic": row.get("Transformation/Business Logic", "")
                         }
-                        # Wrap text for each cell value that exceeds 100 characters.
+                        # For each cell, if text is longer than 100 characters, insert a newline every 100 characters.
                         for key, val in display_row.items():
                             if isinstance(val, str) and len(val) > 100:
                                 display_row[key] = wrap_text(val, width=100)
                         display_rows.append(display_row)
                     df_display = pd.DataFrame(display_rows, columns=display_headers)
-                    st.dataframe(df_display, use_container_width=True)
+                    df_display = drop_empty_unnamed_cols(df_display)
+                    # Use pandas Styler to set the CSS for word wrapping.
+                    df_display_styled = df_display.style.set_properties(**{'white-space': 'normal'})
+                    st.dataframe(df_display_styled, use_container_width=True)
                 else:
-                    # For all other sheets, display all columns.
-                    # Ensure "Source" and "Sheet" are included.
-                    for row in rows:
-                        if "Source" not in row:
-                            row["Source"] = ""
-                        if "Sheet" not in row:
-                            row["Sheet"] = sheet_name
+                    # For other sheets, display all columns (including Source and Sheet).
                     df_display = pd.DataFrame(rows)
-                    st.dataframe(df_display, use_container_width=True)
+                    df_display = drop_empty_unnamed_cols(df_display)
+                    df_display_styled = df_display.style.set_properties(**{'white-space': 'normal'})
+                    st.dataframe(df_display_styled, use_container_width=True)
 
 if __name__ == "__main__":
     main()
