@@ -7,16 +7,15 @@ import streamlit.components.v1 as components
 # Set the page configuration to wide.
 st.set_page_config(layout="wide", page_title="Excel Search Application")
 
-##########################################
-# Helper function: Wrap text using HTML.
-##########################################
+###############################################
+# Helper function: Wrap text using HTML <br>.
+###############################################
 def wrap_text_html(text, width=100):
-    # Insert <br> tags every `width` characters.
     return "<br>".join(text[i:i+width] for i in range(0, len(text), width))
 
-##########################################
-# Helper function: Generate HTML table from a DataFrame.
-##########################################
+#####################################################
+# Helper function: Generate an HTML table from a DataFrame.
+#####################################################
 def generate_html_table_from_df(df, wrap_width=100):
     def wrap_cell(val):
         s = str(val)
@@ -60,9 +59,9 @@ def generate_html_table_from_df(df, wrap_width=100):
     html += "</tbody></table>"
     return html
 
-##########################################
-# Process an Excel file.
-##########################################
+#####################################################
+# Process a single Excel file.
+#####################################################
 def process_excel_file(uploaded_file, source_name, search_term):
     results = {}
     try:
@@ -73,12 +72,12 @@ def process_excel_file(uploaded_file, source_name, search_term):
         return results
 
     for sheet_name, df in excel_data.items():
-        # Drop columns that are completely empty.
+        # Drop columns that are entirely empty.
         df_clean = df.dropna(axis=1, how='all')
         sheet_results = []
         for idx, row in df_clean.iterrows():
             row_matched = False
-            # Check every cell by splitting the text into words.
+            # Check each cell by splitting into words.
             for col in df_clean.columns:
                 cell_value = row[col]
                 if pd.isna(cell_value):
@@ -92,8 +91,8 @@ def process_excel_file(uploaded_file, source_name, search_term):
                 if row_matched:
                     break
             if row_matched:
-                # Convert the row to a dictionary and add additional info.
-                row_dict = row.to_dict()
+                # Convert the row to a dictionary with stripped keys.
+                row_dict = {str(k).strip(): v for k, v in row.to_dict().items()}
                 row_dict["Row Index"] = idx
                 row_dict["Source"] = source_name
                 row_dict["Sheet"] = sheet_name
@@ -102,12 +101,17 @@ def process_excel_file(uploaded_file, source_name, search_term):
             results[sheet_name] = results.get(sheet_name, []) + sheet_results
     return results
 
-##########################################
+#####################################################
 # Main function.
-##########################################
+#####################################################
 def main():
     st.title("Excel Search Application")
-    st.write("Upload Excel files and enter a search term. The app searches every word in every cell (using fuzzy matching) for matches, drops completely empty columns, and displays the file and sheet names. Cell content is wrapped (with HTML <br> every 100 characters) so that rows expand vertically.")
+    st.write(
+        "Upload Excel files and enter a search term. The app searches every word in every cell "
+        "for fuzzy matches, drops completely empty columns, and displays the Source (file name) and Sheet name. "
+        "The display for any sheet uses an HTML table where cell content is wrapped by inserting <br> every 100 characters, "
+        "so row heights adjust automatically."
+    )
 
     uploaded_files = st.file_uploader("Upload Excel files", type=["xlsx", "xls"], accept_multiple_files=True)
     search_term = st.text_input("Enter search term")
@@ -135,42 +139,41 @@ def main():
             return
 
         st.write("### Search Results")
+        # For each sheet, display results.
         for sheet_name, rows in aggregated_results.items():
             sources = sorted({row["Source"] for row in rows})
             expander_title = f"Sheet: {sheet_name} ({len(rows)} match{'es' if len(rows) > 1 else ''}) - Files: " + ", ".join(sources)
             with st.expander(expander_title, expanded=True):
+                # For the "1. Data Dictionary" sheet: display only required columns.
                 if sheet_name == "1. Data Dictionary":
-                    # For "1. Data Dictionary", show only specific columns.
                     required_cols = [
                         "CorporateFinanceSubmissionFieldName",
                         "Corporate Finance Submission Field Description",
                         "Transformation/Business Logic"
                     ]
-                    # Create a DataFrame with all rows from this sheet.
+                    # Create a DataFrame from the rows.
                     df_all = pd.DataFrame(rows)
-                    # Drop columns that are entirely empty.
+                    # Drop completely empty columns.
                     df_all = df_all.dropna(axis=1, how='all')
-                    # Select only the required columns plus Source.
-                    # Here, we assume the original key for the second column is exactly:
-                    # "Corporate Finance Submission Field Description"
                     try:
-                        df_display = df_all[["Source", "CorporateFinanceSubmissionFieldName", 
+                        # Select only the required columns plus Source.
+                        df_display = df_all[["Source", 
+                                             "CorporateFinanceSubmissionFieldName", 
                                              "Corporate Finance Submission Field Description", 
                                              "Transformation/Business Logic"]]
                     except KeyError:
                         st.warning("Required columns not found in some rows.")
                         df_display = pd.DataFrame(rows)
-                    # Rename the second column to include an HTML line break.
+                    # Rename header for the second column to include a line break.
                     df_display = df_display.rename(
                         columns={"Corporate Finance Submission Field Description":
                                  "Corporate Finance Submission<br>Field Description"})
-                    # Apply text wrapping on all cells in the DataFrame.
+                    # Apply wrapping: if any cell's text exceeds 100 characters, insert <br> every 100 characters.
                     for col in df_display.columns:
                         df_display[col] = df_display[col].apply(
                             lambda x: wrap_text_html(str(x), width=100) if isinstance(x, str) and len(x) > 100 else x)
                     # Generate HTML table.
                     html_table = generate_html_table_from_df(df_display, wrap_width=100)
-                    # Render the table.
                     components.html(html_table, height=700, scrolling=True)
                 else:
                     # For other sheets, display all non-empty columns.
