@@ -1,30 +1,31 @@
 import streamlit as st
 import pandas as pd
 from rapidfuzz import fuzz
+import textwrap
+import streamlit.components.v1 as components
 
-# Set the page layout to wide.
+# Set the page configuration to wide.
 st.set_page_config(layout="wide", page_title="Excel Search Application")
 
 ##########################################
-# Helper function to wrap text using HTML.
+# Helper function: Wrap text into HTML.
 ##########################################
 def wrap_text_html(text, width=100):
     # Insert <br> tags every 'width' characters.
     return "<br>".join(text[i:i+width] for i in range(0, len(text), width))
 
 ##########################################
-# Generate an HTML table from a DataFrame.
+# Helper function: Generate HTML table from a DataFrame.
 ##########################################
 def generate_html_table_from_df(df, wrap_width=100):
-    # Apply word wrapping to each cell if needed.
     def wrap_cell(val):
         s = str(val)
         if len(s) > wrap_width:
-            return wrap_text_html(s, width=wrap_width)
+            return "<br>".join(s[i:i+wrap_width] for i in range(0, len(s), wrap_width))
         else:
             return s
 
-    # Define CSS to ensure cells wrap and height adjusts.
+    # Inline CSS to force cell content to wrap and adjust the row height.
     html = """
     <style>
       table {
@@ -44,14 +45,14 @@ def generate_html_table_from_df(df, wrap_width=100):
         color: #ffffff;
       }
     </style>
+    <table>
+      <thead>
+        <tr>
     """
-    html += "<table><thead><tr>"
-    # Create table header.
     for col in df.columns:
         html += f"<th>{col}</th>"
     html += "</tr></thead><tbody>"
-    # Create table rows.
-    for index, row in df.iterrows():
+    for i, row in df.iterrows():
         html += "<tr>"
         for col in df.columns:
             cell_val = wrap_cell(row[col])
@@ -72,15 +73,13 @@ def process_excel_file(uploaded_file, source_name, search_term):
         st.error(f"Error reading {source_name}: {e}")
         return results
 
-    # Loop over each sheet.
     for sheet_name, df in excel_data.items():
-        # Drop columns that are completely empty.
+        # Drop columns that are entirely empty.
         df_clean = df.dropna(axis=1, how='all')
         sheet_results = []
-        # Process each row.
         for idx, row in df_clean.iterrows():
             row_matched = False
-            # Check each cell: split into words and compare each word.
+            # For each cell, check every word.
             for col in df_clean.columns:
                 cell_value = row[col]
                 if pd.isna(cell_value):
@@ -100,22 +99,25 @@ def process_excel_file(uploaded_file, source_name, search_term):
                 row_dict["Sheet"] = sheet_name
                 sheet_results.append(row_dict)
         if sheet_results:
-            # Append results for the sheet.
             results[sheet_name] = results.get(sheet_name, []) + sheet_results
     return results
 
 ##########################################
-# Main function
+# Main function.
 ##########################################
 def main():
     st.title("Excel Search Application")
-    st.write("Upload Excel files and enter a search term. The search is performed word-by-word in every cell. "
-             "Empty columns are dropped. The results for each sheet display the Source file and Sheet name. "
-             "Cell content is wrapped (newlines inserted every 100 characters) so that row height adjusts automatically.")
+    st.write(
+        "Upload Excel files and enter a search term. "
+        "The app searches every word in every cell (using fuzzy matching) for a match. "
+        "Empty columns are dropped. All matching rows include the Source file name and Sheet name. "
+        "Cell content is wrapped (with a line break inserted every 100 characters) so that each cell's height adjusts automatically."
+    )
 
+    # File uploader that accepts multiple Excel files.
     uploaded_files = st.file_uploader("Upload Excel files", type=["xlsx", "xls"], accept_multiple_files=True)
     search_term = st.text_input("Enter search term")
-
+    
     if st.button("Search"):
         if not uploaded_files:
             st.warning("Please upload at least one Excel file.")
@@ -124,7 +126,7 @@ def main():
             st.warning("Please enter a search term.")
             return
 
-        aggregated_results = {}  # {sheet_name: list of row dicts}
+        aggregated_results = {}  # {sheet_name: list of row dictionaries}
         for uploaded_file in uploaded_files:
             source_name = uploaded_file.name
             st.write(f"Processing file: {source_name}")
@@ -133,7 +135,7 @@ def main():
                 if sheet_name not in aggregated_results:
                     aggregated_results[sheet_name] = []
                 aggregated_results[sheet_name].extend(rows)
-
+        
         if not aggregated_results:
             st.info("No matches found.")
             return
@@ -144,17 +146,21 @@ def main():
             sources = sorted({row["Source"] for row in rows})
             expander_title = f"Sheet: {sheet_name} ({len(rows)} match{'es' if len(rows) > 1 else ''}) - Files: " + ", ".join(sources)
             with st.expander(expander_title, expanded=True):
-                # For the "1. Data Dictionary" sheet, display only required columns.
                 if sheet_name == "1. Data Dictionary":
+                    # For Data Dictionary, only show the required columns.
                     required_cols = [
                         "CorporateFinanceSubmissionFieldName",
                         "Corporate Finance Submission Field Description",
                         "Transformation/Business Logic"
                     ]
-                    # Build a DataFrame with only the required columns plus Source.
+                    # Modify header for the second required column.
+                    display_headers = ["Source", 
+                                       "CorporateFinanceSubmissionFieldName", 
+                                       "Corporate Finance Submission<br>Field Description", 
+                                       "Transformation/Business Logic"]
                     display_rows = []
                     for row in rows:
-                        # Check if at least one required column is non-empty.
+                        # Only include rows where at least one required field is non-empty.
                         if any(str(row.get(col, "")).strip() for col in required_cols):
                             display_row = {
                                 "Source": row.get("Source", ""),
@@ -164,14 +170,10 @@ def main():
                             }
                             display_rows.append(display_row)
                     if display_rows:
-                        df_display = pd.DataFrame(display_rows)
-                        # Rename header for the second column to include a line break.
-                        df_display = df_display.rename(
-                            columns={"Corporate Finance Submission Field Description":
-                                     "Corporate Finance Submission<br>Field Description"})
-                        # Generate HTML table with wrapped content.
+                        df_display = pd.DataFrame(display_rows, columns=display_headers)
                         html_table = generate_html_table_from_df(df_display, wrap_width=100)
-                        st.markdown(html_table, unsafe_allow_html=True)
+                        # Render the HTML table using components.html
+                        components.html(html_table, height=700, scrolling=True)
                     else:
                         st.info("No non-empty rows found for required columns.")
                 else:
@@ -179,7 +181,7 @@ def main():
                     df_display = pd.DataFrame(rows)
                     df_display = df_display.dropna(axis=1, how='all')
                     html_table = generate_html_table_from_df(df_display, wrap_width=100)
-                    st.markdown(html_table, unsafe_allow_html=True)
+                    components.html(html_table, height=700, scrolling=True)
 
 if __name__ == "__main__":
     main()
