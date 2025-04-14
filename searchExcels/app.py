@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import textwrap
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
+import io
 
 # Set the layout to wide.
 st.set_page_config(layout="wide")
@@ -10,9 +11,31 @@ st.set_page_config(layout="wide")
 def wrap_text(text, width=100):
     return "\n".join(text[i:i+width] for i in range(0, len(text), width))
 
+# Function to tokenize a string into words
+def tokenize(text):
+    return text.lower().split()
+
+# Optimized Search using multiple fuzz matching techniques
+def optimized_search(cell_text, search_terms):
+    # Tokenize both cell and search term
+    cell_tokens = tokenize(cell_text)
+    
+    # Check if any token from the search terms matches with any word in the cell text
+    for term in search_terms:
+        # Use fuzzy partial match (better for substring matches)
+        partial_match = fuzz.partial_ratio(term.lower(), cell_text.lower())
+        token_sort_match = fuzz.token_sort_ratio(term.lower(), ' '.join(cell_tokens))
+        
+        # Consider a match if either partial or token sort match is above the threshold (e.g., 80)
+        if partial_match >= 80 or token_sort_match >= 80:
+            return True
+    return False
+
 # Process a single Excel file.
 def process_excel_file(uploaded_file, source_name, search_term):
     results = {}
+    search_terms = search_term.split(",")  # Support multiple terms separated by commas
+    
     try:
         # Read all sheets from the Excel file.
         excel_data = pd.read_excel(uploaded_file, sheet_name=None)
@@ -29,19 +52,14 @@ def process_excel_file(uploaded_file, source_name, search_term):
         # Iterate over each row.
         for idx, row in df.iterrows():
             row_matched = False
-            # For each cell, split the cell text into words and compare.
+            # For each cell, check for partial or token-sort matches.
             for col in df.columns:
                 cell_value = row[col]
                 if pd.isna(cell_value):
                     continue
                 cell_text = str(cell_value)
-                words = cell_text.split()
-                # If any word in the cell is similar enough, mark the row as matching.
-                for word in words:
-                    if fuzz.ratio(search_term.lower(), word.lower()) >= 80:
-                        row_matched = True
-                        break
-                if row_matched:
+                if optimized_search(cell_text, search_terms):
+                    row_matched = True
                     break
             if row_matched:
                 # Convert the row to a dictionary.
@@ -60,7 +78,7 @@ def main():
     
     # File uploader that accepts multiple files.
     uploaded_files = st.file_uploader("Upload Excel files", type=["xlsx", "xls"], accept_multiple_files=True)
-    search_term = st.text_input("Enter search term")
+    search_term = st.text_input("Enter search term (separate with commas for multiple terms)")
     
     if st.button("Search"):
         if not uploaded_files:
