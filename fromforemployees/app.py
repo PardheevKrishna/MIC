@@ -1,10 +1,12 @@
 import streamlit as st
+import pandas as pd
 from datetime import datetime, timedelta
 import openpyxl
 import os
 import logging
 from openpyxl.styles import PatternFill
 
+# Set up logging
 logging.basicConfig(level=logging.INFO)
 
 LOGS_FILE = 'logs.xlsx'
@@ -13,15 +15,8 @@ LEAVES_FILE = 'leaves.xlsx'
 # Orange fill for anomaly rows
 ORANGE_FILL = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
 
+# Function to load suggestions from logs.xlsx
 def load_suggestions():
-    """
-    Load unique values from logs.xlsx for free-text fields:
-      - Main Project (column 2)
-      - Project Name (column 3)
-      - Project Key Milestones (column 4)
-      - Team Member (TM) (column 5)
-      - Status (column 9)
-    """
     suggestions = {
         "main_project": set(),
         "project_name": set(),
@@ -50,11 +45,8 @@ def load_suggestions():
         suggestions[key] = sorted(list(suggestions[key]))
     return suggestions
 
+# Validate function for all fields
 def validate_fields(data):
-    """
-    Validate that every field entry is valid.
-    Return a list of error messages (blocking submission if any exist).
-    """
     errors = []
     try:
         status_date = datetime.strptime(data['status_date'], "%Y-%m-%d").date()
@@ -127,18 +119,13 @@ def validate_fields(data):
     
     return errors
 
+# Function to count leave days for a TM
 def count_leave_days(tm, friday_date):
-    """
-    Count the number of leave days for the given Team Member (TM)
-    in the week corresponding to the given Friday (i.e. Monday–Friday of that week).
-    Leaves outside that specific Friday week are not counted.
-    """
     leave_count = 0
     if os.path.exists(LEAVES_FILE):
         try:
             wb = openpyxl.load_workbook(LEAVES_FILE)
             sheet = wb.active
-            # Determine Monday and Friday of the week containing the given Friday
             monday = friday_date - timedelta(days=friday_date.weekday())
             friday = monday + timedelta(days=4)
             for row in sheet.iter_rows(min_row=2, values_only=True):
@@ -153,13 +140,8 @@ def count_leave_days(tm, friday_date):
             logging.error("Error reading leaves.xlsx: %s", e)
     return leave_count
 
+# Check for anomalies based on Weekly Time Spent
 def check_anomalies(data):
-    """
-    Check for fake working hours data.
-    Compute the allowed weekly hours based on the Monday–Friday period of the Status Date.
-    Allowed hours = 9 hrs * (number of working days available in that week).
-    If Weekly Time Spent exceeds that limit, record an anomaly.
-    """
     anomalies = []
     try:
         friday_date = datetime.strptime(data['status_date'], "%Y-%m-%d").date()
@@ -174,11 +156,8 @@ def check_anomalies(data):
         anomalies.append(f"Weekly Time Spent exceeds allowed limit. With {leave_days} leave day(s), maximum allowed is {max_allowed_hours} hrs.")
     return anomalies
 
+# Append the log to logs.xlsx
 def append_log(data, anomaly_message):
-    """
-    Append a new row into logs.xlsx (with the 17 fields and Anomaly Reason).
-    If an anomaly exists, highlight the entire row in orange.
-    """
     try:
         if os.path.exists(LOGS_FILE):
             wb = openpyxl.load_workbook(LOGS_FILE)
@@ -243,63 +222,65 @@ def append_log(data, anomaly_message):
         return False, str(e)
 
 # Streamlit UI
-def main():
-    st.title("Project Log Form")
-    suggestions = load_suggestions()
+st.set_page_config(page_title="Project Log", layout="wide")
+st.title("Project Log")
 
-    # Form Inputs
-    status_date = st.date_input("Status Date (Friday)", min_value=datetime.today())
-    main_project = st.selectbox("Main Project", suggestions["main_project"])
-    project_name = st.selectbox("Project Name", suggestions["project_name"])
-    project_key_milestones = st.selectbox("Project Key Milestones", suggestions["project_key_milestones"])
-    tm = st.selectbox("Team Member (TM)", suggestions["tm"])
+# Load suggestions from the logs.xlsx
+suggestions = load_suggestions()
+
+# Form for input
+with st.form(key="project_log_form"):
+    status_date = st.date_input("Status Date (Every Friday)")
+    main_project = st.selectbox("Main Project", options=suggestions["main_project"])
+    project_name = st.selectbox("Project Name", options=suggestions["project_name"])
+    project_key_milestones = st.selectbox("Project Key Milestones", options=suggestions["project_key_milestones"])
+    tm = st.selectbox("Team Member (TM)", options=suggestions["tm"])
     start_date = st.date_input("Start Date")
     completion_date = st.date_input("Completion Date")
-    percent_completion = st.number_input("% of Completion", min_value=0.0, max_value=100.0, step=0.01)
-    status = st.selectbox("Status", suggestions["status"])
-    weekly_time_spent = st.number_input("Weekly Time Spent (hrs)", min_value=0.0)
-    projected_hours = st.number_input("Projected Hours", min_value=0.0)
-    functional_area = st.text_input("Functional Area")
-    project_category = st.text_input("Project Category")
-    complexity = st.selectbox("Complexity", ["H", "M", "L"])
+    percent_completion = st.number_input("% of Completion", min_value=0, max_value=100)
+    status = st.selectbox("Status", options=suggestions["status"])
+    weekly_time_spent = st.number_input("Weekly Time Spent (Hrs)", min_value=0.0, step=0.5)
+    projected_hours = st.number_input("Projected Hours (E2E Implementation)", min_value=0.0, step=0.5)
+    functional_area = st.selectbox("Functional Area", ["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"])
+    project_category = st.selectbox("Project Category", ["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"])
+    complexity = st.selectbox("Complexity (H, M, L)", ["H", "M", "L"])
     novelty = st.selectbox("Novelty", ["BAU repetitive", "One time repetitive", "New one time"])
-    output_type = st.text_input("Output Type")
-    impact_type = st.text_input("Impact Type")
+    output_type = st.selectbox("Output Type", ["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"])
+    impact_type = st.selectbox("Impact Type", ["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"])
 
-    # Submit Button
-    if st.button("Submit"):
-        data = {
-            "status_date": str(status_date),
-            "main_project": main_project,
-            "project_name": project_name,
-            "project_key_milestones": project_key_milestones,
-            "tm": tm,
-            "start_date": str(start_date),
-            "completion_date": str(completion_date),
-            "percent_completion": str(percent_completion),
-            "status": status,
-            "weekly_time_spent": str(weekly_time_spent),
-            "projected_hours": str(projected_hours),
-            "functional_area": functional_area,
-            "project_category": project_category,
-            "complexity": complexity,
-            "novelty": novelty,
-            "output_type": output_type,
-            "impact_type": impact_type
-        }
+    submit_button = st.form_submit_button(label="Submit")
 
-        # Validate fields
-        field_errors = validate_fields(data)
-        if field_errors:
-            st.error("Errors: " + "; ".join(field_errors))
+# Handle form submission
+if submit_button:
+    data = {
+        "status_date": str(status_date),
+        "main_project": main_project,
+        "project_name": project_name,
+        "project_key_milestones": project_key_milestones,
+        "tm": tm,
+        "start_date": str(start_date),
+        "completion_date": str(completion_date),
+        "percent_completion": str(percent_completion),
+        "status": status,
+        "weekly_time_spent": str(weekly_time_spent),
+        "projected_hours": str(projected_hours),
+        "functional_area": functional_area,
+        "project_category": project_category,
+        "complexity": complexity,
+        "novelty": novelty,
+        "output_type": output_type,
+        "impact_type": impact_type
+    }
+
+    # Validate and check for anomalies
+    field_errors = validate_fields(data)
+    if field_errors:
+        st.error("; ".join(field_errors))
+    else:
+        anomalies = check_anomalies(data)
+        anomaly_message = "; ".join(anomalies) if anomalies else ""
+        success, err_msg = append_log(data, anomaly_message)
+        if success:
+            st.success("Log submitted successfully!")
         else:
-            anomalies = check_anomalies(data)
-            anomaly_message = "; ".join(anomalies) if anomalies else ""
-            success, err_msg = append_log(data, anomaly_message)
-            if success:
-                st.success("Log submitted successfully!")
-            else:
-                st.error(f"Error saving log: {err_msg}")
-
-if __name__ == "__main__":
-    main()
+            st.error(f"Error saving log: {err_msg}")
