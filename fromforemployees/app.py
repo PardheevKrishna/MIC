@@ -45,21 +45,16 @@ def load_suggestions():
         suggestions[key] = sorted(list(suggestions[key]))
     return suggestions
 
-# Function to dynamically add user input to dropdown options
-def handle_select_and_add(field_name, suggestions):
-    # Allow the user to type input
-    custom_value = st.text_input(f"Enter or Select {field_name}", "")
+# Function to handle custom input or selection with checkbox
+def handle_checkbox_select(field_name, suggestions):
+    use_custom_input = st.checkbox(f"Enter a new {field_name} (check to input)")
     
-    # Update the dropdown with the typed value
-    options = list(suggestions) + [custom_value] if custom_value else list(suggestions)
-    
-    # Allow the user to select from the updated list of options
-    selected_value = st.selectbox(f"Select {field_name}", options)
-    
-    # If the user typed a new value, return that value
-    if custom_value and custom_value not in suggestions:
+    if use_custom_input:
+        custom_value = st.text_input(f"Enter {field_name}", "")
         return custom_value
-    return selected_value
+    else:
+        selected_value = st.selectbox(f"Select {field_name}", options=list(suggestions))
+        return selected_value
 
 # Validate function for all fields
 def validate_fields(data):
@@ -248,17 +243,11 @@ suggestions = load_suggestions()
 with st.form(key="project_log_form"):
     status_date = st.date_input("Status Date (Every Friday)")
     
-    # Allow user to either select or input custom value for Main Project
-    main_project = handle_select_and_add("Main Project", suggestions["main_project"])
-    
-    # Allow user to either select or input custom value for Project Name
-    project_name = handle_select_and_add("Project Name", suggestions["project_name"])
-    
-    # Allow user to either select or input custom value for Project Key Milestones
-    project_key_milestones = handle_select_and_add("Project Key Milestones", suggestions["project_key_milestones"])
-    
-    # Allow user to either select or input custom value for Team Member
-    tm = handle_select_and_add("Team Member (TM)", suggestions["tm"])
+    # Allow user to either select from dropdown or input new value for each field
+    main_project = handle_checkbox_select("Main Project", suggestions["main_project"])
+    project_name = handle_checkbox_select("Project Name", suggestions["project_name"])
+    project_key_milestones = handle_checkbox_select("Project Key Milestones", suggestions["project_key_milestones"])
+    tm = handle_checkbox_select("Team Member (TM)", suggestions["tm"])
     
     start_date = st.date_input("Start Date")
     completion_date = st.date_input("Completion Date")
