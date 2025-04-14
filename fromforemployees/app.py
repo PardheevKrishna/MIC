@@ -230,11 +230,16 @@ suggestions = load_suggestions()
 
 # Form for input
 with st.form(key="project_log_form"):
-    status_date = st.date_input("Status Date (Every Friday)")
-    main_project = st.selectbox("Main Project", options=suggestions["main_project"])
+    # Allow user to type a new project or select an existing one
+    main_project = st.text_input("Main Project", value="")
+    if not main_project:
+        main_project = st.selectbox("Select Existing Project", options=suggestions["main_project"])
+    
+    # Other fields remain as before
     project_name = st.selectbox("Project Name", options=suggestions["project_name"])
     project_key_milestones = st.selectbox("Project Key Milestones", options=suggestions["project_key_milestones"])
     tm = st.selectbox("Team Member (TM)", options=suggestions["tm"])
+    status_date = st.date_input("Status Date (Every Friday)")
     start_date = st.date_input("Start Date")
     completion_date = st.date_input("Completion Date")
     percent_completion = st.number_input("% of Completion", min_value=0, max_value=100)
