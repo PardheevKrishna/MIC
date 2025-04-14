@@ -45,6 +45,15 @@ def load_suggestions():
         suggestions[key] = sorted(list(suggestions[key]))
     return suggestions
 
+# Function to handle custom input or selection
+def handle_select_or_input(field_name, suggestions):
+    selected_value = st.selectbox(f"Select or Enter {field_name}", options=list(suggestions) + ["Other..."])
+    if selected_value == "Other...":
+        custom_value = st.text_input(f"Enter {field_name}").strip()
+        if custom_value:
+            return custom_value
+    return selected_value
+
 # Validate function for all fields
 def validate_fields(data):
     errors = []
@@ -231,10 +240,19 @@ suggestions = load_suggestions()
 # Form for input
 with st.form(key="project_log_form"):
     status_date = st.date_input("Status Date (Every Friday)")
-    main_project = st.selectbox("Main Project", options=suggestions["main_project"])
-    project_name = st.selectbox("Project Name", options=suggestions["project_name"])
-    project_key_milestones = st.selectbox("Project Key Milestones", options=suggestions["project_key_milestones"])
-    tm = st.selectbox("Team Member (TM)", options=suggestions["tm"])
+    
+    # Allow user to either select or input custom value for Main Project
+    main_project = handle_select_or_input("Main Project", suggestions["main_project"])
+    
+    # Allow user to either select or input custom value for Project Name
+    project_name = handle_select_or_input("Project Name", suggestions["project_name"])
+    
+    # Allow user to either select or input custom value for Project Key Milestones
+    project_key_milestones = handle_select_or_input("Project Key Milestones", suggestions["project_key_milestones"])
+    
+    # Allow user to either select or input custom value for Team Member
+    tm = handle_select_or_input("Team Member (TM)", suggestions["tm"])
+    
     start_date = st.date_input("Start Date")
     completion_date = st.date_input("Completion Date")
     percent_completion = st.number_input("% of Completion", min_value=0, max_value=100)
