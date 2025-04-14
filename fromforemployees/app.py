@@ -48,12 +48,13 @@ def load_suggestions():
 # Function to handle custom input or selection with checkbox
 def handle_checkbox_select(field_name, suggestions):
     use_custom_input = st.checkbox(f"Enter a new {field_name} (check to input)")
-
+    
+    # Show either text input or dropdown based on the checkbox
     if use_custom_input:
         custom_value = st.text_input(f"Enter {field_name}", "")
         return custom_value
     else:
-        selected_value = st.selectbox(f"Select {field_name}", options=list(suggestions))
+        selected_value = st.selectbox(f"Select {field_name}", options=suggestions)
         return selected_value
 
 # Validate function for all fields
@@ -243,12 +244,19 @@ suggestions = load_suggestions()
 with st.form(key="project_log_form"):
     status_date = st.date_input("Status Date (Every Friday)")
     
-    # Allow user to either select from dropdown or input new value for each field
+    # Handle the Main Project
     main_project = handle_checkbox_select("Main Project", suggestions["main_project"])
+    
+    # Handle Project Name
     project_name = handle_checkbox_select("Project Name", suggestions["project_name"])
+    
+    # Handle Project Key Milestones
     project_key_milestones = handle_checkbox_select("Project Key Milestones", suggestions["project_key_milestones"])
+    
+    # Handle Team Member (TM)
     tm = handle_checkbox_select("Team Member (TM)", suggestions["tm"])
     
+    # Other fields
     start_date = st.date_input("Start Date")
     completion_date = st.date_input("Completion Date")
     percent_completion = st.number_input("% of Completion", min_value=0, max_value=100)
