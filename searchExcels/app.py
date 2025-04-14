@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import textwrap
 from rapidfuzz import fuzz
-import io
 
 # Set the layout to wide.
 st.set_page_config(layout="wide")
@@ -92,44 +91,11 @@ def main():
             expander_title = f"Sheet: {sheet_name} ({len(rows)} match{'es' if len(rows) > 1 else ''})"
             expander_title += " - Files: " + ", ".join(sources)
             with st.expander(expander_title, expanded=True):
-                if sheet_name == "1. Data Dictionary":
-                    # For the "1. Data Dictionary" sheet, display only the required columns.
-                    required_cols = [
-                        "CorporateFinanceSubmissionFieldName",
-                        "Corporate Finance Submission Field Description",
-                        "Transformation/Business Logic"
-                    ]
-                    # Build display headers. Insert a newline in the second header.
-                    display_headers = ["Source"] + [
-                        "CorporateFinanceSubmissionFieldName", 
-                        "Corporate Finance Submission\nField Description", 
-                        "Transformation/Business Logic"
-                    ]
-                    display_rows = []
-                    for row in rows:
-                        display_row = {
-                            "Source": row.get("Source", ""),
-                            "CorporateFinanceSubmissionFieldName": row.get("CorporateFinanceSubmissionFieldName", ""),
-                            "Corporate Finance Submission Field Description": row.get("Corporate Finance Submission Field Description", ""),
-                            "Transformation/Business Logic": row.get("Transformation/Business Logic", "")
-                        }
-                        # Wrap text for each cell value that exceeds 100 characters.
-                        for key, val in display_row.items():
-                            if isinstance(val, str) and len(val) > 100:
-                                display_row[key] = wrap_text(val, width=100)
-                        display_rows.append(display_row)
-                    df_display = pd.DataFrame(display_rows, columns=display_headers)
-                    st.dataframe(df_display, use_container_width=True)
-                else:
-                    # For all other sheets, display all columns.
-                    # Ensure "Source" and "Sheet" are included.
-                    for row in rows:
-                        if "Source" not in row:
-                            row["Source"] = ""
-                        if "Sheet" not in row:
-                            row["Sheet"] = sheet_name
-                    df_display = pd.DataFrame(rows)
-                    st.dataframe(df_display, use_container_width=True)
+                # Display each matching row separately with its respective columns
+                for row in rows:
+                    row_display = {col: row[col] for col in row if col != "Row Index"}
+                    st.write(f"**Row {row['Row Index']}**")
+                    st.dataframe(pd.DataFrame([row_display]), use_container_width=True)
 
 if __name__ == "__main__":
     main()
