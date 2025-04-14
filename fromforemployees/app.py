@@ -45,18 +45,14 @@ def load_suggestions():
         suggestions[key] = sorted(list(suggestions[key]))
     return suggestions
 
-# Function to handle custom input or selection with radio
-def handle_radio_select(field_name, suggestions):
-    # Create radio button to choose between custom input and dropdown
-    option = st.radio(f"Choose {field_name}", ("Select from Dropdown", "Enter Custom Value"), key=field_name)
-    
-    # Show either text input or dropdown based on the radio choice
-    if option == "Enter Custom Value":
-        custom_value = st.text_input(f"Enter {field_name}", key=f"{field_name}_input")
-        return custom_value
-    else:
-        selected_value = st.selectbox(f"Select {field_name}", options=suggestions, key=f"{field_name}_select")
-        return selected_value
+# Function to handle both custom input and dropdown selection
+def handle_input_or_select(field_name, suggestions):
+    # Always show both input and select box
+    custom_value = st.text_input(f"Enter {field_name} (or select from dropdown):", key=f"{field_name}_input")
+    selected_value = st.selectbox(f"Select {field_name}", options=[""] + suggestions, key=f"{field_name}_select")
+
+    # If the user typed something, use the custom value; otherwise, use the selected dropdown value
+    return custom_value if custom_value.strip() else selected_value
 
 # Streamlit UI
 st.set_page_config(page_title="Project Log", layout="wide")
@@ -70,16 +66,16 @@ with st.form(key="project_log_form"):
     status_date = st.date_input("Status Date (Every Friday)")
 
     # Handle the Main Project
-    main_project = handle_radio_select("Main Project", suggestions["main_project"])
+    main_project = handle_input_or_select("Main Project", suggestions["main_project"])
     
     # Handle Project Name
-    project_name = handle_radio_select("Project Name", suggestions["project_name"])
+    project_name = handle_input_or_select("Project Name", suggestions["project_name"])
     
     # Handle Project Key Milestones
-    project_key_milestones = handle_radio_select("Project Key Milestones", suggestions["project_key_milestones"])
+    project_key_milestones = handle_input_or_select("Project Key Milestones", suggestions["project_key_milestones"])
     
     # Handle Team Member (TM)
-    tm = handle_radio_select("Team Member (TM)", suggestions["tm"])
+    tm = handle_input_or_select("Team Member (TM)", suggestions["tm"])
     
     # Other fields
     start_date = st.date_input("Start Date")
