@@ -1,11 +1,10 @@
-from flask import Flask, render_template, request
+import streamlit as st
 from datetime import datetime, timedelta
 import openpyxl
 import os
 import logging
 from openpyxl.styles import PatternFill
 
-app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 LOGS_FILE = 'logs.xlsx'
@@ -243,42 +242,64 @@ def append_log(data, anomaly_message):
         logging.error("Error appending log: %s", e)
         return False, str(e)
 
-@app.route("/", methods=["GET"])
-def index():
+# Streamlit UI
+def main():
+    st.title("Project Log Form")
     suggestions = load_suggestions()
-    return render_template("form.html", suggestions=suggestions)
 
-@app.route("/submit", methods=["POST"])
-def submit():
-    data = {
-        "status_date": request.form.get("status_date", ""),
-        "main_project": request.form.get("main_project", ""),
-        "project_name": request.form.get("project_name", ""),
-        "project_key_milestones": request.form.get("project_key_milestones", ""),
-        "tm": request.form.get("tm", ""),
-        "start_date": request.form.get("start_date", ""),
-        "completion_date": request.form.get("completion_date", ""),
-        "percent_completion": request.form.get("percent_completion", ""),
-        "status": request.form.get("status", ""),
-        "weekly_time_spent": request.form.get("weekly_time_spent", ""),
-        "projected_hours": request.form.get("projected_hours", ""),
-        "functional_area": request.form.get("functional_area", ""),
-        "project_category": request.form.get("project_category", ""),
-        "complexity": request.form.get("complexity", ""),
-        "novelty": request.form.get("novelty", ""),
-        "output_type": request.form.get("output_type", ""),
-        "impact_type": request.form.get("impact_type", "")
-    }
-    field_errors = validate_fields(data)
-    if field_errors:
-        return render_template("form.html", error="; ".join(field_errors), suggestions=load_suggestions())
-    anomalies = check_anomalies(data)
-    anomaly_message = "; ".join(anomalies) if anomalies else ""
-    success, err_msg = append_log(data, anomaly_message)
-    if success:
-        return render_template("form.html", message="Log submitted successfully!", suggestions=load_suggestions())
-    else:
-        return render_template("form.html", error=f"Error saving log: {err_msg}", suggestions=load_suggestions())
+    # Form Inputs
+    status_date = st.date_input("Status Date (Friday)", min_value=datetime.today())
+    main_project = st.selectbox("Main Project", suggestions["main_project"])
+    project_name = st.selectbox("Project Name", suggestions["project_name"])
+    project_key_milestones = st.selectbox("Project Key Milestones", suggestions["project_key_milestones"])
+    tm = st.selectbox("Team Member (TM)", suggestions["tm"])
+    start_date = st.date_input("Start Date")
+    completion_date = st.date_input("Completion Date")
+    percent_completion = st.number_input("% of Completion", min_value=0.0, max_value=100.0, step=0.01)
+    status = st.selectbox("Status", suggestions["status"])
+    weekly_time_spent = st.number_input("Weekly Time Spent (hrs)", min_value=0.0)
+    projected_hours = st.number_input("Projected Hours", min_value=0.0)
+    functional_area = st.text_input("Functional Area")
+    project_category = st.text_input("Project Category")
+    complexity = st.selectbox("Complexity", ["H", "M", "L"])
+    novelty = st.selectbox("Novelty", ["BAU repetitive", "One time repetitive", "New one time"])
+    output_type = st.text_input("Output Type")
+    impact_type = st.text_input("Impact Type")
+
+    # Submit Button
+    if st.button("Submit"):
+        data = {
+            "status_date": str(status_date),
+            "main_project": main_project,
+            "project_name": project_name,
+            "project_key_milestones": project_key_milestones,
+            "tm": tm,
+            "start_date": str(start_date),
+            "completion_date": str(completion_date),
+            "percent_completion": str(percent_completion),
+            "status": status,
+            "weekly_time_spent": str(weekly_time_spent),
+            "projected_hours": str(projected_hours),
+            "functional_area": functional_area,
+            "project_category": project_category,
+            "complexity": complexity,
+            "novelty": novelty,
+            "output_type": output_type,
+            "impact_type": impact_type
+        }
+
+        # Validate fields
+        field_errors = validate_fields(data)
+        if field_errors:
+            st.error("Errors: " + "; ".join(field_errors))
+        else:
+            anomalies = check_anomalies(data)
+            anomaly_message = "; ".join(anomalies) if anomalies else ""
+            success, err_msg = append_log(data, anomaly_message)
+            if success:
+                st.success("Log submitted successfully!")
+            else:
+                st.error(f"Error saving log: {err_msg}")
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    main()
