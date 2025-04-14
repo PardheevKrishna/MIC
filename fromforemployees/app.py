@@ -48,7 +48,7 @@ def load_suggestions():
 # Function to handle custom input or selection with checkbox
 def handle_checkbox_select(field_name, suggestions):
     use_custom_input = st.checkbox(f"Enter a new {field_name} (check to input)")
-    
+
     if use_custom_input:
         custom_value = st.text_input(f"Enter {field_name}", "")
         return custom_value
