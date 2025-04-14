@@ -50,8 +50,7 @@ def handle_select_or_input(field_name, suggestions):
     selected_value = st.selectbox(f"Select or Enter {field_name}", options=list(suggestions) + ["Other..."])
     if selected_value == "Other...":
         custom_value = st.text_input(f"Enter {field_name}").strip()
-        if custom_value:
-            return custom_value
+        return custom_value
     return selected_value
 
 # Validate function for all fields
