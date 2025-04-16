@@ -1,86 +1,108 @@
 import streamlit as st
-from datetime import datetime, timedelta
-import openpyxl
-import os
+import sqlite3
 import logging
-from openpyxl.styles import PatternFill
-from dask import delayed, compute
+from datetime import datetime, timedelta
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
-# Files
-LOGS_FILE = 'logs.xlsx'
-LEAVES_FILE = 'leaves.xlsx'
+# Database file name
+DB_FILE = "logs.db"
 
-# Predefined list of employees for TM dropdown
+# Predefined team members; these will be used in the dropdown for TM.
 EMPLOYEES = ["Alice", "Bob", "Carol", "Dave"]
 
-# Orange fill for anomaly rows
-ORANGE_FILL = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
+# -------------------------------
+# Initialize the SQLite database and create table if not exists.
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            status_date TEXT,
+            main_project TEXT,
+            project_name TEXT,
+            project_key_milestones TEXT,
+            tm TEXT,
+            start_date TEXT,
+            completion_date TEXT,
+            percent_completion REAL,
+            status TEXT,
+            weekly_time_spent REAL,
+            projected_hours REAL,
+            functional_area TEXT,
+            project_category TEXT,
+            complexity TEXT,
+            novelty TEXT,
+            output_type TEXT,
+            impact_type TEXT,
+            anomaly_reason TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
 
-# ---------------------------------------------------
-# Process one sheet using Dask delayed.
-# This function extracts suggestions from a given worksheet.
-@delayed
-def process_sheet(sheet):
-    s = {"main_project": set(), "project_name": set(), "project_key_milestones": set()}
-    for row in sheet.iter_rows(min_row=2, values_only=True):
-        # Column 2: "Main project" (index 1)
-        if len(row) >= 2 and row[1]:
-            s["main_project"].add(str(row[1]).strip())
-        # Column 3: "Name of the Project" (index 2)
-        if len(row) >= 3 and row[2]:
-            s["project_name"].add(str(row[2]).strip())
-        # Column 4: "Project Key Milestones" (index 3)
-        if len(row) >= 4 and row[3]:
-            s["project_key_milestones"].add(str(row[3]).strip())
-    return s
+# -------------------------------
+# Insert a log record into the database.
+def insert_log(data, anomaly_reason):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+          INSERT INTO logs (
+              status_date, main_project, project_name, project_key_milestones, tm, 
+              start_date, completion_date, percent_completion, status, weekly_time_spent, 
+              projected_hours, functional_area, project_category, complexity, novelty, output_type, impact_type, anomaly_reason
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+              data["status_date"],
+              data["main_project"],
+              data["project_name"],
+              data["project_key_milestones"],
+              data["tm"],
+              data["start_date"],
+              data["completion_date"],
+              float(data["percent_completion"]),
+              data["status"],
+              float(data["weekly_time_spent"]),
+              float(data["projected_hours"]),
+              data["functional_area"],
+              data["project_category"],
+              data["complexity"],
+              data["novelty"],
+              data["output_type"],
+              data["impact_type"],
+              anomaly_reason
+        ))
+        conn.commit()
+        conn.close()
+        logging.info("Log inserted successfully for %s.", data["tm"])
+        return True, None
+    except Exception as e:
+        logging.error("Error inserting log: %s", e)
+        return False, str(e)
 
-# ---------------------------------------------------
-# Load suggestions by scanning all employee sheets.
-# This function is cached so that repeated runs (within the app session)
-# do not have to re-scan the entire workbook.
-@st.cache_data
+# -------------------------------
+# Load suggestions for dropdowns by querying distinct values in the logs table.
 def load_suggestions():
-    suggestions = {
-        "main_project": set(),
-        "project_name": set(),
-        "project_key_milestones": set(),
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT main_project FROM logs WHERE main_project IS NOT NULL AND main_project!=''")
+    main_projects = sorted([row[0] for row in c.fetchall()])
+    c.execute("SELECT DISTINCT project_name FROM logs WHERE project_name IS NOT NULL AND project_name!=''")
+    project_names = sorted([row[0] for row in c.fetchall()])
+    c.execute("SELECT DISTINCT project_key_milestones FROM logs WHERE project_key_milestones IS NOT NULL AND project_key_milestones!=''")
+    project_key_milestones = sorted([row[0] for row in c.fetchall()])
+    conn.close()
+    return {
+        "main_project": main_projects,
+        "project_name": project_names,
+        "project_key_milestones": project_key_milestones
     }
-    if os.path.exists(LOGS_FILE):
-        try:
-            wb = openpyxl.load_workbook(LOGS_FILE, read_only=True)
-            delayed_results = []
-            for sheet in wb.worksheets:
-                # Process only sheets with names matching the predefined employee list.
-                if sheet.title in EMPLOYEES:
-                    delayed_results.append(process_sheet(sheet))
-            # Compute results concurrently.
-            computed = compute(*delayed_results)
-            for result in computed:
-                suggestions["main_project"] |= result["main_project"]
-                suggestions["project_name"] |= result["project_name"]
-                suggestions["project_key_milestones"] |= result["project_key_milestones"]
-        except Exception as e:
-            logging.error("Error loading suggestions: %s", e)
-    # Sort suggestions
-    for key in suggestions:
-        suggestions[key] = sorted(list(suggestions[key]))
-    # Fixed Status suggestions:
-    status_suggestions = ["Completed", "In Progress"]
-    return suggestions, status_suggestions
 
-# ---------------------------------------------------
-# Provides an input interface that shows both a text input and a selectbox.
-# A non-empty text input will take precedence over the selectbox selection.
-def handle_input_or_select(field_name, suggestions):
-    custom_value = st.text_input(f"Enter {field_name} (or select from dropdown):", key=f"{field_name}_input")
-    selected_value = st.selectbox(f"Select {field_name}", options=[""] + suggestions, key=f"{field_name}_select")
-    return custom_value.strip() if custom_value.strip() else selected_value
-
-# ---------------------------------------------------
-# Validate the provided fields.
+# -------------------------------
+# Validate the provided data.
 def validate_fields(data):
     errors = []
     try:
@@ -93,7 +115,7 @@ def validate_fields(data):
     if not data['project_name'].strip():
         errors.append("Name of the Project is required.")
     if not data['project_key_milestones'].strip():
-        errors.append("Project Key Milestones is required.")
+        errors.append("Project Key Milestones are required.")
     if not data['tm'].strip():
         errors.append("Team Member (TM) is required.")
         
@@ -140,39 +162,21 @@ def validate_fields(data):
     if data['complexity'] not in ["H", "M", "L"]:
         errors.append("Complexity must be H, M, or L.")
     if data['novelty'] not in ["BAU repetitive", "One time repetitive", "New one time"]:
-        errors.append("Novelity must be one of BAU repetitive, One time repetitive, or New one time.")
+        errors.append("Novelty must be one of BAU repetitive, One time repetitive, or New one time.")
     if not data['output_type'].strip():
         errors.append("Output Type is required.")
     if not data['impact_type'].strip():
         errors.append("Impact type is required.")
-    
     return errors
 
-# ---------------------------------------------------
-# Count leave days for a TM based on the week (Monday to Friday) containing the given status_date.
+# -------------------------------
+# Count leave days for a team member.
+# (This demo function always returns 0; replace with actual logic if available.)
 def count_leave_days(tm, status_date):
-    leave_count = 0
-    if os.path.exists(LEAVES_FILE):
-        try:
-            wb = openpyxl.load_workbook(LEAVES_FILE, read_only=True)
-            sheet = wb.active
-            current_date = datetime.strptime(status_date, "%Y-%m-%d").date()
-            monday = current_date - timedelta(days=current_date.weekday())
-            friday = monday + timedelta(days=4)
-            for row in sheet.iter_rows(min_row=2, values_only=True):
-                if str(row[0]).strip() == tm:
-                    try:
-                        leave_date = datetime.strptime(str(row[1]).strip(), "%Y-%m-%d").date()
-                        if monday <= leave_date <= friday:
-                            leave_count += 1
-                    except:
-                        continue
-        except Exception as e:
-            logging.error("Error reading leaves.xlsx: %s", e)
-    return leave_count
+    return 0
 
-# ---------------------------------------------------
-# Check for anomalies based on the Weekly Time Spent.
+# -------------------------------
+# Check for anomalies based on Weekly Time Spent.
 def check_anomalies(data):
     anomalies = []
     try:
@@ -188,99 +192,41 @@ def check_anomalies(data):
         anomalies.append(f"Weekly Time Spent exceeds allowed limit. With {leave_days} leave day(s), maximum allowed is {max_allowed_hours} hrs.")
     return anomalies
 
-# ---------------------------------------------------
-# Append the log to the team member–specific sheet.
-# If a sheet for that TM does not exist, create it with the appropriate headers.
-def append_log(data, anomaly_message):
-    try:
-        if os.path.exists(LOGS_FILE):
-            wb = openpyxl.load_workbook(LOGS_FILE)
-        else:
-            wb = openpyxl.Workbook()
-            default_sheet = wb.active
-            wb.remove(default_sheet)
-            
-        sheet_name = data['tm']
-        if sheet_name not in wb.sheetnames:
-            sheet = wb.create_sheet(title=sheet_name)
-            headers = [
-                "Status Date (Every Friday)", "Main project", "Name of the Project", "Project Key Milestones", "TM",
-                "Start Date", "Completion Date % of Completion", "Status", "Weekly Time Spent(Hrs)",
-                "Projected hours (Based on the Project: End to End implementation)",
-                "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
-                "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
-                "Complexity (H,M,L)",
-                "Novelity (BAU repetitive, One time repetitive, New one time)",
-                "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others)",
-                "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)",
-                "Anomaly Reason"
-            ]
-            sheet.append(headers)
-        else:
-            sheet = wb[sheet_name]
-            
-        new_row = sheet.max_row + 1
-        sheet.cell(row=new_row, column=1, value=data['status_date'])
-        sheet.cell(row=new_row, column=2, value=data['main_project'])
-        sheet.cell(row=new_row, column=3, value=data['project_name'])
-        sheet.cell(row=new_row, column=4, value=data['project_key_milestones'])
-        sheet.cell(row=new_row, column=5, value=data['tm'])
-        sheet.cell(row=new_row, column=6, value=data['start_date'])
-        sheet.cell(row=new_row, column=7, value=data['completion_date'])
-        cell_pct = sheet.cell(row=new_row, column=8)
-        cell_pct.value = float(data['percent_completion'])
-        cell_pct.number_format = '0.00'
-        sheet.cell(row=new_row, column=9, value=data['status'])
-        cell_wts = sheet.cell(row=new_row, column=10)
-        cell_wts.value = float(data['weekly_time_spent'])
-        cell_wts.number_format = '0.00'
-        cell_ph = sheet.cell(row=new_row, column=11)
-        cell_ph.value = float(data['projected_hours'])
-        cell_ph.number_format = '0.00'
-        sheet.cell(row=new_row, column=12, value=data['functional_area'])
-        sheet.cell(row=new_row, column=13, value=data['project_category'])
-        sheet.cell(row=new_row, column=14, value=data['complexity'])
-        sheet.cell(row=new_row, column=15, value=data['novelty'])
-        sheet.cell(row=new_row, column=16, value=data['output_type'])
-        sheet.cell(row=new_row, column=17, value=data['impact_type'])
-        sheet.cell(row=new_row, column=18, value=anomaly_message)
-        
-        if anomaly_message:
-            for col in range(1, 19):
-                sheet.cell(row=new_row, column=col).fill = ORANGE_FILL
-                
-        wb.save(LOGS_FILE)
-        logging.info("Log appended successfully for %s.", data['tm'])
-        return True, None
-    except Exception as e:
-        logging.error("Error appending log: %s", e)
-        return False, str(e)
+# -------------------------------
+# Initialize the database on startup.
+init_db()
 
-# ---------------------------------------------------
+# -------------------------------
 # STREAMLIT UI
 st.set_page_config(page_title="Project Log", layout="wide")
 st.title("Project Log")
 
-# Load dropdown suggestions (using our accelerated method) from all employee sheets.
-suggestions, status_suggestions = load_suggestions()
+# Load suggestions (these queries are fast in SQLite)
+suggestions = load_suggestions()
 
+# In the UI we allow the user to either type their value or choose one from a dropdown.
 with st.form(key="project_log_form"):
     status_date = st.date_input("Status Date")
     
-    # For the following fields, allow the user to either type or select from dynamic suggestions.
-    main_project = handle_input_or_select("Main project", suggestions["main_project"])
-    project_name = handle_input_or_select("Name of the Project", suggestions["project_name"])
-    project_key_milestones = handle_input_or_select("Project Key Milestones", suggestions["project_key_milestones"])
+    # For Main project, Name of the Project, and Project Key Milestones,
+    # we show a text input and a selectbox.
+    main_project = st.text_input("Enter Main project (or choose below):", key="main_project_input")
+    main_project_select = st.selectbox("Select Main project", options=[""] + suggestions["main_project"], key="main_project_select")
+    main_project_val = main_project.strip() if main_project.strip() else main_project_select
+
+    project_name = st.text_input("Enter Name of the Project (or choose below):", key="project_name_input")
+    project_name_select = st.selectbox("Select Name of the Project", options=[""] + suggestions["project_name"], key="project_name_select")
+    project_name_val = project_name.strip() if project_name.strip() else project_name_select
+
+    project_key_milestones = st.text_input("Enter Project Key Milestones (or choose below):", key="project_key_milestones_input")
+    project_key_milestones_select = st.selectbox("Select Project Key Milestones", options=[""] + suggestions["project_key_milestones"], key="project_key_milestones_select")
+    project_key_milestones_val = project_key_milestones.strip() if project_key_milestones.strip() else project_key_milestones_select
     
-    # For Team Member, use the predefined dropdown.
     tm = st.selectbox("Team Member (TM)", options=EMPLOYEES)
-    
-    # Other fields
     start_date = st.date_input("Start Date")
     completion_date = st.date_input("Completion Date")
     percent_completion = st.number_input("% of Completion", min_value=0, max_value=100)
-    # For Status, we use fixed suggestions.
-    status = st.selectbox("Status", options=status_suggestions)
+    status = st.selectbox("Status", options=["Completed", "In Progress"])
     weekly_time_spent = st.number_input("Weekly Time Spent (Hrs)", min_value=0.0, step=0.5)
     projected_hours = st.number_input("Projected hours (Based on the Project: End to End implementation)", min_value=0.0, step=0.5)
     functional_area = st.selectbox(
@@ -292,8 +238,7 @@ with st.form(key="project_log_form"):
         options=["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"]
     )
     complexity = st.selectbox("Complexity (H,M,L)", options=["H", "M", "L"])
-    novelty = st.selectbox("Novelity (BAU repetitive, One time repetitive, New one time)",
-                           options=["BAU repetitive", "One time repetitive", "New one time"])
+    novelty = st.selectbox("Novelty (BAU repetitive, One time repetitive, New one time)", options=["BAU repetitive", "One time repetitive", "New one time"])
     output_type = st.selectbox(
         "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others)",
         options=["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"]
@@ -308,9 +253,9 @@ with st.form(key="project_log_form"):
 if submit_button:
     data = {
         "status_date": str(status_date),
-        "main_project": main_project,
-        "project_name": project_name,
-        "project_key_milestones": project_key_milestones,
+        "main_project": main_project_val,
+        "project_name": project_name_val,
+        "project_key_milestones": project_key_milestones_val,
         "tm": tm,
         "start_date": str(start_date),
         "completion_date": str(completion_date),
@@ -325,14 +270,14 @@ if submit_button:
         "output_type": output_type,
         "impact_type": impact_type
     }
-
+    
     field_errors = validate_fields(data)
     if field_errors:
         st.error(" ".join(field_errors))
     else:
         anomalies = check_anomalies(data)
         anomaly_message = "; ".join(anomalies) if anomalies else ""
-        success, err_msg = append_log(data, anomaly_message)
+        success, err_msg = insert_log(data, anomaly_message)
         if success:
             st.success("Log submitted successfully!")
         else:
