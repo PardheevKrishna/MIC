@@ -1,10 +1,10 @@
 import streamlit as st
-import pandas as pd
 from datetime import datetime, timedelta
 import openpyxl
 import os
 import logging
 from openpyxl.styles import PatternFill
+from dask import delayed, compute
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -20,14 +20,28 @@ EMPLOYEES = ["Alice", "Bob", "Carol", "Dave"]
 ORANGE_FILL = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
 
 # ---------------------------------------------------
-# Load suggestions from all employee sheets.
-# It scans each sheet in LOGS_FILE (only if the sheet title is one of EMPLOYEES)
-# and collects:
-#   - "Main project" from Column 2
-#   - "Name of the Project" from Column 3
-#   - "Project Key Milestones" from Column 4
-#
-# Status suggestions are fixed.
+# Process one sheet using Dask delayed.
+# This function extracts suggestions from a given worksheet.
+@delayed
+def process_sheet(sheet):
+    s = {"main_project": set(), "project_name": set(), "project_key_milestones": set()}
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        # Column 2: "Main project" (index 1)
+        if len(row) >= 2 and row[1]:
+            s["main_project"].add(str(row[1]).strip())
+        # Column 3: "Name of the Project" (index 2)
+        if len(row) >= 3 and row[2]:
+            s["project_name"].add(str(row[2]).strip())
+        # Column 4: "Project Key Milestones" (index 3)
+        if len(row) >= 4 and row[3]:
+            s["project_key_milestones"].add(str(row[3]).strip())
+    return s
+
+# ---------------------------------------------------
+# Load suggestions by scanning all employee sheets.
+# This function is cached so that repeated runs (within the app session)
+# do not have to re-scan the entire workbook.
+@st.cache_data
 def load_suggestions():
     suggestions = {
         "main_project": set(),
@@ -36,35 +50,30 @@ def load_suggestions():
     }
     if os.path.exists(LOGS_FILE):
         try:
-            wb = openpyxl.load_workbook(LOGS_FILE)
+            wb = openpyxl.load_workbook(LOGS_FILE, read_only=True)
+            delayed_results = []
             for sheet in wb.worksheets:
-                # Only process sheets with names in EMPLOYEES
-                if sheet.title not in EMPLOYEES:
-                    continue
-                for row in sheet.iter_rows(min_row=2, values_only=True):
-                    # Column 2: "Main project" (index 1)
-                    if len(row) >= 2 and row[1]:
-                        suggestions["main_project"].add(str(row[1]).strip())
-                    # Column 3: "Name of the Project" (index 2)
-                    if len(row) >= 3 and row[2]:
-                        suggestions["project_name"].add(str(row[2]).strip())
-                    # Column 4: "Project Key Milestones" (index 3)
-                    if len(row) >= 4 and row[3]:
-                        suggestions["project_key_milestones"].add(str(row[3]).strip())
+                # Process only sheets with names matching the predefined employee list.
+                if sheet.title in EMPLOYEES:
+                    delayed_results.append(process_sheet(sheet))
+            # Compute results concurrently.
+            computed = compute(*delayed_results)
+            for result in computed:
+                suggestions["main_project"] |= result["main_project"]
+                suggestions["project_name"] |= result["project_name"]
+                suggestions["project_key_milestones"] |= result["project_key_milestones"]
         except Exception as e:
             logging.error("Error loading suggestions: %s", e)
-    # Sort suggestions into lists
+    # Sort suggestions
     for key in suggestions:
         suggestions[key] = sorted(list(suggestions[key]))
-    
-    # For status, we use fixed choices.
+    # Fixed Status suggestions:
     status_suggestions = ["Completed", "In Progress"]
-    
     return suggestions, status_suggestions
 
 # ---------------------------------------------------
-# Displays both a text input and a select box for a field.
-# If a non-empty custom input is typed, that takes priority over the dropdown.
+# Provides an input interface that shows both a text input and a selectbox.
+# A non-empty text input will take precedence over the selectbox selection.
 def handle_input_or_select(field_name, suggestions):
     custom_value = st.text_input(f"Enter {field_name} (or select from dropdown):", key=f"{field_name}_input")
     selected_value = st.selectbox(f"Select {field_name}", options=[""] + suggestions, key=f"{field_name}_select")
@@ -140,12 +149,12 @@ def validate_fields(data):
     return errors
 
 # ---------------------------------------------------
-# Count leave days for a TM based on the week (Monday to Friday) that includes the provided status_date.
+# Count leave days for a TM based on the week (Monday to Friday) containing the given status_date.
 def count_leave_days(tm, status_date):
     leave_count = 0
     if os.path.exists(LEAVES_FILE):
         try:
-            wb = openpyxl.load_workbook(LEAVES_FILE)
+            wb = openpyxl.load_workbook(LEAVES_FILE, read_only=True)
             sheet = wb.active
             current_date = datetime.strptime(status_date, "%Y-%m-%d").date()
             monday = current_date - timedelta(days=current_date.weekday())
@@ -163,7 +172,7 @@ def count_leave_days(tm, status_date):
     return leave_count
 
 # ---------------------------------------------------
-# Check for anomalies based on Weekly Time Spent.
+# Check for anomalies based on the Weekly Time Spent.
 def check_anomalies(data):
     anomalies = []
     try:
@@ -180,8 +189,8 @@ def check_anomalies(data):
     return anomalies
 
 # ---------------------------------------------------
-# Append the log to the TM-specific sheet.
-# If the sheet for the TM does not exist, create it with headers.
+# Append the log to the team member–specific sheet.
+# If a sheet for that TM does not exist, create it with the appropriate headers.
 def append_log(data, anomaly_message):
     try:
         if os.path.exists(LOGS_FILE):
@@ -252,13 +261,13 @@ def append_log(data, anomaly_message):
 st.set_page_config(page_title="Project Log", layout="wide")
 st.title("Project Log")
 
-# Load dropdown suggestions from all employee sheets (for main project, project name, and key milestones)
+# Load dropdown suggestions (using our accelerated method) from all employee sheets.
 suggestions, status_suggestions = load_suggestions()
 
 with st.form(key="project_log_form"):
     status_date = st.date_input("Status Date")
     
-    # For the fields below, users may type a value or select from the dynamic suggestions.
+    # For the following fields, allow the user to either type or select from dynamic suggestions.
     main_project = handle_input_or_select("Main project", suggestions["main_project"])
     project_name = handle_input_or_select("Name of the Project", suggestions["project_name"])
     project_key_milestones = handle_input_or_select("Project Key Milestones", suggestions["project_key_milestones"])
@@ -270,7 +279,7 @@ with st.form(key="project_log_form"):
     start_date = st.date_input("Start Date")
     completion_date = st.date_input("Completion Date")
     percent_completion = st.number_input("% of Completion", min_value=0, max_value=100)
-    # For Status, we use the fixed options.
+    # For Status, we use fixed suggestions.
     status = st.selectbox("Status", options=status_suggestions)
     weekly_time_spent = st.number_input("Weekly Time Spent (Hrs)", min_value=0.0, step=0.5)
     projected_hours = st.number_input("Projected hours (Based on the Project: End to End implementation)", min_value=0.0, step=0.5)
