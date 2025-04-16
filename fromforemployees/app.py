@@ -9,22 +9,27 @@ from openpyxl.styles import PatternFill
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
-# Files used in the application.
+# Files
 LOGS_FILE = 'logs.xlsx'
 LEAVES_FILE = 'leaves.xlsx'
 
-# Predefined list of employees for the Team Member (TM) dropdown.
+# Predefined list of employees for TM dropdown
 EMPLOYEES = ["Alice", "Bob", "Carol", "Dave"]
 
-# Orange fill for anomaly rows.
+# Orange fill for anomaly rows
 ORANGE_FILL = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
 
-# -----------------------------------------------------------------------------
-# Function to load suggestions from logs.xlsx by iterating through all sheets.
-# Suggestions for "Main Project", "Project Name", and "Project Key Milestones"
-# are gathered by scanning the respective columns across all existing employee sheets.
-# If a sheet for an employee doesn't exist, nothing is added from that employee.
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------
+# Load suggestions for dropdown fields from all employee sheets.
+# It will scan through each sheet in LOGS_FILE whose name is one of EMPLOYEES.
+# For each row in these sheets, extract values from specific columns:
+#
+#   Column 2: "Main project"
+#   Column 3: "Name of the Project"
+#   Column 4: "Project Key Milestones"
+#   Column 8: "Status"
+#
+# If a sheet does not exist for an employee, it is skipped.
 def load_suggestions():
     suggestions = {
         "main_project": set(),
@@ -35,58 +40,61 @@ def load_suggestions():
     if os.path.exists(LOGS_FILE):
         try:
             wb = openpyxl.load_workbook(LOGS_FILE)
-            # Loop over every sheet present in the workbook.
             for sheet in wb.worksheets:
-                # Expect headers in row 1; start iterating from row 2.
+                # Only process sheets with names in EMPLOYEES
+                if sheet.title not in EMPLOYEES:
+                    continue
                 for row in sheet.iter_rows(min_row=2, values_only=True):
-                    # In the saved log, the column order is:
-                    # 1: Status Date, 2: Main Project, 3: Project Name, 
-                    # 4: Project Key Milestones, 5: TM, 6: Start Date, 
-                    # 7: Completion Date, 8: % Completion, 9: Status, etc.
-                    if row[1]:
+                    # Check length for safety then extract:
+                    # Column 2: index 1 => Main project
+                    if len(row) >= 2 and row[1]:
                         suggestions["main_project"].add(str(row[1]).strip())
-                    if row[2]:
+                    # Column 3: index 2 => Name of the Project
+                    if len(row) >= 3 and row[2]:
                         suggestions["project_name"].add(str(row[2]).strip())
-                    if row[3]:
+                    # Column 4: index 3 => Project Key Milestones
+                    if len(row) >= 4 and row[3]:
                         suggestions["project_key_milestones"].add(str(row[3]).strip())
-                    if row[8]:
-                        suggestions["status"].add(str(row[8]).strip())
+                    # Column 8: index 7 => Status
+                    if len(row) >= 8 and row[7]:
+                        suggestions["status"].add(str(row[7]).strip())
         except Exception as e:
             logging.error("Error loading suggestions: %s", e)
-    # Convert each set to a sorted list.
+    # Sort lists for each field:
     for key in suggestions:
         suggestions[key] = sorted(list(suggestions[key]))
     return suggestions
 
-# -----------------------------------------------------------------------------
-# A combined input function: the user can either type a custom value or select
-# one from a dropdown. If the text input is nonempty, that value is used; otherwise,
-# the dropdown selection is used.
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------
+# This function displays both a text input and a selectbox.
+# Users can type a custom value or choose one from the dropdown.
+# If the text input is not empty, that value is given priority.
 def handle_input_or_select(field_name, suggestions):
     custom_value = st.text_input(f"Enter {field_name} (or select from dropdown):", key=f"{field_name}_input")
+    # Include an empty string at the top of the dropdown so that if nothing is selected,
+    # the text input (if provided) will be used.
     selected_value = st.selectbox(f"Select {field_name}", options=[""] + suggestions, key=f"{field_name}_select")
     return custom_value.strip() if custom_value.strip() else selected_value
 
-# -----------------------------------------------------------------------------
-# Validation function for all fields.
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------
+# Validate the provided data.
+# Status Date can be any valid date.
 def validate_fields(data):
     errors = []
     try:
         datetime.strptime(data['status_date'], "%Y-%m-%d")
     except ValueError:
         errors.append("Invalid Status Date format.")
-
+        
     if not data['main_project'].strip():
-        errors.append("Main Project is required.")
+        errors.append("Main project is required.")
     if not data['project_name'].strip():
-        errors.append("Project Name is required.")
+        errors.append("Name of the Project is required.")
     if not data['project_key_milestones'].strip():
         errors.append("Project Key Milestones is required.")
     if not data['tm'].strip():
         errors.append("Team Member (TM) is required.")
-
+        
     try:
         datetime.strptime(data['start_date'], "%Y-%m-%d")
     except ValueError:
@@ -98,31 +106,31 @@ def validate_fields(data):
             errors.append("Start Date cannot be after Completion Date.")
     except ValueError:
         errors.append("Invalid Completion Date format.")
-
+            
     try:
         pct = float(data['percent_completion'])
         if pct < 0 or pct > 100:
             errors.append("% of Completion must be between 0 and 100.")
     except ValueError:
         errors.append("Invalid % of Completion.")
-
+        
     if not data['status'].strip():
         errors.append("Status is required.")
-
+        
     try:
         wts = float(data['weekly_time_spent'])
         if wts < 0:
             errors.append("Weekly Time Spent cannot be negative.")
     except ValueError:
         errors.append("Invalid Weekly Time Spent value.")
-
+        
     try:
         ph = float(data['projected_hours'])
         if ph < 0:
             errors.append("Projected Hours cannot be negative.")
     except ValueError:
         errors.append("Invalid Projected Hours value.")
-
+        
     if not data['functional_area'].strip():
         errors.append("Functional Area is required.")
     if not data['project_category'].strip():
@@ -130,18 +138,16 @@ def validate_fields(data):
     if data['complexity'] not in ["H", "M", "L"]:
         errors.append("Complexity must be H, M, or L.")
     if data['novelty'] not in ["BAU repetitive", "One time repetitive", "New one time"]:
-        errors.append("Novelty must be one of BAU repetitive, One time repetitive, or New one time.")
+        errors.append("Novelity must be one of BAU repetitive, One time repetitive, or New one time.")
     if not data['output_type'].strip():
         errors.append("Output Type is required.")
     if not data['impact_type'].strip():
-        errors.append("Impact Type is required.")
-
+        errors.append("Impact type is required.")
+    
     return errors
 
-# -----------------------------------------------------------------------------
-# Function to count leave days for a given Team Member (TM) based on the week
-# in which the status_date occurs.
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------
+# Count leave days for a TM based on the week (Monday to Friday) that includes the given status_date.
 def count_leave_days(tm, status_date):
     leave_count = 0
     if os.path.exists(LEAVES_FILE):
@@ -163,9 +169,8 @@ def count_leave_days(tm, status_date):
             logging.error("Error reading leaves.xlsx: %s", e)
     return leave_count
 
-# -----------------------------------------------------------------------------
-# Check for anomalies based on the Weekly Time Spent.
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------
+# Check for anomalies based on Weekly Time Spent.
 def check_anomalies(data):
     anomalies = []
     try:
@@ -178,37 +183,41 @@ def check_anomalies(data):
     allowed_days = 5 - leave_days
     max_allowed_hours = allowed_days * 9
     if weekly_time_spent > max_allowed_hours:
-        anomalies.append(
-            f"Weekly Time Spent exceeds allowed limit. With {leave_days} leave day(s), maximum allowed is {max_allowed_hours} hrs."
-        )
+        anomalies.append(f"Weekly Time Spent exceeds allowed limit. With {leave_days} leave day(s), maximum allowed is {max_allowed_hours} hrs.")
     return anomalies
 
-# -----------------------------------------------------------------------------
-# Append the log to a TM-specific sheet within logs.xlsx.
-# If the sheet for the given Team Member doesn't exist, it is created.
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------
+# Append the log to the employee-specific sheet.
+# If the sheet for the TM does not exist, it is created with headers.
 def append_log(data, anomaly_message):
     try:
         if os.path.exists(LOGS_FILE):
             wb = openpyxl.load_workbook(LOGS_FILE)
         else:
             wb = openpyxl.Workbook()
+            # Remove the default sheet if it exists.
             default_sheet = wb.active
             wb.remove(default_sheet)
-
+            
         sheet_name = data['tm']
         if sheet_name not in wb.sheetnames:
             sheet = wb.create_sheet(title=sheet_name)
             headers = [
-                "Status Date", "Main Project", "Project Name", "Project Key Milestones", "Team Member (TM)",
-                "Start Date", "Completion Date", "% of Completion", "Status", "Weekly Time Spent(Hrs)",
-                "Projected Hours", "Functional Area", "Project Category", "Complexity", "Novelty",
-                "Output Type", "Impact Type", "Anomaly Reason"
+                "Status Date (Every Friday)", "Main project", "Name of the Project", "Project Key Milestones", "TM",
+                "Start Date", "Completion Date % of Completion", "Status", "Weekly Time Spent(Hrs)",
+                "Projected hours (Based on the Project: End to End implementation)",
+                "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
+                "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
+                "Complexity (H,M,L)", 
+                "Novelity (BAU repetitive, One time repetitive, New one time)",
+                "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others)",
+                "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)",
+                "Anomaly Reason"
             ]
             sheet.append(headers)
         else:
             sheet = wb[sheet_name]
-
+            
         new_row = sheet.max_row + 1
         sheet.cell(row=new_row, column=1, value=data['status_date'])
         sheet.cell(row=new_row, column=2, value=data['main_project'])
@@ -234,10 +243,11 @@ def append_log(data, anomaly_message):
         sheet.cell(row=new_row, column=16, value=data['output_type'])
         sheet.cell(row=new_row, column=17, value=data['impact_type'])
         sheet.cell(row=new_row, column=18, value=anomaly_message)
+        
         if anomaly_message:
             for col in range(1, 19):
                 sheet.cell(row=new_row, column=col).fill = ORANGE_FILL
-
+                
         wb.save(LOGS_FILE)
         logging.info("Log appended successfully for %s.", data['tm'])
         return True, None
@@ -245,43 +255,43 @@ def append_log(data, anomaly_message):
         logging.error("Error appending log: %s", e)
         return False, str(e)
 
-# ------------------- Streamlit UI Section -------------------
+# ---------------------------------------------------
+# STREAMLIT UI
 st.set_page_config(page_title="Project Log", layout="wide")
 st.title("Project Log")
 
-# Load suggestions by scanning across all employee sheets.
+# Load dropdown suggestions from all employee sheets
 suggestions = load_suggestions()
 
 with st.form(key="project_log_form"):
     status_date = st.date_input("Status Date")
-
-    # For these fields, the user can either type a custom value or choose from suggestions
-    main_project = handle_input_or_select("Main Project", suggestions["main_project"])
-    project_name = handle_input_or_select("Project Name", suggestions["project_name"])
+    
+    # Handle fields with dynamic suggestions (custom input or dropdown)
+    main_project = handle_input_or_select("Main project", suggestions["main_project"])
+    project_name = handle_input_or_select("Name of the Project", suggestions["project_name"])
     project_key_milestones = handle_input_or_select("Project Key Milestones", suggestions["project_key_milestones"])
-
-    # TM is now a dropdown from a predefined list.
+    
+    # For Team Member, use predefined list.
     tm = st.selectbox("Team Member (TM)", options=EMPLOYEES)
     
+    # Other fields
     start_date = st.date_input("Start Date")
     completion_date = st.date_input("Completion Date")
     percent_completion = st.number_input("% of Completion", min_value=0, max_value=100)
     status = st.selectbox("Status", options=[""] + suggestions["status"])
     weekly_time_spent = st.number_input("Weekly Time Spent (Hrs)", min_value=0.0, step=0.5)
-    projected_hours = st.number_input("Projected Hours (E2E Implementation)", min_value=0.0, step=0.5)
-    
-    functional_area = st.selectbox("Functional Area", 
-                                   options=["CRIT", "CRIT - Data Management", "CRIT - Data Governance", 
+    projected_hours = st.number_input("Projected hours (Based on the Project: End to End implementation)", min_value=0.0, step=0.5)
+    functional_area = st.selectbox("Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
+                                   options=["CRIT", "CRIT - Data Management", "CRIT - Data Governance",
                                             "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"])
-    project_category = st.selectbox("Project Category", 
-                                    options=["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", 
-                                             "GDA Related", "Trainings and Team Meeting"])
-    complexity = st.selectbox("Complexity (H, M, L)", options=["H", "M", "L"])
-    novelty = st.selectbox("Novelty", options=["BAU repetitive", "One time repetitive", "New one time"])
-    output_type = st.selectbox("Output Type", 
-                               options=["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", 
-                                        "Business Management", "Administration", "Trainings/L&D activities", "Others"])
-    impact_type = st.selectbox("Impact Type", 
+    project_category = st.selectbox("Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
+                                    options=["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"])
+    complexity = st.selectbox("Complexity (H,M,L)", options=["H", "M", "L"])
+    novelty = st.selectbox("Novelity (BAU repetitive, One time repetitive, New one time)",
+                           options=["BAU repetitive", "One time repetitive", "New one time"])
+    output_type = st.selectbox("Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others)",
+                               options=["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"])
+    impact_type = st.selectbox("Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)",
                                options=["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"])
 
     submit_button = st.form_submit_button(label="Submit")
@@ -307,6 +317,7 @@ if submit_button:
         "impact_type": impact_type
     }
 
+    # Validate the inputs
     field_errors = validate_fields(data)
     if field_errors:
         st.error(" ".join(field_errors))
