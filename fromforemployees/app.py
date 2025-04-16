@@ -9,17 +9,22 @@ from openpyxl.styles import PatternFill
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
-# Files
+# Files used in the application.
 LOGS_FILE = 'logs.xlsx'
 LEAVES_FILE = 'leaves.xlsx'
 
-# Predefined list of employees for TM dropdown
+# Predefined list of employees for the Team Member (TM) dropdown.
 EMPLOYEES = ["Alice", "Bob", "Carol", "Dave"]
 
-# Orange fill for anomaly rows
+# Orange fill for anomaly rows.
 ORANGE_FILL = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
 
-# Function to load suggestions from logs.xlsx for some fields (excluding TM now)
+# -----------------------------------------------------------------------------
+# Function to load suggestions from logs.xlsx by iterating through all sheets.
+# Suggestions for "Main Project", "Project Name", and "Project Key Milestones"
+# are gathered by scanning the respective columns across all existing employee sheets.
+# If a sheet for an employee doesn't exist, nothing is added from that employee.
+# -----------------------------------------------------------------------------
 def load_suggestions():
     suggestions = {
         "main_project": set(),
@@ -30,10 +35,14 @@ def load_suggestions():
     if os.path.exists(LOGS_FILE):
         try:
             wb = openpyxl.load_workbook(LOGS_FILE)
-            # Iterate over each sheet and collect suggestions for these fields
+            # Loop over every sheet present in the workbook.
             for sheet in wb.worksheets:
+                # Expect headers in row 1; start iterating from row 2.
                 for row in sheet.iter_rows(min_row=2, values_only=True):
-                    # row indices: 1: main_project, 2: project_name, 3: project_key_milestones, 8: status
+                    # In the saved log, the column order is:
+                    # 1: Status Date, 2: Main Project, 3: Project Name, 
+                    # 4: Project Key Milestones, 5: TM, 6: Start Date, 
+                    # 7: Completion Date, 8: % Completion, 9: Status, etc.
                     if row[1]:
                         suggestions["main_project"].add(str(row[1]).strip())
                     if row[2]:
@@ -44,27 +53,31 @@ def load_suggestions():
                         suggestions["status"].add(str(row[8]).strip())
         except Exception as e:
             logging.error("Error loading suggestions: %s", e)
+    # Convert each set to a sorted list.
     for key in suggestions:
         suggestions[key] = sorted(list(suggestions[key]))
     return suggestions
 
-# Function to handle both custom input and dropdown selection for fields other than TM
+# -----------------------------------------------------------------------------
+# A combined input function: the user can either type a custom value or select
+# one from a dropdown. If the text input is nonempty, that value is used; otherwise,
+# the dropdown selection is used.
+# -----------------------------------------------------------------------------
 def handle_input_or_select(field_name, suggestions):
-    # Both the text input and selectbox are always shown.
     custom_value = st.text_input(f"Enter {field_name} (or select from dropdown):", key=f"{field_name}_input")
     selected_value = st.selectbox(f"Select {field_name}", options=[""] + suggestions, key=f"{field_name}_select")
-    # If a custom value is provided (non-empty), use that; otherwise, use the selected value.
     return custom_value.strip() if custom_value.strip() else selected_value
 
-# Validation function (Status Date can now be any day)
+# -----------------------------------------------------------------------------
+# Validation function for all fields.
+# -----------------------------------------------------------------------------
 def validate_fields(data):
     errors = []
     try:
-        # Allow any valid date string; no Friday-only check.
         datetime.strptime(data['status_date'], "%Y-%m-%d")
     except ValueError:
         errors.append("Invalid Status Date format.")
-        
+
     if not data['main_project'].strip():
         errors.append("Main Project is required.")
     if not data['project_name'].strip():
@@ -73,7 +86,7 @@ def validate_fields(data):
         errors.append("Project Key Milestones is required.")
     if not data['tm'].strip():
         errors.append("Team Member (TM) is required.")
-        
+
     try:
         datetime.strptime(data['start_date'], "%Y-%m-%d")
     except ValueError:
@@ -85,31 +98,31 @@ def validate_fields(data):
             errors.append("Start Date cannot be after Completion Date.")
     except ValueError:
         errors.append("Invalid Completion Date format.")
-            
+
     try:
         pct = float(data['percent_completion'])
         if pct < 0 or pct > 100:
             errors.append("% of Completion must be between 0 and 100.")
     except ValueError:
         errors.append("Invalid % of Completion.")
-        
+
     if not data['status'].strip():
         errors.append("Status is required.")
-        
+
     try:
         wts = float(data['weekly_time_spent'])
         if wts < 0:
             errors.append("Weekly Time Spent cannot be negative.")
     except ValueError:
         errors.append("Invalid Weekly Time Spent value.")
-        
+
     try:
         ph = float(data['projected_hours'])
         if ph < 0:
             errors.append("Projected Hours cannot be negative.")
     except ValueError:
         errors.append("Invalid Projected Hours value.")
-        
+
     if not data['functional_area'].strip():
         errors.append("Functional Area is required.")
     if not data['project_category'].strip():
@@ -122,17 +135,19 @@ def validate_fields(data):
         errors.append("Output Type is required.")
     if not data['impact_type'].strip():
         errors.append("Impact Type is required.")
-    
+
     return errors
 
-# Function to count leave days for a TM based on the week of the status date.
+# -----------------------------------------------------------------------------
+# Function to count leave days for a given Team Member (TM) based on the week
+# in which the status_date occurs.
+# -----------------------------------------------------------------------------
 def count_leave_days(tm, status_date):
     leave_count = 0
     if os.path.exists(LEAVES_FILE):
         try:
             wb = openpyxl.load_workbook(LEAVES_FILE)
             sheet = wb.active
-            # For any given date, calculate the Monday and Friday of the week.
             current_date = datetime.strptime(status_date, "%Y-%m-%d").date()
             monday = current_date - timedelta(days=current_date.weekday())
             friday = monday + timedelta(days=4)
@@ -148,11 +163,12 @@ def count_leave_days(tm, status_date):
             logging.error("Error reading leaves.xlsx: %s", e)
     return leave_count
 
-# Check for anomalies based on Weekly Time Spent
+# -----------------------------------------------------------------------------
+# Check for anomalies based on the Weekly Time Spent.
+# -----------------------------------------------------------------------------
 def check_anomalies(data):
     anomalies = []
     try:
-        # Use the provided status_date (any day) to compute the week.
         current_date = datetime.strptime(data['status_date'], "%Y-%m-%d").date()
         weekly_time_spent = float(data['weekly_time_spent'])
     except:
@@ -167,20 +183,20 @@ def check_anomalies(data):
         )
     return anomalies
 
-# Append log to a TM-specific sheet within logs.xlsx
+# -----------------------------------------------------------------------------
+# Append the log to a TM-specific sheet within logs.xlsx.
+# If the sheet for the given Team Member doesn't exist, it is created.
+# -----------------------------------------------------------------------------
 def append_log(data, anomaly_message):
     try:
-        # If the file exists, load it. Otherwise, create a new workbook.
         if os.path.exists(LOGS_FILE):
             wb = openpyxl.load_workbook(LOGS_FILE)
         else:
             wb = openpyxl.Workbook()
-            # Remove the default sheet if it exists.
             default_sheet = wb.active
             wb.remove(default_sheet)
-            
+
         sheet_name = data['tm']
-        # If the worksheet for this team member doesn't exist, create it and add headers.
         if sheet_name not in wb.sheetnames:
             sheet = wb.create_sheet(title=sheet_name)
             headers = [
@@ -192,7 +208,7 @@ def append_log(data, anomaly_message):
             sheet.append(headers)
         else:
             sheet = wb[sheet_name]
-            
+
         new_row = sheet.max_row + 1
         sheet.cell(row=new_row, column=1, value=data['status_date'])
         sheet.cell(row=new_row, column=2, value=data['main_project'])
@@ -218,12 +234,10 @@ def append_log(data, anomaly_message):
         sheet.cell(row=new_row, column=16, value=data['output_type'])
         sheet.cell(row=new_row, column=17, value=data['impact_type'])
         sheet.cell(row=new_row, column=18, value=anomaly_message)
-        
-        # If there is an anomaly, fill the row in orange.
         if anomaly_message:
             for col in range(1, 19):
                 sheet.cell(row=new_row, column=col).fill = ORANGE_FILL
-                
+
         wb.save(LOGS_FILE)
         logging.info("Log appended successfully for %s.", data['tm'])
         return True, None
@@ -231,33 +245,31 @@ def append_log(data, anomaly_message):
         logging.error("Error appending log: %s", e)
         return False, str(e)
 
-# ---------------------------
-# Streamlit UI
+# ------------------- Streamlit UI Section -------------------
 st.set_page_config(page_title="Project Log", layout="wide")
 st.title("Project Log")
 
-# Load suggestions for fields (except TM)
+# Load suggestions by scanning across all employee sheets.
 suggestions = load_suggestions()
 
-# Form for input
 with st.form(key="project_log_form"):
     status_date = st.date_input("Status Date")
-    
-    # Handle fields with option for custom input or dropdown selection.
+
+    # For these fields, the user can either type a custom value or choose from suggestions
     main_project = handle_input_or_select("Main Project", suggestions["main_project"])
     project_name = handle_input_or_select("Project Name", suggestions["project_name"])
     project_key_milestones = handle_input_or_select("Project Key Milestones", suggestions["project_key_milestones"])
-    
-    # For TM, use a predefined dropdown.
+
+    # TM is now a dropdown from a predefined list.
     tm = st.selectbox("Team Member (TM)", options=EMPLOYEES)
     
-    # Other fields
     start_date = st.date_input("Start Date")
     completion_date = st.date_input("Completion Date")
     percent_completion = st.number_input("% of Completion", min_value=0, max_value=100)
     status = st.selectbox("Status", options=[""] + suggestions["status"])
     weekly_time_spent = st.number_input("Weekly Time Spent (Hrs)", min_value=0.0, step=0.5)
     projected_hours = st.number_input("Projected Hours (E2E Implementation)", min_value=0.0, step=0.5)
+    
     functional_area = st.selectbox("Functional Area", 
                                    options=["CRIT", "CRIT - Data Management", "CRIT - Data Governance", 
                                             "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"])
@@ -274,7 +286,6 @@ with st.form(key="project_log_form"):
 
     submit_button = st.form_submit_button(label="Submit")
 
-# Handle form submission
 if submit_button:
     data = {
         "status_date": str(status_date),
@@ -296,7 +307,6 @@ if submit_button:
         "impact_type": impact_type
     }
 
-    # Validate input fields
     field_errors = validate_fields(data)
     if field_errors:
         st.error(" ".join(field_errors))
