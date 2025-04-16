@@ -20,22 +20,19 @@ EMPLOYEES = ["Alice", "Bob", "Carol", "Dave"]
 ORANGE_FILL = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
 
 # ---------------------------------------------------
-# Load suggestions for dropdown fields from all employee sheets.
-# It will scan through each sheet in LOGS_FILE whose name is one of EMPLOYEES.
-# For each row in these sheets, extract values from specific columns:
+# Load suggestions from all employee sheets.
+# It scans each sheet in LOGS_FILE (only if the sheet title is one of EMPLOYEES)
+# and collects:
+#   - "Main project" from Column 2
+#   - "Name of the Project" from Column 3
+#   - "Project Key Milestones" from Column 4
 #
-#   Column 2: "Main project"
-#   Column 3: "Name of the Project"
-#   Column 4: "Project Key Milestones"
-#   Column 8: "Status"
-#
-# If a sheet does not exist for an employee, it is skipped.
+# Status suggestions are fixed.
 def load_suggestions():
     suggestions = {
         "main_project": set(),
         "project_name": set(),
         "project_key_milestones": set(),
-        "status": set()
     }
     if os.path.exists(LOGS_FILE):
         try:
@@ -45,40 +42,36 @@ def load_suggestions():
                 if sheet.title not in EMPLOYEES:
                     continue
                 for row in sheet.iter_rows(min_row=2, values_only=True):
-                    # Check length for safety then extract:
-                    # Column 2: index 1 => Main project
+                    # Column 2: "Main project" (index 1)
                     if len(row) >= 2 and row[1]:
                         suggestions["main_project"].add(str(row[1]).strip())
-                    # Column 3: index 2 => Name of the Project
+                    # Column 3: "Name of the Project" (index 2)
                     if len(row) >= 3 and row[2]:
                         suggestions["project_name"].add(str(row[2]).strip())
-                    # Column 4: index 3 => Project Key Milestones
+                    # Column 4: "Project Key Milestones" (index 3)
                     if len(row) >= 4 and row[3]:
                         suggestions["project_key_milestones"].add(str(row[3]).strip())
-                    # Column 8: index 7 => Status
-                    if len(row) >= 8 and row[7]:
-                        suggestions["status"].add(str(row[7]).strip())
         except Exception as e:
             logging.error("Error loading suggestions: %s", e)
-    # Sort lists for each field:
+    # Sort suggestions into lists
     for key in suggestions:
         suggestions[key] = sorted(list(suggestions[key]))
-    return suggestions
+    
+    # For status, we use fixed choices.
+    status_suggestions = ["Completed", "In Progress"]
+    
+    return suggestions, status_suggestions
 
 # ---------------------------------------------------
-# This function displays both a text input and a selectbox.
-# Users can type a custom value or choose one from the dropdown.
-# If the text input is not empty, that value is given priority.
+# Displays both a text input and a select box for a field.
+# If a non-empty custom input is typed, that takes priority over the dropdown.
 def handle_input_or_select(field_name, suggestions):
     custom_value = st.text_input(f"Enter {field_name} (or select from dropdown):", key=f"{field_name}_input")
-    # Include an empty string at the top of the dropdown so that if nothing is selected,
-    # the text input (if provided) will be used.
     selected_value = st.selectbox(f"Select {field_name}", options=[""] + suggestions, key=f"{field_name}_select")
     return custom_value.strip() if custom_value.strip() else selected_value
 
 # ---------------------------------------------------
-# Validate the provided data.
-# Status Date can be any valid date.
+# Validate the provided fields.
 def validate_fields(data):
     errors = []
     try:
@@ -147,7 +140,7 @@ def validate_fields(data):
     return errors
 
 # ---------------------------------------------------
-# Count leave days for a TM based on the week (Monday to Friday) that includes the given status_date.
+# Count leave days for a TM based on the week (Monday to Friday) that includes the provided status_date.
 def count_leave_days(tm, status_date):
     leave_count = 0
     if os.path.exists(LEAVES_FILE):
@@ -187,15 +180,14 @@ def check_anomalies(data):
     return anomalies
 
 # ---------------------------------------------------
-# Append the log to the employee-specific sheet.
-# If the sheet for the TM does not exist, it is created with headers.
+# Append the log to the TM-specific sheet.
+# If the sheet for the TM does not exist, create it with headers.
 def append_log(data, anomaly_message):
     try:
         if os.path.exists(LOGS_FILE):
             wb = openpyxl.load_workbook(LOGS_FILE)
         else:
             wb = openpyxl.Workbook()
-            # Remove the default sheet if it exists.
             default_sheet = wb.active
             wb.remove(default_sheet)
             
@@ -208,7 +200,7 @@ def append_log(data, anomaly_message):
                 "Projected hours (Based on the Project: End to End implementation)",
                 "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
                 "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
-                "Complexity (H,M,L)", 
+                "Complexity (H,M,L)",
                 "Novelity (BAU repetitive, One time repetitive, New one time)",
                 "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others)",
                 "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)",
@@ -260,39 +252,47 @@ def append_log(data, anomaly_message):
 st.set_page_config(page_title="Project Log", layout="wide")
 st.title("Project Log")
 
-# Load dropdown suggestions from all employee sheets
-suggestions = load_suggestions()
+# Load dropdown suggestions from all employee sheets (for main project, project name, and key milestones)
+suggestions, status_suggestions = load_suggestions()
 
 with st.form(key="project_log_form"):
     status_date = st.date_input("Status Date")
     
-    # Handle fields with dynamic suggestions (custom input or dropdown)
+    # For the fields below, users may type a value or select from the dynamic suggestions.
     main_project = handle_input_or_select("Main project", suggestions["main_project"])
     project_name = handle_input_or_select("Name of the Project", suggestions["project_name"])
     project_key_milestones = handle_input_or_select("Project Key Milestones", suggestions["project_key_milestones"])
     
-    # For Team Member, use predefined list.
+    # For Team Member, use the predefined dropdown.
     tm = st.selectbox("Team Member (TM)", options=EMPLOYEES)
     
     # Other fields
     start_date = st.date_input("Start Date")
     completion_date = st.date_input("Completion Date")
     percent_completion = st.number_input("% of Completion", min_value=0, max_value=100)
-    status = st.selectbox("Status", options=[""] + suggestions["status"])
+    # For Status, we use the fixed options.
+    status = st.selectbox("Status", options=status_suggestions)
     weekly_time_spent = st.number_input("Weekly Time Spent (Hrs)", min_value=0.0, step=0.5)
     projected_hours = st.number_input("Projected hours (Based on the Project: End to End implementation)", min_value=0.0, step=0.5)
-    functional_area = st.selectbox("Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
-                                   options=["CRIT", "CRIT - Data Management", "CRIT - Data Governance",
-                                            "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"])
-    project_category = st.selectbox("Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
-                                    options=["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"])
+    functional_area = st.selectbox(
+        "Functional Area (CRIT, CRIT - Data Management, CRIT - Data Governance, CRIT - Regulatory Reporting, CRIT - Portfolio Reporting, CRIT - Transformation)",
+        options=["CRIT", "CRIT - Data Management", "CRIT - Data Governance", "CRIT - Regulatory Reporting", "CRIT - Portfolio Reporting", "CRIT - Transformation"]
+    )
+    project_category = st.selectbox(
+        "Project Category (Data Infrastructure, Monitoring & Insights, Analytics / Strategy Development, GDA Related, Trainings and Team Meeting)",
+        options=["Data Infrastructure", "Monitoring & Insights", "Analytics / Strategy Development", "GDA Related", "Trainings and Team Meeting"]
+    )
     complexity = st.selectbox("Complexity (H,M,L)", options=["H", "M", "L"])
     novelty = st.selectbox("Novelity (BAU repetitive, One time repetitive, New one time)",
                            options=["BAU repetitive", "One time repetitive", "New one time"])
-    output_type = st.selectbox("Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others)",
-                               options=["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"])
-    impact_type = st.selectbox("Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)",
-                               options=["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"])
+    output_type = st.selectbox(
+        "Output Type (Core production work, Ad-hoc long-term projects, Ad-hoc short-term projects, Business Management, Administration, Trainings/L&D activities, Others)",
+        options=["Core production work", "Ad-hoc long-term projects", "Ad-hoc short-term projects", "Business Management", "Administration", "Trainings/L&D activities", "Others"]
+    )
+    impact_type = st.selectbox(
+        "Impact type (Customer Experience, Financial impact, Insights, Risk reduction, Others)",
+        options=["Customer Experience", "Financial impact", "Insights", "Risk reduction", "Others"]
+    )
 
     submit_button = st.form_submit_button(label="Submit")
 
@@ -317,7 +317,6 @@ if submit_button:
         "impact_type": impact_type
     }
 
-    # Validate the inputs
     field_errors = validate_fields(data)
     if field_errors:
         st.error(" ".join(field_errors))
