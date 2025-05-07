@@ -1,9 +1,6 @@
 import pandas as pd
 import datetime
 import re
-from openpyxl import load_workbook
-from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-from openpyxl.comments import Comment
 
 from dash import Dash, dcc, html, dash_table
 from dash.dependencies import Input, Output
@@ -116,95 +113,7 @@ df_pop_comp = (
 df_pop_comp['filemonth_dt'] = df_pop_comp['filemonth_dt'].dt.strftime('%m/%d/%Y')
 
 # ---------------------------
-# Step 6: Generate & Style the Excel Report
-# ---------------------------
-wb = load_workbook(INPUT_FILE)
-
-# Remove existing Summary sheet if it exists
-if "Summary" in wb.sheetnames:
-    wb.remove(wb["Summary"])
-
-ws = wb.create_sheet("Summary")
-
-# Styles
-header_fill = PatternFill("solid", fgColor="4F81BD")
-header_font = Font(bold=True, color="FFFFFF")
-center = Alignment(horizontal="center", vertical="center")
-white_fill = PatternFill("solid", fgColor="FFFFFF")
-gray_fill  = PatternFill("solid", fgColor="D3D3D3")
-thick = Side(border_style="thick", color="000000")
-thick_border = Border(thick, thick, thick, thick)
-
-# Title row
-ws.merge_cells("A1:F1")
-cell = ws["A1"]
-cell.value = "BDCOMM FRY14M Field Analysis Summary"
-cell.fill = header_fill
-cell.font = header_font
-cell.alignment = center
-
-# Column headers rows 2–3
-ws.merge_cells("A2:A3")
-h = ws["A2"]
-h.value, h.fill, h.font, h.alignment = "Field Name", header_fill, header_font, center
-
-ws.merge_cells("C2:D2")
-h = ws["C2"]
-h.value, h.fill, h.font, h.alignment = "Missing Values", header_fill, header_font, center
-
-ws["C3"].value = date1
-ws["C3"].number_format = "mm/dd/yyyy"
-ws["C3"].alignment = center
-ws["D3"].value = date2
-ws["D3"].number_format = "mm/dd/yyyy"
-ws["D3"].alignment = center
-
-ws.merge_cells("F2:G2")
-h = ws["F2"]
-h.value, h.fill, h.font, h.alignment = "Month to Month Value Differences", header_fill, header_font, center
-
-ws["F3"].value = date1
-ws["F3"].number_format = "mm/dd/yyyy"
-ws["F3"].alignment = center
-ws["G3"].value = date2
-ws["G3"].number_format = "mm/dd/yyyy"
-ws["G3"].alignment = center
-
-ws.merge_cells("I2:I3")
-h = ws["I2"]
-h.value, h.fill, h.font, h.alignment = "Approval Comments", header_fill, header_font, center
-
-# Write data starting at row 4
-start_row = 4
-for i, row in enumerate(summary_data, start=start_row):
-    fill = white_fill if (i - start_row) % 2 == 0 else gray_fill
-
-    # Field Name
-    c = ws.cell(row=i, column=1, value=row[0])
-    c.fill, c.alignment, c.border = fill, center, thick_border
-
-    # Missing date1 & date2
-    for j, val in enumerate(row[1:3], start=3):
-        c = ws.cell(row=i, column=j, value=val)
-        c.fill, c.alignment, c.border = fill, center, thick_border
-
-    # M2M date1 & date2
-    for j, val in enumerate(row[3:], start=6):
-        c = ws.cell(row=i, column=j, value=val)
-        c.fill, c.alignment, c.border = fill, center, thick_border
-
-    # Comment (New column) - Only if there's a comment
-    c = ws.cell(row=i, column=6, value=row[5])
-    c.fill, c.alignment, c.border = fill, center, thick_border
-
-# Auto-width
-for col in list("ABCDEF"):
-    ws.column_dimensions[col].width = 20
-
-wb.save(OUTPUT_FILE)
-
-# ---------------------------
-# Step 7: Dash App with Three Tabs
+# Step 6: Dash App with Three Tabs
 # ---------------------------
 app = Dash(__name__)
 
@@ -226,8 +135,15 @@ app.layout = html.Div([
                     {
                         'if': {'column_id': c, 'filter_query': '{Comment} != ""'},
                         'backgroundColor': 'yellow',
+                        'color': 'black',
                     }
                     for c in ['C', 'D', 'F', 'G']  # Highlight columns with comments (Missing, M2M, etc.)
+                ],
+                tooltip_data=[
+                    {
+                        'Field Name': {'value': row['Comment'], 'type': 'markdown'} if row['Comment'] else {'value': '', 'type': 'markdown'}
+                    }
+                    for row in df_summary.to_dict("records")
                 ]
             )
         ]),
@@ -280,17 +196,6 @@ def update_comments(value_dist_data, pop_comp_data):
         updated_pop_comp = pd.DataFrame(pop_comp_data)
         for i, row in updated_pop_comp.iterrows():
             df_summary.loc[df_summary['Field Name'] == row['field_name'], 'Comment'] = row.get('comment', '')
-
-    # Save changes back to Excel
-    wb = load_workbook(OUTPUT_FILE)
-    ws = wb['Summary']
-    for idx, row in df_summary.iterrows():
-        comment = row['Comment']
-        if comment:  # If a comment exists, add it as a cell comment
-            cell = ws.cell(row=idx+4, column=6)  # Assuming the Comment is in the 6th column
-            cell.comment = Comment(comment, "User")
-
-    wb.save(OUTPUT_FILE)
 
     return df_summary.to_dict("records"), "", ""
 
