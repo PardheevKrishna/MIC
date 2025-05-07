@@ -81,7 +81,8 @@ for field in fields:
         missing_sum_date1,
         missing_sum_date2,
         m2m_sum_date1,
-        m2m_sum_date2
+        m2m_sum_date2,
+        ""  # Initialize the comment column with empty strings
     ])
 
 # Build a Pandas DataFrame for Dash
@@ -91,6 +92,7 @@ df_summary = pd.DataFrame(summary_data, columns=[
     f"Missing {date2.strftime('%m/%d/%Y')}",
     f"M2M Diff {date1.strftime('%m/%d/%Y')}",
     f"M2M Diff {date2.strftime('%m/%d/%Y')}",
+    "Comment",  # New comment column
 ])
 
 # ---------------------------
@@ -133,7 +135,7 @@ thick = Side(border_style="thick", color="000000")
 thick_border = Border(thick, thick, thick, thick)
 
 # Title row
-ws.merge_cells("A1:I1")
+ws.merge_cells("A1:F1")
 cell = ws["A1"]
 cell.value = "BDCOMM FRY14M Field Analysis Summary"
 cell.fill = header_fill
@@ -190,8 +192,12 @@ for i, row in enumerate(summary_data, start=start_row):
         c = ws.cell(row=i, column=j, value=val)
         c.fill, c.alignment, c.border = fill, center, thick_border
 
+    # Comment (New column)
+    c = ws.cell(row=i, column=6, value=row[5])
+    c.fill, c.alignment, c.border = fill, center, thick_border
+
 # Auto-width
-for col in list("ABCDEFGHI"):
+for col in list("ABCDEF"):
     ws.column_dimensions[col].width = 20
 
 wb.save(OUTPUT_FILE)
@@ -214,6 +220,13 @@ app.layout = html.Div([
                 style_cell={'textAlign': 'center'},
                 style_table={'overflowX': 'auto'},
                 selected_cells=[],  # For capturing double-clicks
+                editable=True,  # Enable editing
+                style_data_conditional=[
+                    {
+                        'if': {'column_id': 'Comment', 'filter_query': '{Comment} != ""'},
+                        'backgroundColor': 'yellow',
+                    },
+                ]
             )
         ]),
         dcc.Tab(label="Value Distribution", children=[
@@ -223,9 +236,10 @@ app.layout = html.Div([
                 columns=[{"name": c, "id": c} for c in df_value_dist.columns if c != 'value_sql_logic'],  # Remove the column
                 data=df_value_dist.to_dict("records"),
                 page_size=20,
-                style_header={'fontWeight': 'bold'},
+                style_header={'fontWeight': 'bold', 'backgroundColor': '#4F81BD', 'color': 'white'},
                 style_cell={'textAlign': 'left'},
                 style_table={'overflowX': 'auto'},
+                editable=True  # Enable comment editing
             )
         ]),
         dcc.Tab(label="Population Comparison", children=[
@@ -235,9 +249,10 @@ app.layout = html.Div([
                 columns=[{"name": c, "id": c} for c in df_pop_comp.columns if c != 'value_sql_logic'],  # Remove the column
                 data=df_pop_comp.to_dict("records"),
                 page_size=20,
-                style_header={'fontWeight': 'bold'},
+                style_header={'fontWeight': 'bold', 'backgroundColor': '#4F81BD', 'color': 'white'},
                 style_cell={'textAlign': 'left'},
                 style_table={'overflowX': 'auto'},
+                editable=True  # Enable comment editing
             )
         ]),
     ])
@@ -249,12 +264,15 @@ app.layout = html.Div([
     [Output('value_dist_table', 'data'),
      Output('pop_comp_table', 'data'),
      Output('value_sql_logic_box', 'children'),
-     Output('pop_sql_logic_box', 'children')],
-    [Input('summary_table', 'selected_cells')]
+     Output('pop_sql_logic_box', 'children'),
+     Output('summary_table', 'data')],
+    [Input('summary_table', 'selected_cells'),
+     Input('value_dist_table', 'data_previous'),
+     Input('pop_comp_table', 'data_previous')]
 )
-def update_tables(selected_cells):
+def update_tables(selected_cells, value_dist_data, pop_comp_data):
     if not selected_cells:
-        return [df_value_dist.to_dict("records"), df_pop_comp.to_dict("records"), "", ""]
+        return [df_value_dist.to_dict("records"), df_pop_comp.to_dict("records"), "", "", df_summary.to_dict("records")]
 
     field_name = df_summary.iloc[selected_cells[0]['row']]["Field Name"]
 
@@ -262,14 +280,26 @@ def update_tables(selected_cells):
     filtered_value_dist = df_value_dist[df_value_dist['field_name'] == field_name]
     filtered_pop_comp = df_pop_comp[df_pop_comp['field_name'] == field_name]
 
-    # Get the `value_sql_logic` for this field_name (assuming it's the same across all value_labels for that field)
+    # Get the `value_sql_logic` for this field_name
     value_sql_logic = df_value_dist[df_value_dist['field_name'] == field_name]['value_sql_logic'].iloc[0]
+
+    # Handle comment update
+    if value_dist_data:
+        updated_value_dist = pd.DataFrame(value_dist_data)
+        for i, row in updated_value_dist.iterrows():
+            df_summary.loc[df_summary['Field Name'] == row['field_name'], 'Comment'] = row.get('comment', '')
+
+    if pop_comp_data:
+        updated_pop_comp = pd.DataFrame(pop_comp_data)
+        for i, row in updated_pop_comp.iterrows():
+            df_summary.loc[df_summary['Field Name'] == row['field_name'], 'Comment'] = row.get('comment', '')
 
     return [
         filtered_value_dist.to_dict("records"),
         filtered_pop_comp.to_dict("records"),
         f"SQL Logic for {field_name}: {value_sql_logic}",
-        f"SQL Logic for {field_name}: {value_sql_logic}"
+        f"SQL Logic for {field_name}: {value_sql_logic}",
+        df_summary.to_dict("records"),
     ]
 
 
