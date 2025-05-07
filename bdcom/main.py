@@ -133,9 +133,6 @@ app.layout = html.Div([
                 sortable=True,
                 filter=True,
                 enableRangeSelection=True,
-                tooltipShowDelay=0,
-                tooltipHideDelay=2000,
-                tooltipDelay=1000,
             ),
         ]),
         dcc.Tab(label="Value Distribution", children=[
@@ -147,9 +144,6 @@ app.layout = html.Div([
                 sortable=True,
                 filter=True,
                 enableRangeSelection=True,
-                tooltipShowDelay=0,
-                tooltipHideDelay=2000,
-                tooltipDelay=1000,
             ),
             html.Div([
                 dcc.Input(id='value_dist_comment', type='text', placeholder='Enter comment here'),
@@ -165,9 +159,6 @@ app.layout = html.Div([
                 sortable=True,
                 filter=True,
                 enableRangeSelection=True,
-                tooltipShowDelay=0,
-                tooltipHideDelay=2000,
-                tooltipDelay=1000,
             ),
             html.Div([
                 dcc.Input(id='pop_comp_comment', type='text', placeholder='Enter comment here'),
