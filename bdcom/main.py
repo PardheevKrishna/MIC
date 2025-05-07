@@ -3,6 +3,7 @@ import datetime
 import re
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.comments import Comment
 
 from dash import Dash, dcc, html, dash_table
 from dash.dependencies import Input, Output
@@ -82,7 +83,7 @@ for field in fields:
         missing_sum_date2,
         m2m_sum_date1,
         m2m_sum_date2,
-        ""  # Initialize the comment column with empty strings
+        ""  # Initialize the comment column with empty strings (will be used to store comments)
     ])
 
 # Build a Pandas DataFrame for Dash
@@ -192,7 +193,7 @@ for i, row in enumerate(summary_data, start=start_row):
         c = ws.cell(row=i, column=j, value=val)
         c.fill, c.alignment, c.border = fill, center, thick_border
 
-    # Comment (New column)
+    # Comment (New column) - Only if there's a comment
     c = ws.cell(row=i, column=6, value=row[5])
     c.fill, c.alignment, c.border = fill, center, thick_border
 
@@ -240,7 +241,7 @@ app.layout = html.Div([
                 style_header={'fontWeight': 'bold', 'backgroundColor': '#4F81BD', 'color': 'white'},
                 style_cell={'textAlign': 'left'},
                 style_table={'overflowX': 'auto'},
-                editable=True  # Enable comment editing
+                editable=True,  # Enable comment editing
             )
         ]),
         dcc.Tab(label="Population Comparison", children=[
@@ -253,7 +254,7 @@ app.layout = html.Div([
                 style_header={'fontWeight': 'bold', 'backgroundColor': '#4F81BD', 'color': 'white'},
                 style_cell={'textAlign': 'left'},
                 style_table={'overflowX': 'auto'},
-                editable=True  # Enable comment editing
+                editable=True,  # Enable comment editing
             )
         ]),
     ])
@@ -287,7 +288,7 @@ def update_comments(value_dist_data, pop_comp_data):
         comment = row['Comment']
         if comment:  # If a comment exists, add it as a cell comment
             cell = ws.cell(row=idx+4, column=6)  # Assuming the Comment is in the 6th column
-            cell.comment = openpyxl.comments.Comment(comment, "User")
+            cell.comment = Comment(comment, "User")
 
     wb.save(OUTPUT_FILE)
 
