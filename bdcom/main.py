@@ -35,6 +35,7 @@ phrases = [
     r"2\)\s*CF Loan - Prior Null, Current Pop",
     r"3\)\s*CF Loan - Prior Pop, Current Null"
 ]
+
 def contains_phrase(text):
     text = str(text)
     return any(re.search(p, text) for p in phrases)
@@ -158,6 +159,8 @@ app.layout = html.Div([
                 style_cell={'textAlign': 'left'},
                 style_table={'overflowX': 'auto'},
                 editable=True,  # Enable comment editing
+                row_deletable=True,
+                selected_rows=[]  # To track selected rows for filtering
             )
         ]),
         dcc.Tab(label="Population Comparison", children=[
@@ -171,17 +174,39 @@ app.layout = html.Div([
                 style_cell={'textAlign': 'left'},
                 style_table={'overflowX': 'auto'},
                 editable=True,  # Enable comment editing
+                row_deletable=True,
+                selected_rows=[]  # To track selected rows for filtering
             )
         ]),
     ])
 ])
 
 
+# Callback for handling double-click and switching to correct tab (Value Distribution / Population Comparison)
+@app.callback(
+    [Output('value_dist_table', 'data'),
+     Output('pop_comp_table', 'data')],
+    [Input('summary_table', 'selected_cells')]
+)
+def update_tables(selected_cells):
+    if not selected_cells:
+        return [df_value_dist.to_dict("records"), df_pop_comp.to_dict("records")]
+
+    field_name = df_summary.iloc[selected_cells[0]['row']]["Field Name"]
+
+    # Filter the tables to show only the selected field_name
+    filtered_value_dist = df_value_dist[df_value_dist['field_name'] == field_name]
+    filtered_pop_comp = df_pop_comp[df_pop_comp['field_name'] == field_name]
+
+    return [
+        filtered_value_dist.to_dict("records"),
+        filtered_pop_comp.to_dict("records")
+    ]
+
+
 # Callback for handling comment updates in Value Distribution and Population Comparison
 @app.callback(
-    [Output('summary_table', 'data'),
-     Output('value_sql_logic_box', 'children'),
-     Output('pop_sql_logic_box', 'children')],
+    [Output('summary_table', 'data')],
     [Input('value_dist_table', 'data'),
      Input('pop_comp_table', 'data')]
 )
@@ -197,7 +222,7 @@ def update_comments(value_dist_data, pop_comp_data):
         for i, row in updated_pop_comp.iterrows():
             df_summary.loc[df_summary['Field Name'] == row['field_name'], 'Comment'] = row.get('comment', '')
 
-    return df_summary.to_dict("records"), "", ""
+    return [df_summary.to_dict("records")]
 
 
 # Run the app
