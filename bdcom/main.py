@@ -2,9 +2,8 @@ import pandas as pd
 import datetime
 import re
 
-from dash import Dash, dcc, html
+from dash import Dash, dcc, html, dash_table
 from dash.dependencies import Input, Output, State
-import dash_ag_grid as dag
 
 # ---------------------------
 # Constants & Input/Output
@@ -32,7 +31,7 @@ date2 = datetime.datetime(2024, 12, 1)
 # ---------------------------
 fields = sorted(df_data['field_name'].unique())
 phrases = [
-    r"1\)\s*F6CF Loan - Both Pop, Diff Values",
+    r"1\)\s*CF Loan - Both Pop, Diff Values",
     r"2\)\s*CF Loan - Prior Null, Current Pop",
     r"3\)\s*CF Loan - Prior Pop, Current Null"
 ]
@@ -123,93 +122,122 @@ app.layout = html.Div([
     html.H2("BDCOMM FRY14M Field Analysis"),
     dcc.Tabs([
         dcc.Tab(label="Summary", children=[
-            dag.AgGrid(
+            dash_table.DataTable(
                 id='summary_table',
-                columnDefs=[
-                    {'headerName': c, 'field': c} for c in df_summary.columns if c != 'Comment'
+                columns=[{"name": c, "id": c} for c in df_summary.columns if c != 'Comment'],  # Remove comment column
+                data=df_summary.to_dict("records"),
+                page_size=20,
+                style_header={'backgroundColor': '#4F81BD', 'color': 'white', 'fontWeight': 'bold'},
+                style_cell={'textAlign': 'center'},
+                style_table={'overflowX': 'auto'},
+                selected_cells=[],  # For capturing double-clicks
+                editable=False,  # Summary table is not editable
+                style_data_conditional=[
+                    {
+                        'if': {'column_id': c, 'filter_query': '{Comment} != ""'},
+                        'backgroundColor': 'yellow',
+                        'color': 'black',
+                    }
+                    for c in ['C', 'D', 'F', 'G']  # Highlight columns with comments (Missing, M2M, etc.)
                 ],
-                rowData=df_summary.to_dict('records'),
-                pagination=True,
-                sortable=True,
-                filter=True,
-                enableRangeSelection=True,
+                tooltip_data=[
+                    {
+                        'Field Name': {'value': row['Comment'], 'type': 'markdown'} if row['Comment'] else {'value': '', 'type': 'markdown'}
+                    }
+                    for row in df_summary.to_dict("records")
+                ]
             ),
         ]),
         dcc.Tab(label="Value Distribution", children=[
-            dag.AgGrid(
+            html.Div(id='value_sql_logic_box', style={'padding': '10px', 'backgroundColor': '#f5f5f5'}),
+            dash_table.DataTable(
                 id='value_dist_table',
-                columnDefs=[{'headerName': c, 'field': c} for c in df_value_dist.columns if c != 'value_sql_logic'],
-                rowData=df_value_dist.to_dict('records'),
-                pagination=True,
-                sortable=True,
-                filter=True,
-                enableRangeSelection=True,
+                columns=[{"name": c, "id": c} for c in df_value_dist.columns if c != 'value_sql_logic'],  # Remove the value_sql_logic column
+                data=df_value_dist.to_dict("records"),
+                page_size=20,
+                style_header={'fontWeight': 'bold', 'backgroundColor': '#4F81BD', 'color': 'white'},
+                style_cell={'textAlign': 'left'},
+                style_table={'overflowX': 'auto'},
+                editable=True,  # Enable comment editing
+                row_deletable=True,
+                selected_rows=[]  # To track selected rows for filtering
             ),
             html.Div([
                 dcc.Input(id='value_dist_comment', type='text', placeholder='Enter comment here'),
                 html.Button('Submit Comment', id='submit_value_dist_comment', n_clicks=0)
-            ])
+            ]),
+            html.Div(id='value_sql_logic', children='SQL logic goes here')  # Placeholder for SQL logic
         ]),
         dcc.Tab(label="Population Comparison", children=[
-            dag.AgGrid(
+            html.Div(id='pop_sql_logic_box', style={'padding': '10px', 'backgroundColor': '#f5f5f5'}),
+            dash_table.DataTable(
                 id='pop_comp_table',
-                columnDefs=[{'headerName': c, 'field': c} for c in df_pop_comp.columns if c != 'value_sql_logic'],
-                rowData=df_pop_comp.to_dict('records'),
-                pagination=True,
-                sortable=True,
-                filter=True,
-                enableRangeSelection=True,
+                columns=[{"name": c, "id": c} for c in df_pop_comp.columns if c != 'value_sql_logic'],  # Remove the value_sql_logic column
+                data=df_pop_comp.to_dict("records"),
+                page_size=20,
+                style_header={'fontWeight': 'bold', 'backgroundColor': '#4F81BD', 'color': 'white'},
+                style_cell={'textAlign': 'left'},
+                style_table={'overflowX': 'auto'},
+                editable=True,  # Enable comment editing
+                row_deletable=True,
+                selected_rows=[]  # To track selected rows for filtering
             ),
             html.Div([
                 dcc.Input(id='pop_comp_comment', type='text', placeholder='Enter comment here'),
                 html.Button('Submit Comment', id='submit_pop_comp_comment', n_clicks=0)
-            ])
+            ]),
+            html.Div(id='pop_sql_logic', children='SQL logic goes here')  # Placeholder for SQL logic
         ]),
     ])
 ])
 
 
-# Callback for handling double-click and switching to correct tab (Value Distribution / Population Comparison)
+# Combined callback for updating summary data and handling comments
 @app.callback(
-    [Output('value_dist_table', 'rowData'),
-     Output('pop_comp_table', 'rowData')],
-    [Input('summary_table', 'selectedRows')]
+    [Output('summary_table', 'data'),
+     Output('value_dist_table', 'data'),
+     Output('pop_comp_table', 'data')],
+    [Input('submit_value_dist_comment', 'n_clicks'),
+     Input('submit_pop_comp_comment', 'n_clicks')],
+    [State('value_dist_comment', 'value'),
+     State('pop_comp_comment', 'value'),
+     State('value_dist_table', 'data'),
+     State('pop_comp_table', 'data')]
 )
-def update_tables(selected_rows):
-    if not selected_rows:
-        return [df_value_dist.to_dict('records'), df_pop_comp.to_dict('records')]
+def update_summary_and_comments(n_clicks_value_dist, n_clicks_pop_comp, comment_value_dist, comment_pop_comp, value_dist_data, pop_comp_data):
+    # Handle comment input and update summary table
+    if n_clicks_value_dist > 0 and comment_value_dist:
+        selected_field = value_dist_data[0]['field_name']
+        df_summary.loc[df_summary['Field Name'] == selected_field, 'Comment'] = comment_value_dist
 
-    field_name = selected_rows[0]['Field Name']
+    if n_clicks_pop_comp > 0 and comment_pop_comp:
+        selected_field = pop_comp_data[0]['field_name']
+        df_summary.loc[df_summary['Field Name'] == selected_field, 'Comment'] = comment_pop_comp
+
+    # Update the data in the tables
+    return df_summary.to_dict("records"), value_dist_data, pop_comp_data
+
+
+# Callback for handling double-click on Summary table to filter Value Distribution and Population Comparison tables
+@app.callback(
+    [Output('value_dist_table', 'data'),
+     Output('pop_comp_table', 'data')],
+    [Input('summary_table', 'selected_cells')]
+)
+def update_tables(selected_cells):
+    if not selected_cells:
+        return [df_value_dist.to_dict("records"), df_pop_comp.to_dict("records")]
+
+    field_name = df_summary.iloc[selected_cells[0]['row']]["Field Name"]
 
     # Filter the tables to show only the selected field_name
     filtered_value_dist = df_value_dist[df_value_dist['field_name'] == field_name]
     filtered_pop_comp = df_pop_comp[df_pop_comp['field_name'] == field_name]
 
     return [
-        filtered_value_dist.to_dict('records'),
-        filtered_pop_comp.to_dict('records')
+        filtered_value_dist.to_dict("records"),
+        filtered_pop_comp.to_dict("records")
     ]
-
-
-# Callback to handle comment input in Value Distribution and Population Comparison
-@app.callback(
-    Output('summary_table', 'rowData'),
-    [Input('submit_value_dist_comment', 'n_clicks'),
-     Input('submit_pop_comp_comment', 'n_clicks')],
-    [State('value_dist_comment', 'value'),
-     State('pop_comp_comment', 'value'),
-     State('value_dist_table', 'rowData'),
-     State('pop_comp_table', 'rowData')]
-)
-def submit_comment(n_clicks_value_dist, n_clicks_pop_comp, comment_value_dist, comment_pop_comp, value_dist_data, pop_comp_data):
-    if n_clicks_value_dist > 0 and comment_value_dist:
-        selected_field = value_dist_data[0]['field_name']
-        df_summary.loc[df_summary['Field Name'] == selected_field, 'Comment'] = comment_value_dist
-    if n_clicks_pop_comp > 0 and comment_pop_comp:
-        selected_field = pop_comp_data[0]['field_name']
-        df_summary.loc[df_summary['Field Name'] == selected_field, 'Comment'] = comment_pop_comp
-
-    return df_summary.to_dict('records')
 
 
 # Run the app
