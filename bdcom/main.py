@@ -3,7 +3,7 @@ import datetime
 import re
 
 from dash import Dash, dcc, html, dash_table
-from dash.dependencies import Input, Output, State  # Correct import for State
+from dash.dependencies import Input, Output, State
 
 # ---------------------------
 # Constants & Input/Output
@@ -245,4 +245,4 @@ def submit_pop_comp_comment(n_clicks, comment, table_data):
 
 # Run the app
 if __name__ == "__main__":
-   
+    app.run(debug=True)
