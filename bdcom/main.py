@@ -5,6 +5,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
 from dash import Dash, dcc, html, dash_table
+from dash.dependencies import Input, Output
 
 # ---------------------------
 # Constants & Input/Output
@@ -205,17 +206,21 @@ app.layout = html.Div([
     dcc.Tabs([
         dcc.Tab(label="Summary", children=[
             dash_table.DataTable(
+                id='summary_table',
                 columns=[{"name": c, "id": c} for c in df_summary.columns],
                 data=df_summary.to_dict("records"),
                 page_size=20,
                 style_header={'backgroundColor': '#4F81BD', 'color': 'white', 'fontWeight': 'bold'},
                 style_cell={'textAlign': 'center'},
                 style_table={'overflowX': 'auto'},
+                selected_cells=[],  # For capturing double-clicks
             )
         ]),
         dcc.Tab(label="Value Distribution", children=[
+            html.Div(id='value_sql_logic_box', style={'padding': '10px', 'backgroundColor': '#f5f5f5'}),
             dash_table.DataTable(
-                columns=[{"name": c, "id": c} for c in df_value_dist.columns],
+                id='value_dist_table',
+                columns=[{"name": c, "id": c} for c in df_value_dist.columns if c != 'value_sql_logic'],  # Remove the column
                 data=df_value_dist.to_dict("records"),
                 page_size=20,
                 style_header={'fontWeight': 'bold'},
@@ -224,8 +229,10 @@ app.layout = html.Div([
             )
         ]),
         dcc.Tab(label="Population Comparison", children=[
+            html.Div(id='pop_sql_logic_box', style={'padding': '10px', 'backgroundColor': '#f5f5f5'}),
             dash_table.DataTable(
-                columns=[{"name": c, "id": c} for c in df_pop_comp.columns],
+                id='pop_comp_table',
+                columns=[{"name": c, "id": c} for c in df_pop_comp.columns if c != 'value_sql_logic'],  # Remove the column
                 data=df_pop_comp.to_dict("records"),
                 page_size=20,
                 style_header={'fontWeight': 'bold'},
@@ -233,12 +240,39 @@ app.layout = html.Div([
                 style_table={'overflowX': 'auto'},
             )
         ]),
-    ], colors={
-        "border": "lightgray",
-        "primary": "4F81BD",
-        "background": "white"
-    })
+    ])
 ])
 
+
+# Callback for handling double-click and switching to correct tab
+@app.callback(
+    [Output('value_dist_table', 'data'),
+     Output('pop_comp_table', 'data'),
+     Output('value_sql_logic_box', 'children'),
+     Output('pop_sql_logic_box', 'children')],
+    [Input('summary_table', 'selected_cells')]
+)
+def update_tables(selected_cells):
+    if not selected_cells:
+        return [df_value_dist.to_dict("records"), df_pop_comp.to_dict("records"), "", ""]
+
+    field_name = df_summary.iloc[selected_cells[0]['row']]["Field Name"]
+
+    # Filter the tables to show only the selected field_name
+    filtered_value_dist = df_value_dist[df_value_dist['field_name'] == field_name]
+    filtered_pop_comp = df_pop_comp[df_pop_comp['field_name'] == field_name]
+
+    # Get the `value_sql_logic` for this field_name (assuming it's the same across all value_labels for that field)
+    value_sql_logic = df_value_dist[df_value_dist['field_name'] == field_name]['value_sql_logic'].iloc[0]
+
+    return [
+        filtered_value_dist.to_dict("records"),
+        filtered_pop_comp.to_dict("records"),
+        f"SQL Logic for {field_name}: {value_sql_logic}",
+        f"SQL Logic for {field_name}: {value_sql_logic}"
+    ]
+
+
+# Run the app
 if __name__ == "__main__":
-    app.run_server(debug=True)
+    app.run(debug=True)
