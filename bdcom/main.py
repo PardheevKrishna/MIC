@@ -147,7 +147,6 @@ app.layout = html.Div([
                     for row in df_summary.to_dict("records")
                 ]
             ),
-            html.Div(id='comment_display', style={'padding': '10px', 'backgroundColor': '#f5f5f5'})
         ]),
         dcc.Tab(label="Value Distribution", children=[
             html.Div(id='value_sql_logic_box', style={'padding': '10px', 'backgroundColor': '#f5f5f5'}),
@@ -166,7 +165,8 @@ app.layout = html.Div([
             html.Div([
                 dcc.Input(id='value_dist_comment', type='text', placeholder='Enter comment here'),
                 html.Button('Submit Comment', id='submit_value_dist_comment', n_clicks=0)
-            ])
+            ]),
+            html.Div(id='value_sql_logic', children='SQL logic goes here')  # Placeholder for SQL logic
         ]),
         dcc.Tab(label="Population Comparison", children=[
             html.Div(id='pop_sql_logic_box', style={'padding': '10px', 'backgroundColor': '#f5f5f5'}),
@@ -185,7 +185,8 @@ app.layout = html.Div([
             html.Div([
                 dcc.Input(id='pop_comp_comment', type='text', placeholder='Enter comment here'),
                 html.Button('Submit Comment', id='submit_pop_comp_comment', n_clicks=0)
-            ])
+            ]),
+            html.Div(id='pop_sql_logic', children='SQL logic goes here')  # Placeholder for SQL logic
         ]),
     ])
 ])
