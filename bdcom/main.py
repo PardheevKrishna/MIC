@@ -81,7 +81,7 @@ for field in fields:
         missing_sum_date2,
         m2m_sum_date1,
         m2m_sum_date2,
-        ""  # Initialize the comment column with empty strings (will be used to store comments)
+        ""  # Initialize the comment column with empty strings (for user input in the tables)
     ])
 
 # Build a Pandas DataFrame for Dash
@@ -91,7 +91,7 @@ df_summary = pd.DataFrame(summary_data, columns=[
     f"Missing {date2.strftime('%m/%d/%Y')}",
     f"M2M Diff {date1.strftime('%m/%d/%Y')}",
     f"M2M Diff {date2.strftime('%m/%d/%Y')}",
-    "Comment",  # New column for comment storage
+    "Comment",  # New column for comment storage (for user input)
 ])
 
 # ---------------------------
@@ -152,7 +152,7 @@ app.layout = html.Div([
             html.Div(id='value_sql_logic_box', style={'padding': '10px', 'backgroundColor': '#f5f5f5'}),
             dash_table.DataTable(
                 id='value_dist_table',
-                columns=[{"name": c, "id": c} for c in df_value_dist.columns if c != 'value_sql_logic'],  # Remove the column
+                columns=[{"name": c, "id": c} for c in df_value_dist.columns if c != 'value_sql_logic'],  # Remove the value_sql_logic column
                 data=df_value_dist.to_dict("records"),
                 page_size=20,
                 style_header={'fontWeight': 'bold', 'backgroundColor': '#4F81BD', 'color': 'white'},
@@ -167,7 +167,7 @@ app.layout = html.Div([
             html.Div(id='pop_sql_logic_box', style={'padding': '10px', 'backgroundColor': '#f5f5f5'}),
             dash_table.DataTable(
                 id='pop_comp_table',
-                columns=[{"name": c, "id": c} for c in df_pop_comp.columns if c != 'value_sql_logic'],  # Remove the column
+                columns=[{"name": c, "id": c} for c in df_pop_comp.columns if c != 'value_sql_logic'],  # Remove the value_sql_logic column
                 data=df_pop_comp.to_dict("records"),
                 page_size=20,
                 style_header={'fontWeight': 'bold', 'backgroundColor': '#4F81BD', 'color': 'white'},
