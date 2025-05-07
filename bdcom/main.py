@@ -146,7 +146,8 @@ app.layout = html.Div([
                     }
                     for row in df_summary.to_dict("records")
                 ]
-            )
+            ),
+            html.Div(id='comment_display', style={'padding': '10px', 'backgroundColor': '#f5f5f5'})
         ]),
         dcc.Tab(label="Value Distribution", children=[
             html.Div(id='value_sql_logic_box', style={'padding': '10px', 'backgroundColor': '#f5f5f5'}),
@@ -161,7 +162,11 @@ app.layout = html.Div([
                 editable=True,  # Enable comment editing
                 row_deletable=True,
                 selected_rows=[]  # To track selected rows for filtering
-            )
+            ),
+            html.Div([
+                dcc.Input(id='value_dist_comment', type='text', placeholder='Enter comment here'),
+                html.Button('Submit Comment', id='submit_value_dist_comment', n_clicks=0)
+            ])
         ]),
         dcc.Tab(label="Population Comparison", children=[
             html.Div(id='pop_sql_logic_box', style={'padding': '10px', 'backgroundColor': '#f5f5f5'}),
@@ -176,7 +181,11 @@ app.layout = html.Div([
                 editable=True,  # Enable comment editing
                 row_deletable=True,
                 selected_rows=[]  # To track selected rows for filtering
-            )
+            ),
+            html.Div([
+                dcc.Input(id='pop_comp_comment', type='text', placeholder='Enter comment here'),
+                html.Button('Submit Comment', id='submit_pop_comp_comment', n_clicks=0)
+            ])
         ]),
     ])
 ])
@@ -204,25 +213,34 @@ def update_tables(selected_cells):
     ]
 
 
-# Callback for handling comment updates in Value Distribution and Population Comparison
+# Callback to handle comment input in Value Distribution
 @app.callback(
-    [Output('summary_table', 'data')],
-    [Input('value_dist_table', 'data'),
-     Input('pop_comp_table', 'data')]
+    Output('summary_table', 'data'),
+    [Input('submit_value_dist_comment', 'n_clicks')],
+    [State('value_dist_comment', 'value'),
+     State('value_dist_table', 'data')]
 )
-def update_comments(value_dist_data, pop_comp_data):
-    # Update the Summary Table with new comments
-    if value_dist_data:
-        updated_value_dist = pd.DataFrame(value_dist_data)
-        for i, row in updated_value_dist.iterrows():
-            df_summary.loc[df_summary['Field Name'] == row['field_name'], 'Comment'] = row.get('comment', '')
+def submit_value_dist_comment(n_clicks, comment, table_data):
+    if n_clicks > 0 and comment:
+        selected_field = table_data[0]['field_name']
+        df_summary.loc[df_summary['Field Name'] == selected_field, 'Comment'] = comment
+        return df_summary.to_dict("records")
+    return dash.no_update
 
-    if pop_comp_data:
-        updated_pop_comp = pd.DataFrame(pop_comp_data)
-        for i, row in updated_pop_comp.iterrows():
-            df_summary.loc[df_summary['Field Name'] == row['field_name'], 'Comment'] = row.get('comment', '')
 
-    return [df_summary.to_dict("records")]
+# Callback to handle comment input in Population Comparison
+@app.callback(
+    Output('summary_table', 'data'),
+    [Input('submit_pop_comp_comment', 'n_clicks')],
+    [State('pop_comp_comment', 'value'),
+     State('pop_comp_table', 'data')]
+)
+def submit_pop_comp_comment(n_clicks, comment, table_data):
+    if n_clicks > 0 and comment:
+        selected_field = table_data[0]['field_name']
+        df_summary.loc[df_summary['Field Name'] == selected_field, 'Comment'] = comment
+        return df_summary.to_dict("records")
+    return dash.no_update
 
 
 # Run the app
