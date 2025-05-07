@@ -92,7 +92,7 @@ df_summary = pd.DataFrame(summary_data, columns=[
     f"Missing {date2.strftime('%m/%d/%Y')}",
     f"M2M Diff {date1.strftime('%m/%d/%Y')}",
     f"M2M Diff {date2.strftime('%m/%d/%Y')}",
-    "Comment",  # New comment column
+    "Comment",  # New column for comment storage
 ])
 
 # ---------------------------
@@ -213,19 +213,20 @@ app.layout = html.Div([
         dcc.Tab(label="Summary", children=[
             dash_table.DataTable(
                 id='summary_table',
-                columns=[{"name": c, "id": c} for c in df_summary.columns],
+                columns=[{"name": c, "id": c} for c in df_summary.columns if c != 'Comment'],  # Remove comment column
                 data=df_summary.to_dict("records"),
                 page_size=20,
                 style_header={'backgroundColor': '#4F81BD', 'color': 'white', 'fontWeight': 'bold'},
                 style_cell={'textAlign': 'center'},
                 style_table={'overflowX': 'auto'},
                 selected_cells=[],  # For capturing double-clicks
-                editable=True,  # Enable editing
+                editable=False,  # Summary table is not editable
                 style_data_conditional=[
                     {
-                        'if': {'column_id': 'Comment', 'filter_query': '{Comment} != ""'},
+                        'if': {'column_id': c, 'filter_query': '{Comment} != ""'},
                         'backgroundColor': 'yellow',
-                    },
+                    }
+                    for c in ['C', 'D', 'F', 'G']  # Highlight columns with comments (Missing, M2M, etc.)
                 ]
             )
         ]),
@@ -259,31 +260,16 @@ app.layout = html.Div([
 ])
 
 
-# Callback for handling double-click and switching to correct tab
+# Callback for handling comment updates in Value Distribution and Population Comparison
 @app.callback(
-    [Output('value_dist_table', 'data'),
-     Output('pop_comp_table', 'data'),
+    [Output('summary_table', 'data'),
      Output('value_sql_logic_box', 'children'),
-     Output('pop_sql_logic_box', 'children'),
-     Output('summary_table', 'data')],
-    [Input('summary_table', 'selected_cells'),
-     Input('value_dist_table', 'data_previous'),
-     Input('pop_comp_table', 'data_previous')]
+     Output('pop_sql_logic_box', 'children')],
+    [Input('value_dist_table', 'data'),
+     Input('pop_comp_table', 'data')]
 )
-def update_tables(selected_cells, value_dist_data, pop_comp_data):
-    if not selected_cells:
-        return [df_value_dist.to_dict("records"), df_pop_comp.to_dict("records"), "", "", df_summary.to_dict("records")]
-
-    field_name = df_summary.iloc[selected_cells[0]['row']]["Field Name"]
-
-    # Filter the tables to show only the selected field_name
-    filtered_value_dist = df_value_dist[df_value_dist['field_name'] == field_name]
-    filtered_pop_comp = df_pop_comp[df_pop_comp['field_name'] == field_name]
-
-    # Get the `value_sql_logic` for this field_name
-    value_sql_logic = df_value_dist[df_value_dist['field_name'] == field_name]['value_sql_logic'].iloc[0]
-
-    # Handle comment update
+def update_comments(value_dist_data, pop_comp_data):
+    # Update the Summary Table with new comments
     if value_dist_data:
         updated_value_dist = pd.DataFrame(value_dist_data)
         for i, row in updated_value_dist.iterrows():
@@ -294,13 +280,18 @@ def update_tables(selected_cells, value_dist_data, pop_comp_data):
         for i, row in updated_pop_comp.iterrows():
             df_summary.loc[df_summary['Field Name'] == row['field_name'], 'Comment'] = row.get('comment', '')
 
-    return [
-        filtered_value_dist.to_dict("records"),
-        filtered_pop_comp.to_dict("records"),
-        f"SQL Logic for {field_name}: {value_sql_logic}",
-        f"SQL Logic for {field_name}: {value_sql_logic}",
-        df_summary.to_dict("records"),
-    ]
+    # Save changes back to Excel
+    wb = load_workbook(OUTPUT_FILE)
+    ws = wb['Summary']
+    for idx, row in df_summary.iterrows():
+        comment = row['Comment']
+        if comment:  # If a comment exists, add it as a cell comment
+            cell = ws.cell(row=idx+4, column=6)  # Assuming the Comment is in the 6th column
+            cell.comment = openpyxl.comments.Comment(comment, "User")
+
+    wb.save(OUTPUT_FILE)
+
+    return df_summary.to_dict("records"), "", ""
 
 
 # Run the app
