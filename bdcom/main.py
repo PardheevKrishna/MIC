@@ -144,6 +144,12 @@ app.layout = html.Div([
         ]),
         # -------- Value Distribution --------------------------------------
         dcc.Tab(label="Value Distribution", children=[
+            dag.AgGrid(id="vd", columnDefs=col_defs(vd_wide),
+                       rowData=vd_wide.to_dict("records"),
+                       className="ag-theme-alpine", columnSize="sizeToFit",
+                       dashGridOptions={**GRID_DETAIL},
+                       style={"height": "500px", "width": "100%"}),  # Grid first
+            comment_block("vd_val_lbl", "vd_comm_text", "vd_comm_btn"),  # Comment section
             html.Div([
                 dcc.Clipboard(target_id="vd_sql", title="Copy SQL Logic", style={"marginBottom": "0.5rem"}),
                 html.Pre(id="vd_sql", style={"whiteSpace": "pre-wrap",
@@ -151,16 +157,16 @@ app.layout = html.Div([
                                              "padding": "0.75rem", "border": "1px solid #ddd",
                                              "fontFamily": "monospace",
                                              "fontSize": "0.85rem"})
-            ]),
-            dag.AgGrid(id="vd", columnDefs=col_defs(vd_wide),
-                       rowData=vd_wide.to_dict("records"),
-                       className="ag-theme-alpine", columnSize="sizeToFit",
-                       dashGridOptions={**GRID_DETAIL},
-                       style={"height": "500px", "width": "100%"}),
-            comment_block("vd_val_lbl", "vd_comm_text", "vd_comm_btn"),
+            ]),  # Copy button and SQL logic below comment section
         ]),
         # -------- Population Comparison -----------------------------------
         dcc.Tab(label="Population Comparison", children=[
+            dag.AgGrid(id="pc", columnDefs=col_defs(pc_wide),
+                       rowData=pc_wide.to_dict("records"),
+                       className="ag-theme-alpine", columnSize="sizeToFit",
+                       dashGridOptions={**GRID_DETAIL},
+                       style={"height": "500px", "width": "100%"}),  # Grid first
+            comment_block("pc_val_lbl", "pc_comm_text", "pc_comm_btn"),  # Comment section
             html.Div([
                 dcc.Clipboard(target_id="pc_sql", title="Copy SQL Logic", style={"marginBottom": "0.5rem"}),
                 html.Pre(id="pc_sql", style={"whiteSpace": "pre-wrap",
@@ -168,13 +174,7 @@ app.layout = html.Div([
                                              "padding": "0.75rem", "border": "1px solid #ddd",
                                              "fontFamily": "monospace",
                                              "fontSize": "0.85rem"})
-            ]),
-            dag.AgGrid(id="pc", columnDefs=col_defs(pc_wide),
-                       rowData=pc_wide.to_dict("records"),
-                       className="ag-theme-alpine", columnSize="sizeToFit",
-                       dashGridOptions={**GRID_DETAIL},
-                       style={"height": "500px", "width": "100%"}),
-            comment_block("pc_val_lbl", "pc_comm_text", "pc_comm_btn"),
+            ]),  # Copy button and SQL logic below comment section
         ]),
     ])
 ])
