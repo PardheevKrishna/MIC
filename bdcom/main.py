@@ -5,6 +5,7 @@ dash_ag_grid_code.py
 • New comment UI:
     – Click a row ⇒ its value_label appears above the comment box.
     – Submit ⇒ Summary comment becomes: "<value_label> - <comment>".
+• Sum total for each field individually and Percentage total.
 
 Requires: Dash ≥2.17 · dash-ag-grid ≥31 · Pandas ≥1.3
 """
@@ -24,11 +25,11 @@ df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"],
                                          format="%m/%d/%Y")
 
 # ────────────────────────────────────────────────────────────────
-# 2.  Window of 13 months (DESC)
+# 2.  13-month window (DESC)
 # ────────────────────────────────────────────────────────────────
 DATE1  = dt.datetime(2025, 1, 1)
-MONTHS = pd.date_range(end=DATE1, periods=13, freq="MS")[::-1]
-fmt    = lambda d: d.strftime("%b-%Y")
+MONTHS = pd.date_range(end=DATE1, periods=13, freq="MS")[::-1]   # DESC
+fmt    = lambda d: d.strftime("%b-%Y")                           # Jan-2025 …
 
 # ────────────────────────────────────────────────────────────────
 # 3.  Helper for pop-comp phrases
@@ -41,7 +42,7 @@ _contains = lambda x: any(re.search(p, str(x)) for p in _PHRASES)
 # ────────────────────────────────────────────────────────────────
 # 4.  Summary dataframe (unchanged)
 # ────────────────────────────────────────────────────────────────
-prev_month = MONTHS[1]
+prev_month = MONTHS[1]                                          # Dec-24
 rows = []
 for fld in sorted(df_data["field_name"].unique()):
     miss1 = df_data[(df_data.analysis_type=="value_dist")&(df_data.field_name==fld)&
@@ -69,10 +70,12 @@ df_summary = pd.DataFrame(rows, columns=[
 ])
 
 # ────────────────────────────────────────────────────────────────
-# 5.  Wide frames + totals
+# 5.  Build wide frames + totals for each field
 # ────────────────────────────────────────────────────────────────
 def wide(df_src):
+    """Return (wide_df, total_row_dict)."""
     df_src = df_src[df_src.filemonth_dt.isin(MONTHS)].copy()
+
     denom = (df_src.groupby(["field_name","filemonth_dt"], as_index=False)
                     .value_records.sum().rename(columns={"value_records":"_tot"}))
     merged = df_src.merge(denom, on=["field_name","filemonth_dt"])
@@ -80,7 +83,7 @@ def wide(df_src):
 
     base = merged[["field_name","value_label"]].drop_duplicates() \
             .sort_values(["field_name","value_label"]).reset_index(drop=True)
-    for m in MONTHS:
+    for m in MONTHS:                                    # already DESC
         mm = merged[merged.filemonth_dt==m][["field_name","value_label","value_records","_%"]]
         base = (base.merge(mm, on=["field_name","value_label"], how="left")
                     .rename(columns={"value_records":f"{fmt(m)} Sum",
@@ -90,7 +93,7 @@ def wide(df_src):
 
     total = {"field_name":"Total", "value_label":""}
     for c in num_cols:
-        total[c] = base[c].sum() if c.endswith(" Sum") else ""
+        total[c] = base[base["field_name"]==total["field_name"]][c].sum() if c.endswith(" Sum") else ""
     return base, total
 
 vd_wide, vd_total = wide(df_data[df_data.analysis_type=="value_dist"])
@@ -98,7 +101,7 @@ pc_src            = df_data[(df_data.analysis_type=="pop_comp") & (df_data.value
 pc_wide, pc_total = wide(pc_src)
 
 # ────────────────────────────────────────────────────────────────
-# 6.  Col-defs
+# 6.  Column defs
 # ────────────────────────────────────────────────────────────────
 def col_defs(df):
     out=[]
