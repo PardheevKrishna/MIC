@@ -110,6 +110,10 @@ def wide(df_src):
 
     return base, total
 
+vd_wide, vd_total = wide(df_data[df_data.analysis_type=="value_dist"])
+pc_src            = df_data[(df_data.analysis_type=="pop_comp") & (df_data.value_label.apply(_contains))]
+pc_wide, pc_total = wide(pc_src)
+
 # ────────────────────────────────────────────────────────────────
 # 6.  Column defs
 # ────────────────────────────────────────────────────────────────
