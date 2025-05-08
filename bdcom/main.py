@@ -154,7 +154,8 @@ app.layout = html.Div([
                                          "backgroundColor": "#f3f3f3",
                                          "padding": "0.75rem", "border": "1px solid #ddd",
                                          "marginTop": "0.5rem", "fontFamily": "monospace",
-                                         "fontSize": "0.85rem"})
+                                         "fontSize": "0.85rem"}),
+            dcc.Clipboard(target_id="vd_sql", title="Copy SQL Logic", style={"marginTop": "0.5rem"})
         ]),
         # -------- Population Comparison -----------------------------------
         dcc.Tab(label="Population Comparison", children=[
@@ -168,7 +169,8 @@ app.layout = html.Div([
                                          "backgroundColor": "#f3f3f3",
                                          "padding": "0.75rem", "border": "1px solid #ddd",
                                          "marginTop": "0.5rem", "fontFamily": "monospace",
-                                         "fontSize": "0.85rem"})
+                                         "fontSize": "0.85rem"}),
+            dcc.Clipboard(target_id="pc_sql", title="Copy SQL Logic", style={"marginTop": "0.5rem"})
         ]),
     ])
 ])
