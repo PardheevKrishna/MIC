@@ -79,8 +79,8 @@ def wide(df_src):
     for m in MONTHS:  # Loop over months in descending order
         mm = merged[merged.filemonth_dt == m][["field_name", "value_label", "value_records", "_%"]]
         base = (base.merge(mm, on=["field_name", "value_label"], how="left")
-                .rename(columns={"value_records": f"{fmt(m)} Sum",
-                                 "_%": f"{fmt(m)} %"}))
+                .rename(columns={"value_records": f"{fmt(m)}",
+                                 "_%": f"{fmt(m)} Percentage"}))
 
     # Fill NaNs with 0s
     num_cols = [c for c in base.columns if c not in ("field_name", "value_label")]
@@ -101,7 +101,7 @@ def col_defs(df):
     for c in df.columns:
         d = {"headerName": c, "field": c, "filter": "agSetColumnFilter",
              "sortable": True, "resizable": True, "minWidth": 90}
-        if c.endswith(" %"):
+        if c.endswith(" Percentage"):
             d["valueFormatter"] = {"function": "d3.format('.1%')(params.value)"}
         out.append(d)
     return out
@@ -144,6 +144,7 @@ app.layout = html.Div([
         ]),
         # -------- Value Distribution --------------------------------------
         dcc.Tab(label="Value Distribution", children=[
+            dcc.Clipboard(target_id="vd_sql", title="Copy SQL Logic", style={"marginTop": "0.5rem"}),
             dag.AgGrid(id="vd", columnDefs=col_defs(vd_wide),
                        rowData=vd_wide.to_dict("records"),
                        className="ag-theme-alpine", columnSize="sizeToFit",
@@ -154,11 +155,11 @@ app.layout = html.Div([
                                          "backgroundColor": "#f3f3f3",
                                          "padding": "0.75rem", "border": "1px solid #ddd",
                                          "marginTop": "0.5rem", "fontFamily": "monospace",
-                                         "fontSize": "0.85rem"}),
-            dcc.Clipboard(target_id="vd_sql", title="Copy SQL Logic", style={"marginTop": "0.5rem"})
+                                         "fontSize": "0.85rem"})
         ]),
         # -------- Population Comparison -----------------------------------
         dcc.Tab(label="Population Comparison", children=[
+            dcc.Clipboard(target_id="pc_sql", title="Copy SQL Logic", style={"marginTop": "0.5rem"}),
             dag.AgGrid(id="pc", columnDefs=col_defs(pc_wide),
                        rowData=pc_wide.to_dict("records"),
                        className="ag-theme-alpine", columnSize="sizeToFit",
@@ -169,8 +170,7 @@ app.layout = html.Div([
                                          "backgroundColor": "#f3f3f3",
                                          "padding": "0.75rem", "border": "1px solid #ddd",
                                          "marginTop": "0.5rem", "fontFamily": "monospace",
-                                         "fontSize": "0.85rem"}),
-            dcc.Clipboard(target_id="pc_sql", title="Copy SQL Logic", style={"marginTop": "0.5rem"})
+                                         "fontSize": "0.85rem"})
         ]),
     ])
 ])
@@ -251,17 +251,13 @@ def master(evt, n_vd, n_pc,
         # Add a "Total" row
         vd_total_row = {"field_name": "Total", "value_label": ""}
         for col in vd_filtered.columns:
-            if col.endswith(" Sum"):
+            if col.endswith(""):
                 vd_total_row[col] = vd_total[col] if col in vd_total else 0
-            elif col.endswith(" %"):
-                vd_total_row[col] = vd_filtered[col].sum() if col in vd_filtered else 0
 
         pc_total_row = {"field_name": "Total", "value_label": ""}
         for col in pc_filtered.columns:
-            if col.endswith(" Sum"):
+            if col.endswith(""):
                 pc_total_row[col] = pc_total[col] if col in pc_total else 0
-            elif col.endswith(" %"):
-                pc_total_row[col] = pc_filtered[col].sum() if col in pc_filtered else 0
 
     else:
         vd_filtered, pc_filtered = vd_wide, pc_wide
