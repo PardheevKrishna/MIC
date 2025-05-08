@@ -1,7 +1,7 @@
 """
 dash_ag_grid_code.py
 ====================
-AG Grid version — now without the floating filter row.
+Same AG-Grid app, but Summary now shows 15 rows per page.
 
 Python ≥3.8 · Dash ≥2.17 · dash-ag-grid ≥31 · Pandas ≥1.3
 """
@@ -19,7 +19,8 @@ import dash   # for callback_context
 # ────────────────────────────────────────────────────────────────
 INPUT_FILE = "input.xlsx"
 df_data = pd.read_excel(INPUT_FILE, sheet_name="Data")
-df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"], format="%m/%d/%Y")
+df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"],
+                                         format="%m/%d/%Y")
 
 # ────────────────────────────────────────────────────────────────
 # 2.  Months to compare
@@ -38,29 +39,29 @@ _PHRASES = [
 _contains = lambda x: any(re.search(p, str(x)) for p in _PHRASES)
 
 # ────────────────────────────────────────────────────────────────
-# 4.  Build Summary dataframe (adds comment cols)
+# 4.  Build Summary dataframe
 # ────────────────────────────────────────────────────────────────
-rows = []
+summary_rows = []
 for fld in sorted(df_data["field_name"].unique()):
     miss1 = df_data[(df_data["analysis_type"]=="value_dist")&(df_data["field_name"]==fld)&
                     (df_data["filemonth_dt"]==DATE1)&
                     (df_data["value_label"].str.contains("Missing",case=False,na=False))
-                    ]["value_records"].sum()
+                   ]["value_records"].sum()
     miss2 = df_data[(df_data["analysis_type"]=="value_dist")&(df_data["field_name"]==fld)&
                     (df_data["filemonth_dt"]==DATE2)&
                     (df_data["value_label"].str.contains("Missing",case=False,na=False))
-                    ]["value_records"].sum()
+                   ]["value_records"].sum()
     diff1 = df_data[(df_data["analysis_type"]=="pop_comp")&(df_data["field_name"]==fld)&
                     (df_data["filemonth_dt"]==DATE1)&
                     (df_data["value_label"].apply(_contains))
-                    ]["value_records"].sum()
+                   ]["value_records"].sum()
     diff2 = df_data[(df_data["analysis_type"]=="pop_comp")&(df_data["field_name"]==fld)&
                     (df_data["filemonth_dt"]==DATE2)&
                     (df_data["value_label"].apply(_contains))
-                    ]["value_records"].sum()
-    rows.append([fld, miss1, miss2, "", diff1, diff2, ""])
+                   ]["value_records"].sum()
+    summary_rows.append([fld, miss1, miss2, "", diff1, diff2, ""])
 
-df_summary = pd.DataFrame(rows, columns=[
+df_summary = pd.DataFrame(summary_rows, columns=[
     "Field Name",
     f"Missing {DATE1:%m/%d/%Y}",
     f"Missing {DATE2:%m/%d/%Y}",
@@ -83,7 +84,7 @@ vd_all["filemonth_dt"] = vd_all["filemonth_dt"].dt.strftime("%m/%d/%Y")
 pc_all["filemonth_dt"] = pc_all["filemonth_dt"].dt.strftime("%m/%d/%Y")
 
 # ────────────────────────────────────────────────────────────────
-# 6.  Column-def factory  (no floatingFilter)
+# 6.  Column-def factory
 # ────────────────────────────────────────────────────────────────
 def make_col_defs(df, hide_sql=False):
     defs = []
@@ -93,7 +94,7 @@ def make_col_defs(df, hide_sql=False):
         defs.append({
             "headerName": c,
             "field":      c,
-            "filter":     "agSetColumnFilter",   # checkbox filter
+            "filter":     "agSetColumnFilter",
             "sortable":   True,
             "editable":   c.startswith("Comment"),
             "resizable":  True,
@@ -101,7 +102,7 @@ def make_col_defs(df, hide_sql=False):
     return defs
 
 # ────────────────────────────────────────────────────────────────
-# 7.  Comment area helper
+# 7.  Comment box helper
 # ────────────────────────────────────────────────────────────────
 def comment_box(text_id, btn_id):
     return html.Div([
@@ -111,11 +112,19 @@ def comment_box(text_id, btn_id):
                     style={"marginTop":"0.25rem"})
     ], style={"marginTop":"0.5rem"})
 
-GRID_OPTS = {"pagination":True, "paginationPageSize":20,
-             "rowSelection":"single", "domLayout":"normal"}
+#  Default grid options
+GRID_OPTS = {
+    "pagination": True,
+    "paginationPageSize": 20,   # detail grids
+    "rowSelection": "single",
+    "domLayout": "normal",
+}
+
+# Summary grid options (15 rows per page)
+GRID_OPTS_SUMMARY = {**GRID_OPTS, "paginationPageSize": 15}
 
 # ────────────────────────────────────────────────────────────────
-# 8.  Layout
+# 8.  Dash layout
 # ────────────────────────────────────────────────────────────────
 app = Dash(__name__)
 app.layout = html.Div([
@@ -127,7 +136,7 @@ app.layout = html.Div([
                 columnDefs=make_col_defs(df_summary),
                 rowData=df_summary.to_dict("records"),
                 className="ag-theme-alpine",
-                dashGridOptions=GRID_OPTS,
+                dashGridOptions=GRID_OPTS_SUMMARY,   # ← 15 rows
             )
         ]),
         dcc.Tab(label="Value Distribution", children=[
@@ -168,7 +177,7 @@ app.layout = html.Div([
 ])
 
 # ────────────────────────────────────────────────────────────────
-# 9.  Callback (unchanged except for variable names)
+# 9.  Callback (same logic)
 # ────────────────────────────────────────────────────────────────
 @app.callback(
     Output("vd","rowData"), Output("pc","rowData"),
@@ -180,37 +189,33 @@ app.layout = html.Div([
     State("vd_comm_text","value"), State("pc_comm_text","value"),
     prevent_initial_call=True
 )
-def master(click_evt, n_vd, n_pc,
+def master(evt, n_vd, n_pc,
            s_rows, vd_rows, pc_rows, vd_txt, pc_txt):
 
     s_df = pd.DataFrame(s_rows)
     trig = dash.callback_context.triggered[0]["prop_id"].split(".")[0]
 
     # append comments
-    if trig=="vd_comm_btn" and vd_txt:
-        fld = vd_rows[0]["field_name"] if vd_rows else None
-        if fld:
-            m = s_df["Field Name"]==fld
-            s_df.loc[m,"Comment Missing"] = (
-                (s_df.loc[m,"Comment Missing"].iloc[0]+"\n" if s_df.loc[m,"Comment Missing"].iloc[0] else "") + vd_txt
-            )
-    if trig=="pc_comm_btn" and pc_txt:
-        fld = pc_rows[0]["field_name"] if pc_rows else None
-        if fld:
-            m = s_df["Field Name"]==fld
-            s_df.loc[m,"Comment M2M"] = (
-                (s_df.loc[m,"Comment M2M"].iloc[0]+"\n" if s_df.loc[m,"Comment M2M"].iloc[0] else "") + pc_txt
-            )
+    if trig=="vd_comm_btn" and vd_txt and vd_rows:
+        fld = vd_rows[0]["field_name"]
+        m = s_df["Field Name"] == fld
+        old = s_df.loc[m,"Comment Missing"].iloc[0]
+        s_df.loc[m,"Comment Missing"] = (old+"\n" if old else "") + vd_txt
+    if trig=="pc_comm_btn" and pc_txt and pc_rows:
+        fld = pc_rows[0]["field_name"]
+        m = s_df["Field Name"] == fld
+        old = s_df.loc[m,"Comment M2M"].iloc[0]
+        s_df.loc[m,"Comment M2M"] = (old+"\n" if old else "") + pc_txt
 
     # active field
-    if trig=="summary" and click_evt and "rowIndex" in click_evt:
-        fld_active = s_df.iloc[click_evt["rowIndex"]]["Field Name"]
+    if trig=="summary" and evt and "rowIndex" in evt:
+        fld_active = s_df.iloc[evt["rowIndex"]]["Field Name"]
     else:
         fld_active = vd_rows[0]["field_name"] if vd_rows else None
 
     if fld_active:
-        vd_f = vd_all[vd_all["field_name"]==fld_active]
-        pc_f = pc_all[pc_all["field_name"]==fld_active]
+        vd_f = vd_all[vd_all["field_name"] == fld_active]
+        pc_f = pc_all[pc_all["field_name"] == fld_active]
         vd_sql = vd_f["value_sql_logic"].iloc[0] if "value_sql_logic" in vd_f else ""
         pc_sql = pc_f["value_sql_logic"].iloc[0] if "value_sql_logic" in pc_f else ""
     else:
