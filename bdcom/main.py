@@ -76,29 +76,39 @@ def wide(df_src):
     """Return (wide_df, total_row_dict)."""
     df_src = df_src[df_src.filemonth_dt.isin(MONTHS)].copy()
 
+    # Denominator per field & month for the sum and percentage
     denom = (df_src.groupby(["field_name","filemonth_dt"], as_index=False)
-                    .value_records.sum().rename(columns={"value_records":"_tot"}))
+                    .value_records.sum()
+                    .rename(columns={"value_records":"_tot"}))
+    
+    # Merge to get percentages
     merged = df_src.merge(denom, on=["field_name","filemonth_dt"])
     merged["_%"] = merged["value_records"]/merged["_tot"]
 
+    # Start with a base frame with unique field_name and value_label
     base = merged[["field_name","value_label"]].drop_duplicates() \
             .sort_values(["field_name","value_label"]).reset_index(drop=True)
-    for m in MONTHS:                                    # already DESC
+
+    for m in MONTHS:  # Loop over months in descending order
         mm = merged[merged.filemonth_dt==m][["field_name","value_label","value_records","_%"]]
         base = (base.merge(mm, on=["field_name","value_label"], how="left")
                     .rename(columns={"value_records":f"{fmt(m)} Sum",
                                      "_%":f"{fmt(m)} %"}))
+
+    # Fill NaNs with 0s
     num_cols = [c for c in base.columns if c not in ("field_name","value_label")]
     base[num_cols] = base[num_cols].fillna(0)
 
+    # Create a totals row (Sum and Percentage totals for each field)
     total = {"field_name":"Total", "value_label":""}
     for c in num_cols:
         total[c] = base[base["field_name"]==total["field_name"]][c].sum() if c.endswith(" Sum") else ""
-    return base, total
+    
+    # Calculate the percentage total for the "Total" row for each field
+    for c in [col for col in total.keys() if c.endswith(" %")]:
+        total[c] = base[c].sum()  # Total percentage
 
-vd_wide, vd_total = wide(df_data[df_data.analysis_type=="value_dist"])
-pc_src            = df_data[(df_data.analysis_type=="pop_comp") & (df_data.value_label.apply(_contains))]
-pc_wide, pc_total = wide(pc_src)
+    return base, total
 
 # ────────────────────────────────────────────────────────────────
 # 6.  Column defs
@@ -106,13 +116,13 @@ pc_wide, pc_total = wide(pc_src)
 def col_defs(df):
     out=[]
     for c in df.columns:
-        d={"headerName":c,"field":c,"filter":"agSetColumnFilter",
-           "sortable":True,"resizable":True,"minWidth":90}
+        d = {"headerName": c, "field": c, "filter": "agSetColumnFilter",
+             "sortable": True, "resizable": True, "minWidth": 90}
         if c.endswith(" %"):
-            d["valueFormatter"]={"function":"d3.format('.1%')(params.value)"}
+            d["valueFormatter"] = {"function": "d3.format('.1%')(params.value)"}
         out.append(d)
     return out
-
+    
 # ────────────────────────────────────────────────────────────────
 # 7.  Helpers for comment UI
 # ────────────────────────────────────────────────────────────────
