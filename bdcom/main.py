@@ -59,31 +59,26 @@ df_summary = pd.DataFrame(rows, columns=[
 # ────────────────────────────────────────────────────────────────
 # 5.  Build wide frames + totals for each field
 # ────────────────────────────────────────────────────────────────
-def wide(df_src, include_percentage=True):
-    """Return (wide_df, total_row_dict), optionally excluding percentage columns."""
+def wide(df_src):
+    """Return wide_df, without percentage columns."""
     df_src = df_src[df_src.filemonth_dt.isin(MONTHS)].copy()
 
-    # Denominator per field & month for the sum and percentage
+    # Denominator per field & month for the sum (no percentage calculation)
     denom = (df_src.groupby(["field_name", "filemonth_dt"], as_index=False)
              .value_records.sum()
              .rename(columns={"value_records": "_tot"}))
 
-    # Merge to get percentages
+    # Merge to get sums
     merged = df_src.merge(denom, on=["field_name", "filemonth_dt"])
-    merged["_%"] = merged["value_records"] / merged["_tot"]
 
     # Start with a base frame with unique field_name and value_label
     base = merged[["field_name", "value_label"]].drop_duplicates() \
         .sort_values(["field_name", "value_label"]).reset_index(drop=True)
 
     for m in MONTHS:  # Loop over months in descending order
-        mm = merged[merged.filemonth_dt == m][["field_name", "value_label", "value_records", "_%"]]
+        mm = merged[merged.filemonth_dt == m][["field_name", "value_label", "value_records"]]
         base = (base.merge(mm, on=["field_name", "value_label"], how="left")
-                .rename(columns={"value_records": f"{fmt(m)}", "_%": f"{fmt(m)} %"}))
-
-    # Remove percentage columns if not needed
-    if not include_percentage:
-        base = base.drop(columns=[col for col in base.columns if col.endswith(" %")])
+                .rename(columns={"value_records": f"{fmt(m)}"}))
 
     # Fill NaNs with 0s
     num_cols = [c for c in base.columns if c not in ("field_name", "value_label")]
@@ -92,32 +87,19 @@ def wide(df_src, include_percentage=True):
     return base
 
 
-vd_wide = wide(df_data[df_data.analysis_type == "value_dist"], include_percentage=False)
+vd_wide = wide(df_data[df_data.analysis_type == "value_dist"])
 pc_src = df_data[(df_data.analysis_type == "pop_comp") & (df_data.value_label.apply(_contains))]
-pc_wide = wide(pc_src, include_percentage=False)
+pc_wide = wide(pc_src)
 
-# Add percentage row under each field_name
-def add_percentage_rows(df, months):
-    """Add rows that show the percentage contribution of each date."""
-    new_rows = []
-    for fld in df["field_name"].unique():
-        fld_data = df[df["field_name"] == fld]
-        total = fld_data.sum(numeric_only=True)
+# Add total row for each field and month
+def add_total_row(df):
+    """Add a row at the end for the sum of values of each month."""
+    total_row = {"field_name": "Total", "value_label": "Sum"}
+    for col in df.columns:
+        if col != "field_name" and col != "value_label":
+            total_row[col] = df[col].sum()
 
-        # Create the percentage row (leave 'field_name' and 'value_label' empty)
-        percentage_row = {"field_name": "", "value_label": "Percentage"}
-        for col in fld_data.columns:
-            if col.endswith(" Sum"):
-                # Calculate the percentage as (value / total) * 100
-                percentage_row[col] = (fld_data[col].sum() / total[col]) * 100 if total[col] != 0 else 0
-            elif col.endswith(" %"):
-                percentage_row[col] = fld_data[col].sum() if col in fld_data.columns else 0
-
-        # Append the calculated row
-        new_rows.append(fld_data)
-        new_rows.append(pd.DataFrame([percentage_row]))
-
-    return pd.concat(new_rows, ignore_index=True)
+    return pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
 
 # ────────────────────────────────────────────────────────────────
 # 6.  Column defs
@@ -127,8 +109,6 @@ def col_defs(df):
     for c in df.columns:
         d = {"headerName": c, "field": c, "filter": "agSetColumnFilter",
              "sortable": True, "resizable": True, "minWidth": 90}
-        if c.endswith(" %"):
-            d["valueFormatter"] = {"function": "d3.format('.1%')(params.value)"}
         out.append(d)
     return out
 
@@ -274,9 +254,9 @@ def master(evt, n_vd, n_pc,
         vd_filtered = vd_wide
         pc_filtered = pc_wide
 
-    # Add percentage row for all rows (not just filtered ones)
-    vd_filtered_with_percentage = add_percentage_rows(vd_filtered, MONTHS)
-    pc_filtered_with_percentage = add_percentage_rows(pc_filtered, MONTHS)
+    # Add total row at the end
+    vd_filtered_with_total = add_total_row(vd_filtered)
+    pc_filtered_with_total = add_total_row(pc_filtered)
 
     # ---- SQL logic -------------------------------------------------------
     def sql_for(fld, analysis):
@@ -293,7 +273,7 @@ def master(evt, n_vd, n_pc,
     vd_sql = sql_for(fld_active, "value_dist")
     pc_sql = sql_for(fld_active, "pop_comp")
 
-    return (vd_filtered_with_percentage.to_dict("records"), pc_filtered_with_percentage.to_dict("records"),
+    return (vd_filtered_with_total.to_dict("records"), pc_filtered_with_total.to_dict("records"),
             vd_sql, pc_sql, s_df.to_dict("records"))
 
 # ────────────────────────────────────────────────────────────────
