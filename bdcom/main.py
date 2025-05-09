@@ -59,8 +59,8 @@ df_summary = pd.DataFrame(rows, columns=[
 # ────────────────────────────────────────────────────────────────
 # 5.  Build wide frames + totals for each field
 # ────────────────────────────────────────────────────────────────
-def wide(df_src):
-    """Return (wide_df, total_row_dict)."""
+def wide(df_src, include_percentage=True):
+    """Return (wide_df, total_row_dict), optionally excluding percentage columns."""
     df_src = df_src[df_src.filemonth_dt.isin(MONTHS)].copy()
 
     # Denominator per field & month for the sum and percentage
@@ -79,8 +79,11 @@ def wide(df_src):
     for m in MONTHS:  # Loop over months in descending order
         mm = merged[merged.filemonth_dt == m][["field_name", "value_label", "value_records", "_%"]]
         base = (base.merge(mm, on=["field_name", "value_label"], how="left")
-                .rename(columns={"value_records": f"{fmt(m)} Sum",
-                                 "_%": f"{fmt(m)} %"}))
+                .rename(columns={"value_records": f"{fmt(m)}", "_%": f"{fmt(m)} %"}))
+
+    # Remove percentage columns if not needed
+    if not include_percentage:
+        base = base.drop(columns=[col for col in base.columns if col.endswith(" %")])
 
     # Fill NaNs with 0s
     num_cols = [c for c in base.columns if c not in ("field_name", "value_label")]
@@ -89,9 +92,9 @@ def wide(df_src):
     return base
 
 
-vd_wide = wide(df_data[df_data.analysis_type == "value_dist"])
+vd_wide = wide(df_data[df_data.analysis_type == "value_dist"], include_percentage=False)
 pc_src = df_data[(df_data.analysis_type == "pop_comp") & (df_data.value_label.apply(_contains))]
-pc_wide = wide(pc_src)
+pc_wide = wide(pc_src, include_percentage=False)
 
 # ────────────────────────────────────────────────────────────────
 # 6.  Column defs
@@ -285,7 +288,6 @@ def master(evt, n_vd, n_pc,
 
     return (vd_filtered.to_dict("records"), pc_filtered.to_dict("records"),
             vd_sql, pc_sql, s_df.to_dict("records"))
-
 
 # ────────────────────────────────────────────────────────────────
 # 10.  Run
