@@ -199,7 +199,6 @@ def pc_label(evt, rows):
         return rows[evt["rowIndex"]]["value_label"]
     return ""
 
-
 # ────────────────────────────────────────────────────────────────
 # 9-B.  Master callback (comments, filtering, SQL logic)
 # ────────────────────────────────────────────────────────────────
