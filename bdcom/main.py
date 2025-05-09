@@ -96,6 +96,32 @@ vd_wide = wide(df_data[df_data.analysis_type == "value_dist"], include_percentag
 pc_src = df_data[(df_data.analysis_type == "pop_comp") & (df_data.value_label.apply(_contains))]
 pc_wide = wide(pc_src, include_percentage=False)
 
+# Add percentage row under each field_name
+def add_percentage_rows(df):
+    """Add rows that show the percentage contribution of each date."""
+    new_rows = []
+    for fld in df["field_name"].unique():
+        fld_data = df[df["field_name"] == fld]
+        total = fld_data.sum(numeric_only=True)
+
+        # Create the percentage row (leave 'field_name' and 'value_label' empty)
+        percentage_row = {"field_name": "", "value_label": "Percentage"}
+        for col in fld_data.columns:
+            if col.endswith(" %"):
+                percentage_row[col] = 0  # Set percentage columns to 0
+            elif col.endswith("Sum") or col not in fld_data.columns:
+                # Add percentage calculation for 'Sum' columns
+                percentage_row[col] = fld_data[col].sum() / total[col] if total[col] != 0 else 0
+
+        # Append the calculated row
+        new_rows.append(fld_data)
+        new_rows.append(pd.DataFrame([percentage_row]))
+
+    return pd.concat(new_rows, ignore_index=True)
+
+vd_wide = add_percentage_rows(vd_wide)
+pc_wide = add_percentage_rows(pc_wide)
+
 # ────────────────────────────────────────────────────────────────
 # 6.  Column defs
 # ────────────────────────────────────────────────────────────────
