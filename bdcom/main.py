@@ -97,7 +97,7 @@ pc_src = df_data[(df_data.analysis_type == "pop_comp") & (df_data.value_label.ap
 pc_wide = wide(pc_src, include_percentage=False)
 
 # Add percentage row under each field_name
-def add_percentage_rows(df):
+def add_percentage_rows(df, months):
     """Add rows that show the percentage contribution of each date."""
     new_rows = []
     for fld in df["field_name"].unique():
@@ -118,9 +118,6 @@ def add_percentage_rows(df):
         new_rows.append(pd.DataFrame([percentage_row]))
 
     return pd.concat(new_rows, ignore_index=True)
-
-vd_wide = add_percentage_rows(vd_wide)
-pc_wide = add_percentage_rows(pc_wide)
 
 # ────────────────────────────────────────────────────────────────
 # 6.  Column defs
@@ -273,29 +270,14 @@ def master(evt, n_vd, n_pc,
         vd_filtered = vd_wide[vd_wide["field_name"] == fld_active]
         pc_filtered = pc_wide[pc_wide["field_name"] == fld_active]
 
-        # Compute totals only for the selected field
-        vd_total = vd_filtered.sum(numeric_only=True)
-        pc_total = pc_filtered.sum(numeric_only=True)
-
-        # Add a "Total" row
-        vd_total_row = {"field_name": "Total", "value_label": ""}
-        for col in vd_filtered.columns:
-            if col.endswith(" Sum"):
-                vd_total_row[col] = vd_total[col] if col in vd_total else 0
-            elif col.endswith(" %"):
-                vd_total_row[col] = vd_filtered[col].sum() if col in vd_filtered else 0
-
-        pc_total_row = {"field_name": "Total", "value_label": ""}
-        for col in pc_filtered.columns:
-            if col.endswith(" Sum"):
-                pc_total_row[col] = pc_total[col] if col in pc_total else 0
-            elif col.endswith(" %"):
-                pc_total_row[col] = pc_filtered[col].sum() if col in pc_filtered else 0
+        # Add a percentage row under each field_name in the Value Distribution grid
+        vd_filtered_with_percentage = add_percentage_rows(vd_filtered, MONTHS)
+        pc_filtered_with_percentage = add_percentage_rows(pc_filtered, MONTHS)
 
     else:
         vd_filtered, pc_filtered = vd_wide, pc_wide
-        vd_total_row = {}
-        pc_total_row = {}
+        vd_filtered_with_percentage = vd_filtered
+        pc_filtered_with_percentage = pc_filtered
 
     # ---- SQL logic -------------------------------------------------------
     def sql_for(fld, analysis):
@@ -312,7 +294,7 @@ def master(evt, n_vd, n_pc,
     vd_sql = sql_for(fld_active, "value_dist")
     pc_sql = sql_for(fld_active, "pop_comp")
 
-    return (vd_filtered.to_dict("records"), pc_filtered.to_dict("records"),
+    return (vd_filtered_with_percentage.to_dict("records"), pc_filtered_with_percentage.to_dict("records"),
             vd_sql, pc_sql, s_df.to_dict("records"))
 
 # ────────────────────────────────────────────────────────────────
