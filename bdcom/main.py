@@ -199,6 +199,7 @@ def pc_label(evt, rows):
         return rows[evt["rowIndex"]]["value_label"]
     return ""
 
+
 # ────────────────────────────────────────────────────────────────
 # 9-B.  Master callback (comments, filtering, SQL logic)
 # ────────────────────────────────────────────────────────────────
@@ -220,6 +221,23 @@ def master(evt, n_vd, n_pc,
 
     s_df = pd.DataFrame(s_rows)
     trig = dash.callback_context.triggered[0]["prop_id"].split(".")[0]
+
+    # ---- append comments --------------------------------------------------
+    if trig == "vd_comm_btn" and vd_txt and vd_lbl:
+        fld = vd_rows[0]["field_name"] if vd_rows else None
+        if fld:
+            m = s_df["Field Name"] == fld
+            new_entry = f"{vd_lbl} - {vd_txt}"
+            old = s_df.loc[m, "Comment Missing"].iloc[0]
+            s_df.loc[m, "Comment Missing"] = (old + "\n" if old else "") + new_entry
+
+    if trig == "pc_comm_btn" and pc_txt and pc_lbl:
+        fld = pc_rows[0]["field_name"] if pc_rows else None
+        if fld:
+            m = s_df["Field Name"] == fld
+            new_entry = f"{pc_lbl} - {pc_txt}"
+            old = s_df.loc[m, "Comment M2M"].iloc[0]
+            s_df.loc[m, "Comment M2M"] = (old + "\n" if old else "") + new_entry
 
     # ---- field active (for filtering & SQL) ------------------------------
     fld_active = None
@@ -256,7 +274,7 @@ def master(evt, n_vd, n_pc,
     pc_sql = sql_for(fld_active, "pop_comp")
 
     return (vd_filtered_with_total.to_dict("records"), pc_filtered_with_total.to_dict("records"),
-            vd_sql, pc_sql, fld_active)
+            vd_sql, pc_sql, fld_active)  # Return field name as data
 
 # ────────────────────────────────────────────────────────────────
 # 10.  Run
