@@ -138,6 +138,7 @@ GRID_DETAIL = {"pagination": True, "paginationPageSize": 20,
 # ────────────────────────────────────────────────────────────────
 app = Dash(__name__)
 app.layout = html.Div([
+    dcc.Store(id="selected_field_name"),  # Add dcc.Store to store selected field
     html.H2("BDCOMM FRY14M Field Analysis — 13-Month View"),
     dcc.Tabs([
         # -------- Summary --------------------------------------------------
@@ -207,7 +208,7 @@ def pc_label(evt, rows):
     Output("vd", "rowData"), Output("pc", "rowData"),
     Output("vd_sql", "children"), Output("pc_sql", "children"),
     Output("summary", "rowData"),
-    Input("summary", "cellClicked"),
+    Input("selected_field_name", "data"),  # Add this input for selected field name
     Input("vd_comm_btn", "n_clicks"), Input("pc_comm_btn", "n_clicks"),
     State("summary", "rowData"),
     State("vd", "rowData"), State("pc", "rowData"),
@@ -215,36 +216,12 @@ def pc_label(evt, rows):
     State("vd_val_lbl", "value"), State("pc_val_lbl", "value"),
     prevent_initial_call=True
 )
-def master(evt, n_vd, n_pc,
+def master(selected_field, n_vd, n_pc,
            s_rows, vd_rows, pc_rows,
            vd_txt, pc_txt, vd_lbl, pc_lbl):
 
     s_df = pd.DataFrame(s_rows)
-    trig = dash.callback_context.triggered[0]["prop_id"].split(".")[0]
-
-    # ---- append comments --------------------------------------------------
-    if trig == "vd_comm_btn" and vd_txt and vd_lbl:
-        fld = vd_rows[0]["field_name"] if vd_rows else None
-        if fld:
-            m = s_df["Field Name"] == fld
-            new_entry = f"{vd_lbl} - {vd_txt}"
-            old = s_df.loc[m, "Comment Missing"].iloc[0]
-            s_df.loc[m, "Comment Missing"] = (old + "\n" if old else "") + new_entry
-
-    if trig == "pc_comm_btn" and pc_txt and pc_lbl:
-        fld = pc_rows[0]["field_name"] if pc_rows else None
-        if fld:
-            m = s_df["Field Name"] == fld
-            new_entry = f"{pc_lbl} - {pc_txt}"
-            old = s_df.loc[m, "Comment M2M"].iloc[0]
-            s_df.loc[m, "Comment M2M"] = (old + "\n" if old else "") + new_entry
-
-    # ---- field active (for filtering & SQL) ------------------------------
-    fld_active = None
-    if trig == "summary" and evt and "rowIndex" in evt:
-        fld_active = s_df.iloc[evt["rowIndex"]]["Field Name"]
-    elif vd_rows:
-        fld_active = vd_rows[0]["field_name"]
+    fld_active = selected_field["field_name"] if selected_field else None  # Use stored field name
 
     # ---- filter data for selected field, or show all if no field selected ----
     if fld_active:
