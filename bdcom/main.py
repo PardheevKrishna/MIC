@@ -108,7 +108,8 @@ def col_defs(df):
     out = []
     for c in df.columns:
         d = {"headerName": c, "field": c, "filter": "agSetColumnFilter",
-             "sortable": True, "resizable": True, "minWidth": 90}
+             "sortable": True, "resizable": True, "minWidth": 90,
+             "editable": c in ["Comment Missing", "Comment M2M"]}  # Editable columns
         out.append(d)
     return out
 
@@ -207,7 +208,7 @@ def pc_label(evt, rows):
     Output("vd", "rowData"), Output("pc", "rowData"),
     Output("vd_sql", "children"), Output("pc_sql", "children"),
     Output("summary", "rowData"),
-    Input("summary", "cellClicked"),
+    Input("summary", "cellValueChanged"),  # Track cell value changes
     Input("vd_comm_btn", "n_clicks"), Input("pc_comm_btn", "n_clicks"),
     State("summary", "rowData"),
     State("vd", "rowData"), State("pc", "rowData"),
@@ -238,6 +239,16 @@ def master(evt, n_vd, n_pc,
             new_entry = f"{pc_lbl} - {pc_txt}"
             old = s_df.loc[m, "Comment M2M"].iloc[0]
             s_df.loc[m, "Comment M2M"] = (old + "\n" if old else "") + new_entry
+
+    # ---- handle cell value changes (editable comments) -------------------
+    if evt and "newValue" in evt:
+        field_name = evt["data"]["Field Name"]
+        if "Comment Missing" in evt["colId"]:
+            new_comment = evt["newValue"]
+            s_df.loc[s_df["Field Name"] == field_name, "Comment Missing"] = new_comment
+        elif "Comment M2M" in evt["colId"]:
+            new_comment = evt["newValue"]
+            s_df.loc[s_df["Field Name"] == field_name, "Comment M2M"] = new_comment
 
     # ---- field active (for filtering & SQL) ------------------------------
     fld_active = None
