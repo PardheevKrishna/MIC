@@ -107,11 +107,11 @@ def add_percentage_rows(df):
         # Create the percentage row (leave 'field_name' and 'value_label' empty)
         percentage_row = {"field_name": "", "value_label": "Percentage"}
         for col in fld_data.columns:
-            if col.endswith(" %"):
-                percentage_row[col] = 0  # Set percentage columns to 0
-            elif col.endswith("Sum") or col not in fld_data.columns:
-                # Add percentage calculation for 'Sum' columns
-                percentage_row[col] = fld_data[col].sum() / total[col] if total[col] != 0 else 0
+            if col.endswith(" Sum"):
+                # Calculate the percentage as (value / total) * 100
+                percentage_row[col] = (fld_data[col].sum() / total[col]) * 100 if total[col] != 0 else 0
+            elif col.endswith(" %"):
+                percentage_row[col] = fld_data[col].sum() if col in fld_data.columns else 0
 
         # Append the calculated row
         new_rows.append(fld_data)
