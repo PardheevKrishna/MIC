@@ -127,7 +127,6 @@ def comment_block(label_id, text_id, btn_id):
                     style={"marginTop": "0.25rem"})
     ], style={"marginTop": "0.5rem"})
 
-
 # grid options
 GRID_SUMMARY = {"pagination": False, "rowSelection": "single", "domLayout": "normal"}
 GRID_DETAIL = {"pagination": True, "paginationPageSize": 20,
@@ -139,6 +138,7 @@ GRID_DETAIL = {"pagination": True, "paginationPageSize": 20,
 app = Dash(__name__)
 app.layout = html.Div([
     html.H2("BDCOMM FRY14M Field Analysis — 13-Month View"),
+    dcc.Store(id="stored_field_name"),  # Store selected field name
     dcc.Tabs([
         # -------- Summary --------------------------------------------------
         dcc.Tab(label="Summary", children=[
@@ -206,7 +206,7 @@ def pc_label(evt, rows):
 @app.callback(
     Output("vd", "rowData"), Output("pc", "rowData"),
     Output("vd_sql", "children"), Output("pc_sql", "children"),
-    Output("summary", "rowData"),
+    Output("stored_field_name", "data"),
     Input("summary", "cellClicked"),
     Input("vd_comm_btn", "n_clicks"), Input("pc_comm_btn", "n_clicks"),
     State("summary", "rowData"),
@@ -274,7 +274,7 @@ def master(evt, n_vd, n_pc,
     pc_sql = sql_for(fld_active, "pop_comp")
 
     return (vd_filtered_with_total.to_dict("records"), pc_filtered_with_total.to_dict("records"),
-            vd_sql, pc_sql, s_df.to_dict("records"))
+            vd_sql, pc_sql, fld_active)  # Return field name as data
 
 # ────────────────────────────────────────────────────────────────
 # 10.  Run
