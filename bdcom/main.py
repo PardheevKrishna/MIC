@@ -266,18 +266,17 @@ def master(evt, n_vd, n_pc,
     elif vd_rows:
         fld_active = vd_rows[0]["field_name"]
 
+    # ---- filter data for selected field, or show all if no field selected ----
     if fld_active:
         vd_filtered = vd_wide[vd_wide["field_name"] == fld_active]
         pc_filtered = pc_wide[pc_wide["field_name"] == fld_active]
-
-        # Add a percentage row under each field_name in the Value Distribution grid
-        vd_filtered_with_percentage = add_percentage_rows(vd_filtered, MONTHS)
-        pc_filtered_with_percentage = add_percentage_rows(pc_filtered, MONTHS)
-
     else:
-        vd_filtered, pc_filtered = vd_wide, pc_wide
-        vd_filtered_with_percentage = vd_filtered
-        pc_filtered_with_percentage = pc_filtered
+        vd_filtered = vd_wide
+        pc_filtered = pc_wide
+
+    # Add percentage row for all rows (not just filtered ones)
+    vd_filtered_with_percentage = add_percentage_rows(vd_filtered, MONTHS)
+    pc_filtered_with_percentage = add_percentage_rows(pc_filtered, MONTHS)
 
     # ---- SQL logic -------------------------------------------------------
     def sql_for(fld, analysis):
