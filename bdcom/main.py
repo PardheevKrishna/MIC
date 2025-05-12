@@ -86,27 +86,18 @@ def wide(df_src):
     base = (
         merged[["field_name", "value_label"]]
         .drop_duplicates()
-        .sort_values(["field_name", "value_label"] )
+        .sort_values(["field_name", "value_label"]) 
         .reset_index(drop=True)
     )
     for m in MONTHS:
-        mm = merged[
-            merged.filemonth_dt == m
-        ][["field_name", "value_label", "value_records"]]
-        base = base.merge(
-            mm,
-            on=["field_name", "value_label"],
-            how="left",
-        ).rename(columns={"value_records": fmt(m)})
+        mm = merged[merged.filemonth_dt == m][["field_name", "value_label", "value_records"]]
+        base = base.merge(mm, on=["field_name", "value_label"], how="left").rename(columns={"value_records": fmt(m)})
     cols = [c for c in base.columns if c not in ("field_name", "value_label")]
     base[cols] = base[cols].fillna(0)
     return base
 
 vd_wide = wide(df_data[df_data.analysis_type == "value_dist"])
-pc_wide = wide(
-    df_data[(df_data.analysis_type == "pop_comp") & (df_data.value_label.apply(_contains))]
-)
-
+pc_wide = wide(df_data[(df_data.analysis_type == "pop_comp") & (df_data.value_label.apply(_contains))])
 
 def add_total_row(df):
     total = {"field_name": "Total", "value_label": "Sum"}
@@ -123,11 +114,7 @@ def sql_for(fld, analysis):
         & (df_data.value_sql_logic.notna())
     ]
     if not sub.empty:
-        return (
-            sub.value_sql_logic.iloc[0]
-            .replace("\\n", "\n")
-            .replace("\\t", "\t")
-        )
+        return sub.value_sql_logic.iloc[0].replace("\\n", "\n").replace("\\t", "\t")
     return ""
 
 # ────────────────────────────────────────────────────────────────
@@ -140,7 +127,6 @@ temp['month'] = temp['date'].dt.to_period('M').dt.to_timestamp()
 temp = temp[temp.month.isin(prev_months)]
 miss = temp[temp.research == 'Missing']
 m2m = temp[temp.research == 'M2M Diff']
-
 
 def pivot_comments(df, prefix):
     pts = (
@@ -155,17 +141,10 @@ def pivot_comments(df, prefix):
 
 pivot_miss = pivot_comments(miss, 'Prev Missing')
 pivot_m2m = pivot_comments(m2m, 'Prev M2M')
-prev_comments_wide = pd.merge(
-    pivot_miss,
-    pivot_m2m,
-    on='field_name',
-    how='outer'
-).fillna('')
+prev_comments_wide = pd.merge(pivot_miss, pivot_m2m, on='field_name', how='outer').fillna('')
 
-# Merge with current-month comments
-cur = initial_summary[
-    ['Field Name', 'Comment Missing', 'Comment M2M']
-].rename(
+# Merge with current-month comments and then drop them for previous tab
+cur = initial_summary[['Field Name', 'Comment Missing', 'Comment M2M']].rename(
     columns={
         'Comment Missing': 'Comment Missing This Month',
         'Comment M2M': 'Comment M2M This Month',
@@ -178,17 +157,15 @@ prev_summary = pd.merge(
     right_on='field_name',
     how='left'
 )
-prev_summary.drop(columns=['field_name'], inplace=True)
+# Drop helper and this-month comment columns
+prev_summary.drop(columns=['field_name', 'Comment Missing This Month', 'Comment M2M This Month'], inplace=True)
 
 # Pre-calc style_cell_conditional based on header length only
 style_cell_conditional = []
 for col in prev_summary.columns:
     width_px = max(len(col) * 8, 100)
     style_cell_conditional.append(
-        {
-            'if': {'column_id': col},
-            'width': f"{width_px}px",
-        }
+        {'if': {'column_id': col}, 'width': f"{width_px}px"}
     )
 
 # ────────────────────────────────────────────────────────────────
@@ -242,11 +219,17 @@ app.layout = html.Div([
                 ], style={'marginBottom':'1rem'}),
                 dash_table.DataTable(
                     id='summary-table',
-                    columns=[{"name":c,"id":c} for c in initial_summary.columns],
+                    columns=[
+                        {"name": c, "id": c, "editable": c in ["Comment Missing", "Comment M2M"]}
+                        for c in initial_summary.columns
+                    ],
                     data=[],
-                    filter_action='none', sort_action='native',
-                    row_selectable='single', selected_rows=[],
-                    page_size=20, style_table={'overflowX':'auto'}
+                    filter_action='none',
+                    sort_action='native',
+                    row_selectable='single',
+                    selected_rows=[],
+                    page_size=20,
+                    style_table={'overflowX':'auto'}
                 ),
             ]),
             dcc.Tab(label="Value Distribution", children=[
@@ -333,50 +316,4 @@ def update_comments(n_vd, n_pc, vd_act, vd_data, vd_txt, pc_act, pc_data, pc_txt
     if trig == 'pc_comm_btn' and pc_act and pc_txt:
         r = pc_act['row']
         fld = pc_data[r]['field_name']
-        lbl = pc_data[r]['value_label']
-        ent = f"{lbl} - {pc_txt}" 
-        m = df_sum['Field Name'] == fld
-        old = df_sum.loc[m, 'Comment M2M'].iloc[0]
-        df_sum.loc[m, 'Comment M2M'] = (old + '\n' if old else '') + ent
-    return df_sum.to_dict('records')
-
-@app.callback(
-    Output('vd-table','data'), Output('pc-table','data'),
-    Output('vd_sql','children'), Output('pc_sql','children'),
-    Input('summary-table','selected_rows'), State('summary-table','data')
-)
-def update_detail(selected, summary_rows):
-    if selected:
-        fld = summary_rows[selected[0]]['Field Name']
-        vd_df = vd_wide[vd_wide['field_name'] == fld]
-        pc_df = pc_wide[pc_wide['field_name'] == fld]
-        vd_sql = sql_for(fld, 'value_dist')
-        pc_sql = sql_for(fld, 'pop_comp')
-    else:
-        vd_df, pc_df, vd_sql, pc_sql = vd_wide, pc_wide, '', ''
-    return (
-        add_total_row(vd_df).to_dict('records'),
-        add_total_row(pc_df).to_dict('records'),
-        vd_sql,
-        pc_sql,
-    )
-
-@app.callback(
-    Output('vd_val_lbl','value'),
-    Input('vd-table','active_cell'), State('vd-table','data')
-)
-def update_vd_label(active, rows):
-    return rows[active['row']]['value_label'] if active else ''
-
-@app.callback(
-    Output('pc_val_lbl','value'),
-    Input('pc-table','active_cell'), State('pc-table','data')
-)
-def update_pc_label(active, rows):
-    return rows[active['row']]['value_label'] if active else ''
-
-# ────────────────────────────────────────────────────────────────
-# 9.  Run
-# ────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    app.run(debug=True)
+        lbl = pc_data[r]['
