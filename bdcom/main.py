@@ -16,6 +16,7 @@ df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"], format="%m/%d/
 DATE1 = dt.datetime(2025, 1, 1)
 MONTHS = pd.date_range(end=DATE1, periods=13, freq="MS")[::-1]
 fmt = lambda d: d.strftime("%b-%Y")
+prev_month = MONTHS[1]
 
 # ────────────────────────────────────────────────────────────────
 # 3.  Helper for pop-comp phrases
@@ -26,9 +27,8 @@ _PHRASES = [r"1\)\s*CF Loan - Both Pop, Diff Values",
 _contains = lambda x: any(re.search(p, str(x)) for p in _PHRASES)
 
 # ────────────────────────────────────────────────────────────────
-# 4.  Summary dataframe
+# 4.  Summary dataframe (current month)
 # ────────────────────────────────────────────────────────────────
-prev_month = MONTHS[1]
 rows = []
 for fld in sorted(df_data["field_name"].unique()):
     miss1 = df_data[(df_data.analysis_type == "value_dist") & (df_data.field_name == fld) &
@@ -56,7 +56,7 @@ initial_summary = pd.DataFrame(rows, columns=[
 ])
 
 # ────────────────────────────────────────────────────────────────
-# 5.  Build wide frames
+# 5.  Build wide frames for Value Dist and Pop Comp
 # ────────────────────────────────────────────────────────────────
 def wide(df_src):
     df_src = df_src[df_src.filemonth_dt.isin(MONTHS)].copy()
@@ -88,94 +88,139 @@ def sql_for(fld, analysis):
     return sub.value_sql_logic.iloc[0].replace("\\n", "\n").replace("\\t", "\t") if not sub.empty else ""
 
 # ────────────────────────────────────────────────────────────────
-# 6.  Dash App Layout
+# 6.  Load and pivot previous comments from CSV
+# ────────────────────────────────────────────────────────────────
+prev_comments = pd.read_csv("prev_comments.csv", parse_dates=["date"])
+prev_months = MONTHS[1:]  # exclude current month
+prev_comments['month'] = prev_comments['date'].dt.to_period('M').dt.to_timestamp()
+prev_comments = prev_comments[prev_comments.month.isin(prev_months)]
+
+# Split by research type
+miss = prev_comments[prev_comments.research == 'Missing']
+m2m = prev_comments[prev_comments.research == 'M2M Diff']
+
+def pivot_comments(df, prefix):
+    pts = (df.groupby(['field_name', 'month'])['comment']
+             .agg(lambda x: '\n'.join(x))
+             .reset_index())
+    pts['col'] = pts['month'].apply(fmt)
+    wide = pts.pivot(index='field_name', columns='col', values='comment')
+    wide.columns = [f"{prefix} {c}" for c in wide.columns]
+    return wide.reset_index()
+
+pivot_miss = pivot_comments(miss, 'Prev Missing')
+pivot_m2m = pivot_comments(m2m, 'Prev M2M')
+prev_comments_wide = pd.merge(pivot_miss, pivot_m2m, on='field_name', how='outer').fillna('')
+
+# Merge with current-month comments
+cur = initial_summary[['Field Name', 'Comment Missing', 'Comment M2M']].rename(
+    columns={'Comment Missing': 'Comment Missing This Month',
+             'Comment M2M': 'Comment M2M This Month'})
+prev_summary = pd.merge(cur, prev_comments_wide, left_on='Field Name', right_on='field_name', how='left')
+prev_summary.drop(columns=['field_name'], inplace=True)
+
+# ────────────────────────────────────────────────────────────────
+# 7.  Dash App Layout
 # ────────────────────────────────────────────────────────────────
 app = Dash(__name__)
 app.layout = html.Div([
     dcc.Store(id='summary-store', data=initial_summary.to_dict('records')),
     html.H2("BDCOMM FRY14M Field Analysis — 13-Month View"),
-    dcc.Tabs([
-        dcc.Tab(label="Summary", children=[
-            html.Div([
+    dcc.Tabs(
+        id='main-tabs',
+        children=[
+            dcc.Tab(label="Summary", children=[
                 html.Div([
-                    html.Label(f"Missing {DATE1:%b-%Y}"),
-                    dcc.Dropdown(
-                        id='filter-miss1',
-                        options=[{'label': v, 'value': v} for v in sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())],
-                        value=list(sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())),
-                        multi=True
-                    )
-                ], style={'width':'24%','display':'inline-block'}),
-                html.Div([
-                    html.Label(f"Missing {prev_month:%b-%Y}"),
-                    dcc.Dropdown(
-                        id='filter-miss2',
-                        options=[{'label': v, 'value': v} for v in sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())],
-                        value=list(sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())),
-                        multi=True
-                    )
-                ], style={'width':'24%','display':'inline-block'}),
-                html.Div([
-                    html.Label(f"M2M Diff {DATE1:%b-%Y}"),
-                    dcc.Dropdown(
-                        id='filter-m2m1',
-                        options=[{'label': v, 'value': v} for v in sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())],
-                        value=list(sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())),
-                        multi=True
-                    )
-                ], style={'width':'24%','display':'inline-block'}),
-                html.Div([
-                    html.Label(f"M2M Diff {prev_month:%b-%Y}"),
-                    dcc.Dropdown(
-                        id='filter-m2m2',
-                        options=[{'label': v, 'value': v} for v in sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())],
-                        value=list(sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())),
-                        multi=True
-                    )
-                ], style={'width':'24%','display':'inline-block'})
-            ], style={'marginBottom':'1rem'}),
-            dash_table.DataTable(
-                id='summary-table',
-                columns=[{"name":c,"id":c} for c in initial_summary.columns],
-                data=[],
-                filter_action='none', sort_action='native',
-                row_selectable='single', selected_rows=[],
-                page_size=20, style_table={'overflowX':'auto'}
-            )
-        ]),
-        dcc.Tab(label="Value Distribution", children=[
-            dash_table.DataTable(
-                id='vd-table',
-                columns=[{"name":c,"id":c} for c in vd_wide.columns],
-                data=add_total_row(vd_wide).to_dict('records'),
-                filter_action='native', sort_action='native',
-                page_size=20, style_table={'overflowX':'auto'}
-            ),
-            dcc.Input(id='vd_val_lbl', type='text', readOnly=True, placeholder='value_label (select any cell)', style={'width':'100%','marginTop':'0.5rem'}),
-            dcc.Textarea(id='vd_comm_text', placeholder='Add comment…', style={'width':'100%','height':'60px','marginTop':'0.5rem'}),
-            html.Button('Submit', id='vd_comm_btn', n_clicks=0, style={'marginTop':'0.25rem'}),
-            html.Pre(id='vd_sql', style={'whiteSpace':'pre-wrap','backgroundColor':'#f3f3f3','padding':'0.75rem','border':'1px solid #ddd','fontFamily':'monospace','fontSize':'0.85rem','marginTop':'0.5rem'}),
-            dcc.Clipboard(target_id='vd_sql', title='Copy SQL Logic', style={'marginTop':'0.5rem'})
-        ]),
-        dcc.Tab(label="Population Comparison", children=[
-            dash_table.DataTable(
-                id='pc-table',
-                columns=[{"name":c,"id":c} for c in pc_wide.columns],
-                data=add_total_row(pc_wide).to_dict('records'),
-                filter_action='native', sort_action='native',
-                page_size=20, style_table={'overflowX':'auto'}
-            ),
-            dcc.Input(id='pc_val_lbl', type='text', readOnly=True, placeholder='value_label (select any cell)', style={'width':'100%','marginTop':'0.5rem'}),
-            dcc.Textarea(id='pc_comm_text', placeholder='Add comment…', style={'width':'100%','height':'60px','marginTop':'0.5rem'}),
-            html.Button('Submit', id='pc_comm_btn', n_clicks=0, style={'marginTop':'0.25rem'}),
-            html.Pre(id='pc_sql', style={'whiteSpace':'pre-wrap','backgroundColor':'#f3f3f3','padding':'0.75rem','border':'1px solid #ddd','fontFamily':'monospace','fontSize':'0.85rem','marginTop':'0.5rem'}),
-            dcc.Clipboard(target_id='pc_sql', title='Copy SQL Logic', style={'marginTop':'0.5rem'})
-        ])
-    ])
+                    html.Div([
+                        html.Label(f"Missing {DATE1:%b-%Y}"),
+                        dcc.Dropdown(
+                            id='filter-miss1',
+                            options=[{'label': v, 'value': v} for v in sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())],
+                            value=list(sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())),
+                            multi=True
+                        )
+                    ], style={'width':'24%','display':'inline-block'}),
+                    html.Div([
+                        html.Label(f"Missing {prev_month:%b-%Y}"),
+                        dcc.Dropdown(
+                            id='filter-miss2',
+                            options=[{'label': v, 'value': v} for v in sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())],
+                            value=list(sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())),
+                            multi=True
+                        )
+                    ], style={'width':'24%','display':'inline-block'}),
+                    html.Div([
+                        html.Label(f"M2M Diff {DATE1:%b-%Y}"),
+                        dcc.Dropdown(
+                            id='filter-m2m1',
+                            options=[{'label': v, 'value': v} for v in sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())],
+                            value=list(sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())),
+                            multi=True
+                        )
+                    ], style={'width':'24%','display':'inline-block'}),
+                    html.Div([
+                        html.Label(f"M2M Diff {prev_month:%b-%Y}"),
+                        dcc.Dropdown(
+                            id='filter-m2m2',
+                            options=[{'label': v, 'value': v} for v in sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())],
+                            value=list(sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())),
+                            multi=True
+                        )
+                    ], style={'width':'24%','display':'inline-block'})
+                ], style={'marginBottom':'1rem'}),
+                dash_table.DataTable(
+                    id='summary-table',
+                    columns=[{"name":c,"id":c} for c in initial_summary.columns],
+                    data=[],
+                    filter_action='none', sort_action='native',
+                    row_selectable='single', selected_rows=[],
+                    page_size=20, style_table={'overflowX':'auto'}
+                )
+            ]),
+            dcc.Tab(label="Value Distribution", children=[
+                dash_table.DataTable(
+                    id='vd-table',
+                    columns=[{"name":c,"id":c} for c in vd_wide.columns],
+                    data=add_total_row(vd_wide).to_dict('records'),
+                    filter_action='native', sort_action='native',
+                    page_size=20, style_table={'overflowX':'auto'}
+                ),
+                dcc.Input(id='vd_val_lbl', type='text', readOnly=True, placeholder='value_label (select any cell)', style={'width':'100%','marginTop':'0.5rem'}),
+                dcc.Textarea(id='vd_comm_text', placeholder='Add comment…', style={'width':'100%','height':'60px','marginTop':'0.5rem'}),
+                html.Button('Submit', id='vd_comm_btn', n_clicks=0, style={'marginTop':'0.25rem'}),
+                html.Pre(id='vd_sql', style={'whiteSpace':'pre-wrap','backgroundColor':'#f3f3f3','padding':'0.75rem','border':'1px solid #ddd','fontFamily':'monospace','fontSize':'0.85rem','marginTop':'0.5rem'}),
+                dcc.Clipboard(target_id='vd_sql', title='Copy SQL Logic', style={'marginTop':'0.5rem'})
+            ]),
+            dcc.Tab(label="Population Comparison", children=[
+                dash_table.DataTable(
+                    id='pc-table',
+                    columns=[{"name":c,"id":c} for c in pc_wide.columns],
+                    data=add_total_row(pc_wide).to_dict('records'),
+                    filter_action='native', sort_action='native',
+                    page_size=20, style_table={'overflowX':'auto'}
+                ),
+                dcc.Input(id='pc_val_lbl', type='text', readOnly=True, placeholder='value_label (select any cell)', style={'width':'100%','marginTop':'0.5rem'}),
+                dcc.Textarea(id='pc_comm_text', placeholder='Add comment…', style={'width':'100%','height':'60px','marginTop':'0.5rem'}),
+                html.Button('Submit', id='pc_comm_btn', n_clicks=0, style={'marginTop':'0.25rem'}),
+                html.Pre(id='pc_sql', style={'whiteSpace':'pre-wrap','backgroundColor':'#f3f3f3','padding':'0.75rem','border':'1px solid #ddd','fontFamily':'monospace','fontSize':'0.85rem','marginTop':'0.5rem'}),
+                dcc.Clipboard(target_id='pc_sql', title='Copy SQL Logic', style={'marginTop':'0.5rem'})
+            ]),
+            dcc.Tab(label="Previous Comments", children=[
+                dash_table.DataTable(
+                    id='prev-comments-table',
+                    columns=[{"name": c, "id": c} for c in prev_summary.columns],
+                    data=prev_summary.to_dict('records'),
+                    filter_action='native', sort_action='native',
+                    page_size=20, style_table={'overflowX': 'auto'}
+                )
+            ])
+        ],
+        style={'display':'flex', 'flexWrap':'nowrap'}
+    )
 ])
 
 # ────────────────────────────────────────────────────────────────
-# 7.  Callbacks
+# 8.  Callbacks (unchanged)
 # ────────────────────────────────────────────────────────────────
 @app.callback(
     Output('summary-table','data'),
@@ -240,6 +285,7 @@ def update_vd_label(active, rows): return rows[active['row']]['value_label'] if 
 def update_pc_label(active, rows): return rows[active['row']]['value_label'] if active else ''
 
 # ────────────────────────────────────────────────────────────────
-# 8.  Run
+# 9.  Run
 # ────────────────────────────────────────────────────────────────
-if __name__ == "__main__": app.run(debug=True)
+if __name__ == "__main__":
+    app.run(debug=True)
