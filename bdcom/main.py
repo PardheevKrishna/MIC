@@ -28,15 +28,17 @@ _contains = lambda x: any(re.search(p, str(x)) for p in _PHRASES)
 # ────────────────────────────────────────────────────────────────
 # 4.  Summary dataframe
 # ────────────────────────────────────────────────────────────────
-prev_month = MONTHS[1]  # Dec-24
+prev_month = MONTHS[1]
 rows = []
 for fld in sorted(df_data["field_name"].unique()):
+    # Missing counts
     miss1 = df_data[(df_data.analysis_type == "value_dist") & (df_data.field_name == fld) &
                     (df_data.filemonth_dt == DATE1) &
                     (df_data.value_label.str.contains("Missing", case=False, na=False))]["value_records"].sum()
     miss2 = df_data[(df_data.analysis_type == "value_dist") & (df_data.field_name == fld) &
                     (df_data.filemonth_dt == prev_month) &
                     (df_data.value_label.str.contains("Missing", case=False, na=False))]["value_records"].sum()
+    # Population diffs
     diff1 = df_data[(df_data.analysis_type == "pop_comp") & (df_data.field_name == fld) &
                     (df_data.filemonth_dt == DATE1) &
                     (df_data.value_label.apply(_contains))]["value_records"].sum()
@@ -85,6 +87,7 @@ def add_total_row(df):
             total[col] = df[col].sum()
     return pd.concat([df, pd.DataFrame([total])], ignore_index=True)
 
+# SQL logic extractor
 def sql_for(fld, analysis):
     sub = df_data[(df_data.analysis_type == analysis) & (df_data.field_name == fld) &
                   (df_data.value_sql_logic.notna())]
@@ -113,7 +116,6 @@ app.layout = html.Div([
             )
         ]),
         dcc.Tab(label="Value Distribution", children=[
-            html.Div(["Selected Value Label:", dcc.Input(id='vd_val_lbl', type='text', readOnly=True)]),
             dash_table.DataTable(
                 id='vd-table',
                 columns=[{"name": c, "id": c} for c in vd_wide.columns],
@@ -125,14 +127,21 @@ app.layout = html.Div([
                 page_size=20,
                 style_table={'overflowX': 'auto'},
             ),
-            dcc.Textarea(id='vd_comm_text', placeholder='Add comment…', style={'width': '100%', 'height': '60px'}),
-            html.Button('Submit', id='vd_comm_btn', n_clicks=0),
-            html.Pre(id='vd_sql', style={'whiteSpace': 'pre-wrap', 'backgroundColor': '#f3f3f3',
-                                         'padding': '0.75rem', 'border': '1px solid #ddd', 'fontFamily': 'monospace',
-                                         'fontSize': '0.85rem'})
+            dcc.Input(id='vd_val_lbl', type='text', readOnly=True,
+                      placeholder='value_label (select any cell)',
+                      style={'width': '100%', 'marginTop': '0.5rem'}),
+            dcc.Textarea(id='vd_comm_text', placeholder='Add comment…',
+                         style={'width': '100%', 'height': '60px', 'marginTop': '0.5rem'}),
+            html.Button('Submit', id='vd_comm_btn', n_clicks=0,
+                        style={'marginTop': '0.25rem'}),
+            html.Pre(id='vd_sql', style={'whiteSpace': 'pre-wrap','backgroundColor': '#f3f3f3',
+                                         'padding': '0.75rem', 'border': '1px solid #ddd',
+                                         'fontFamily': 'monospace', 'fontSize': '0.85rem',
+                                         'marginTop': '0.5rem'}),
+            dcc.Clipboard(target_id='vd_sql', title='Copy SQL Logic',
+                          style={'marginTop': '0.5rem'})
         ]),
         dcc.Tab(label="Population Comparison", children=[
-            html.Div(["Selected Value Label:", dcc.Input(id='pc_val_lbl', type='text', readOnly=True)]),
             dash_table.DataTable(
                 id='pc-table',
                 columns=[{"name": c, "id": c} for c in pc_wide.columns],
@@ -144,11 +153,19 @@ app.layout = html.Div([
                 page_size=20,
                 style_table={'overflowX': 'auto'},
             ),
-            dcc.Textarea(id='pc_comm_text', placeholder='Add comment…', style={'width': '100%', 'height': '60px'}),
-            html.Button('Submit', id='pc_comm_btn', n_clicks=0),
-            html.Pre(id='pc_sql', style={'whiteSpace': 'pre-wrap', 'backgroundColor': '#f3f3f3',
-                                         'padding': '0.75rem', 'border': '1px solid #ddd', 'fontFamily': 'monospace',
-                                         'fontSize': '0.85rem'})
+            dcc.Input(id='pc_val_lbl', type='text', readOnly=True,
+                      placeholder='value_label (select any cell)',
+                      style={'width': '100%', 'marginTop': '0.5rem'}),
+            dcc.Textarea(id='pc_comm_text', placeholder='Add comment…',
+                         style={'width': '100%', 'height': '60px', 'marginTop': '0.5rem'}),
+            html.Button('Submit', id='pc_comm_btn', n_clicks=0,
+                        style={'marginTop': '0.25rem'}),
+            html.Pre(id='pc_sql', style={'whiteSpace': 'pre-wrap','backgroundColor': '#f3f3f3',
+                                         'padding': '0.75rem', 'border': '1px solid #ddd',
+                                         'fontFamily': 'monospace', 'fontSize': '0.85rem',
+                                         'marginTop': '0.5rem'}),
+            dcc.Clipboard(target_id='pc_sql', title='Copy SQL Logic',
+                          style={'marginTop': '0.5rem'})
         ])
     ])
 ])
@@ -156,6 +173,28 @@ app.layout = html.Div([
 # ────────────────────────────────────────────────────────────────
 # 7.  Callbacks
 # ────────────────────────────────────────────────────────────────
+@app.callback(
+    Output('vd-val_lbl', 'value') if False else Output('vd_val_lbl', 'value'),
+    Input('vd-table', 'active_cell'),
+    State('vd-table', 'data')
+)
+def update_vd_label(active_cell, rows):
+    if active_cell:
+        row = active_cell['row']
+        return rows[row]['value_label']
+    return ""
+
+@app.callback(
+    Output('pc_val_lbl', 'value'),
+    Input('pc-table', 'active_cell'),
+    State('pc-table', 'data')
+)
+def update_pc_label(active_cell, rows):
+    if active_cell:
+        row = active_cell['row']
+        return rows[row]['value_label']
+    return ""
+
 @app.callback(
     Output('vd-table', 'data'),
     Output('pc-table', 'data'),
@@ -182,33 +221,33 @@ def update_detail(selected_rows, summary_rows):
     Output('summary-table', 'data'),
     Input('vd_comm_btn', 'n_clicks'),
     Input('pc_comm_btn', 'n_clicks'),
-    State('vd-table', 'selected_rows'),
+    State('vd-table', 'active_cell'),
     State('vd-table', 'data'),
     State('vd_comm_text', 'value'),
-    State('pc-table', 'selected_rows'),
+    State('pc-table', 'active_cell'),
     State('pc-table', 'data'),
     State('pc_comm_text', 'value'),
     State('summary-table', 'data'),
     prevent_initial_call=True
 )
-def update_comments(n_vd, n_pc, vd_sel, vd_data, vd_txt, pc_sel, pc_data, pc_txt, summary_data):
+def update_comments(n_vd, n_pc, vd_act, vd_data, vd_txt, pc_act, pc_data, pc_txt, summary_data):
     df_sum = pd.DataFrame(summary_data)
     ctx = dash.callback_context
     if not ctx.triggered:
         return summary_data
     trig = ctx.triggered[0]['prop_id'].split('.')[0]
-    if trig == 'vd_comm_btn' and vd_sel and vd_txt:
-        idx = vd_sel[0]
-        fld = vd_data[idx]['field_name']
-        val_lbl = vd_data[idx]['value_label']
+    if trig == 'vd_comm_btn' and vd_act and vd_txt:
+        row = vd_act['row']
+        fld = vd_data[row]['field_name']
+        val_lbl = vd_data[row]['value_label']
         new_entry = f"{val_lbl} - {vd_txt}"
         mask = df_sum['Field Name'] == fld
         old = df_sum.loc[mask, 'Comment Missing'].iloc[0]
         df_sum.loc[mask, 'Comment Missing'] = (old + '\n' if old else '') + new_entry
-    if trig == 'pc_comm_btn' and pc_sel and pc_txt:
-        idx = pc_sel[0]
-        fld = pc_data[idx]['field_name']
-        val_lbl = pc_data[idx]['value_label']
+    if trig == 'pc_comm_btn' and pc_act and pc_txt:
+        row = pc_act['row']
+        fld = pc_data[row]['field_name']
+        val_lbl = pc_data[row]['value_label']
         new_entry = f"{val_lbl} - {pc_txt}"
         mask = df_sum['Field Name'] == fld
         old = df_sum.loc[mask, 'Comment M2M'].iloc[0]
