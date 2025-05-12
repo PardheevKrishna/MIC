@@ -1,7 +1,6 @@
 import datetime as dt, re, pandas as pd
-from dash import Dash, dcc, html
+from dash import Dash, dcc, html, dash_table
 from dash.dependencies import Input, Output, State
-import dash_ag_grid as dag
 import dash  # for callback_context
 
 # ────────────────────────────────────────────────────────────────
@@ -27,7 +26,7 @@ _PHRASES = [r"1\)\s*CF Loan - Both Pop, Diff Values",
 _contains = lambda x: any(re.search(p, str(x)) for p in _PHRASES)
 
 # ────────────────────────────────────────────────────────────────
-# 4.  Summary dataframe (unchanged)
+# 4.  Summary dataframe
 # ────────────────────────────────────────────────────────────────
 prev_month = MONTHS[1]  # Dec-24
 rows = []
@@ -60,235 +59,164 @@ df_summary = pd.DataFrame(rows, columns=[
 # 5.  Build wide frames + totals for each field
 # ────────────────────────────────────────────────────────────────
 def wide(df_src):
-    """Return wide_df, without percentage columns."""
     df_src = df_src[df_src.filemonth_dt.isin(MONTHS)].copy()
-
-    # Denominator per field & month for the sum (no percentage calculation)
     denom = (df_src.groupby(["field_name", "filemonth_dt"], as_index=False)
              .value_records.sum()
              .rename(columns={"value_records": "_tot"}))
-
-    # Merge to get sums
     merged = df_src.merge(denom, on=["field_name", "filemonth_dt"])
-
-    # Start with a base frame with unique field_name and value_label
     base = merged[["field_name", "value_label"]].drop_duplicates() \
         .sort_values(["field_name", "value_label"]).reset_index(drop=True)
-
-    for m in MONTHS:  # Loop over months in descending order
+    for m in MONTHS:
         mm = merged[merged.filemonth_dt == m][["field_name", "value_label", "value_records"]]
         base = (base.merge(mm, on=["field_name", "value_label"], how="left")
                 .rename(columns={"value_records": f"{fmt(m)}"}))
-
-    # Fill NaNs with 0s
     num_cols = [c for c in base.columns if c not in ("field_name", "value_label")]
     base[num_cols] = base[num_cols].fillna(0)
-
     return base
-
 
 vd_wide = wide(df_data[df_data.analysis_type == "value_dist"])
 pc_src = df_data[(df_data.analysis_type == "pop_comp") & (df_data.value_label.apply(_contains))]
 pc_wide = wide(pc_src)
 
-# Add total row for each field and month
 def add_total_row(df):
-    """Add a row at the end for the sum of values of each month."""
-    total_row = {"field_name": "Total", "value_label": "Sum"}
+    total = {"field_name": "Total", "value_label": "Sum"}
     for col in df.columns:
-        if col != "field_name" and col != "value_label":
-            total_row[col] = df[col].sum()
+        if col not in ("field_name", "value_label"):
+            total[col] = df[col].sum()
+    return pd.concat([df, pd.DataFrame([total])], ignore_index=True)
 
-    return pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
-
-# ────────────────────────────────────────────────────────────────
-# 6.  Column defs
-# ────────────────────────────────────────────────────────────────
-def col_defs(df):
-    out = []
-    for c in df.columns:
-        d = {"headerName": c, "field": c, "filter": "agSetColumnFilter",
-             "sortable": True, "resizable": True, "minWidth": 90,
-             "editable": c in ["Comment Missing", "Comment M2M"]}  # Editable columns
-        out.append(d)
-    return out
+def sql_for(fld, analysis):
+    sub = df_data[(df_data.analysis_type == analysis) & (df_data.field_name == fld) &
+                  (df_data.value_sql_logic.notna())]
+    if sub.empty:
+        return ""
+    return sub.value_sql_logic.iloc[0].replace("\\n", "\n").replace("\\t", "\t")
 
 # ────────────────────────────────────────────────────────────────
-# 7.  Helpers for comment UI
-# ────────────────────────────────────────────────────────────────
-def comment_block(label_id, text_id, btn_id):
-    """Value-label display + textarea + button."""
-    return html.Div([
-        dcc.Input(id=label_id, type="text", readOnly=True,
-                  placeholder="value_label (select a row)",
-                  style={"width": "100%", "marginBottom": "0.25rem"}),
-        dcc.Textarea(id=text_id, placeholder="Add comment…",
-                     style={"width": "100%", "height": "60px"}),
-        html.Button("Submit", id=btn_id, n_clicks=0,
-                    style={"marginTop": "0.25rem"})
-    ], style={"marginTop": "0.5rem"})
-
-
-# grid options
-GRID_SUMMARY = {"pagination": False, "rowSelection": "single", "domLayout": "normal"}
-GRID_DETAIL = {"pagination": True, "paginationPageSize": 20,
-               "rowSelection": "single", "domLayout": "normal"}
-
-# ────────────────────────────────────────────────────────────────
-# 8.  Layout
+# 6.  Dash App
 # ────────────────────────────────────────────────────────────────
 app = Dash(__name__)
 app.layout = html.Div([
     html.H2("BDCOMM FRY14M Field Analysis — 13-Month View"),
     dcc.Tabs([
-        # -------- Summary --------------------------------------------------
         dcc.Tab(label="Summary", children=[
-            dag.AgGrid(id="summary", columnDefs=col_defs(df_summary),
-                       rowData=df_summary.to_dict("records"),
-                       className="ag-theme-alpine", columnSize="sizeToFit",
-                       dashGridOptions=GRID_SUMMARY,
-                       style={"height": "600px", "width": "100%"})
+            dash_table.DataTable(
+                id='summary-table',
+                columns=[{"name": c, "id": c} for c in df_summary.columns],
+                data=df_summary.to_dict('records'),
+                filter_action='native',
+                sort_action='native',
+                row_selectable='single',
+                selected_rows=[],
+                page_size=20,
+                style_table={'overflowX': 'auto'},
+            )
         ]),
-        # -------- Value Distribution --------------------------------------
         dcc.Tab(label="Value Distribution", children=[
-            dag.AgGrid(id="vd", columnDefs=col_defs(vd_wide),
-                       rowData=vd_wide.to_dict("records"),
-                       className="ag-theme-alpine", columnSize="sizeToFit",
-                       dashGridOptions={**GRID_DETAIL},
-                       style={"height": "500px", "width": "100%"}),
-            comment_block("vd_val_lbl", "vd_comm_text", "vd_comm_btn"),
-            html.Pre(id="vd_sql", style={"whiteSpace": "pre-wrap",
-                                         "backgroundColor": "#f3f3f3",
-                                         "padding": "0.75rem", "border": "1px solid #ddd",
-                                         "marginTop": "0.5rem", "fontFamily": "monospace",
-                                         "fontSize": "0.85rem"}),
-            dcc.Clipboard(target_id="vd_sql", title="Copy SQL Logic", style={"marginTop": "0.5rem"})
+            html.Div(["Selected Value Label:", dcc.Input(id='vd_val_lbl', type='text', readOnly=True)]),
+            dash_table.DataTable(
+                id='vd-table',
+                columns=[{"name": c, "id": c} for c in vd_wide.columns],
+                data=vd_wide.to_dict('records'),
+                filter_action='native',
+                sort_action='native',
+                row_selectable='single',
+                selected_rows=[],
+                page_size=20,
+                style_table={'overflowX': 'auto'},
+            ),
+            dcc.Textarea(id='vd_comm_text', placeholder='Add comment…', style={'width': '100%', 'height': '60px'}),
+            html.Button('Submit', id='vd_comm_btn', n_clicks=0),
+            html.Pre(id='vd_sql', style={'whiteSpace': 'pre-wrap', 'backgroundColor': '#f3f3f3',
+                                         'padding': '0.75rem', 'border': '1px solid #ddd', 'fontFamily': 'monospace',
+                                         'fontSize': '0.85rem'})
         ]),
-        # -------- Population Comparison -----------------------------------
         dcc.Tab(label="Population Comparison", children=[
-            dag.AgGrid(id="pc", columnDefs=col_defs(pc_wide),
-                       rowData=pc_wide.to_dict("records"),
-                       className="ag-theme-alpine", columnSize="sizeToFit",
-                       dashGridOptions={**GRID_DETAIL},
-                       style={"height": "500px", "width": "100%"}),
-            comment_block("pc_val_lbl", "pc_comm_text", "pc_comm_btn"),
-            html.Pre(id="pc_sql", style={"whiteSpace": "pre-wrap",
-                                         "backgroundColor": "#f3f3f3",
-                                         "padding": "0.75rem", "border": "1px solid #ddd",
-                                         "marginTop": "0.5rem", "fontFamily": "monospace",
-                                         "fontSize": "0.85rem"}),
-            dcc.Clipboard(target_id="pc_sql", title="Copy SQL Logic", style={"marginTop": "0.5rem"})
-        ]),
+            html.Div(["Selected Value Label:", dcc.Input(id='pc_val_lbl', type='text', readOnly=True)]),
+            dash_table.DataTable(
+                id='pc-table',
+                columns=[{"name": c, "id": c} for c in pc_wide.columns],
+                data=pc_wide.to_dict('records'),
+                filter_action='native',
+                sort_action='native',
+                row_selectable='single',
+                selected_rows=[],
+                page_size=20,
+                style_table={'overflowX': 'auto'},
+            ),
+            dcc.Textarea(id='pc_comm_text', placeholder='Add comment…', style={'width': '100%', 'height': '60px'}),
+            html.Button('Submit', id='pc_comm_btn', n_clicks=0),
+            html.Pre(id='pc_sql', style={'whiteSpace': 'pre-wrap', 'backgroundColor': '#f3f3f3',
+                                         'padding': '0.75rem', 'border': '1px solid #ddd', 'fontFamily': 'monospace',
+                                         'fontSize': '0.85rem'})
+        ])
     ])
 ])
 
 # ────────────────────────────────────────────────────────────────
-# 9-A.  Small callbacks: populate value-label boxes
-# ────────────────────────────────────────────────────────────────
-@app.callback(Output("vd_val_lbl", "value"),
-              Input("vd", "cellClicked"), State("vd", "rowData"))
-def vd_label(evt, rows):
-    if evt and "rowIndex" in evt:
-        return rows[evt["rowIndex"]]["value_label"]
-    return ""
-
-
-@app.callback(Output("pc_val_lbl", "value"),
-              Input("pc", "cellClicked"), State("pc", "rowData"))
-def pc_label(evt, rows):
-    if evt and "rowIndex" in evt:
-        return rows[evt["rowIndex"]]["value_label"]
-    return ""
-
-
-# ────────────────────────────────────────────────────────────────
-# 9-B.  Master callback (comments, filtering, SQL logic)
+# 7.  Callbacks
 # ────────────────────────────────────────────────────────────────
 @app.callback(
-    Output("vd", "rowData"), Output("pc", "rowData"),
-    Output("vd_sql", "children"), Output("pc_sql", "children"),
-    Output("summary", "rowData"),
-    Input("summary", "cellValueChanged"),  # Track cell value changes
-    Input("vd_comm_btn", "n_clicks"), Input("pc_comm_btn", "n_clicks"),
-    State("summary", "rowData"),
-    State("vd", "rowData"), State("pc", "rowData"),
-    State("vd_comm_text", "value"), State("pc_comm_text", "value"),
-    State("vd_val_lbl", "value"), State("pc_val_lbl", "value"),
+    Output('vd-table', 'data'),
+    Output('pc-table', 'data'),
+    Output('vd_sql', 'children'),
+    Output('pc_sql', 'children'),
+    Input('summary-table', 'selected_rows'),
+    State('summary-table', 'data')
+)
+def update_detail(selected_rows, summary_rows):
+    if selected_rows:
+        fld = summary_rows[selected_rows[0]]['Field Name']
+        vd_df = vd_wide[vd_wide['field_name'] == fld]
+        pc_df = pc_wide[pc_wide['field_name'] == fld]
+        vd_sql = sql_for(fld, 'value_dist')
+        pc_sql = sql_for(fld, 'pop_comp')
+    else:
+        vd_df = vd_wide
+        pc_df = pc_wide
+        vd_sql = ''
+        pc_sql = ''
+    return add_total_row(vd_df).to_dict('records'), add_total_row(pc_df).to_dict('records'), vd_sql, pc_sql
+
+@app.callback(
+    Output('summary-table', 'data'),
+    Input('vd_comm_btn', 'n_clicks'),
+    Input('pc_comm_btn', 'n_clicks'),
+    State('vd-table', 'selected_rows'),
+    State('vd-table', 'data'),
+    State('vd_comm_text', 'value'),
+    State('pc-table', 'selected_rows'),
+    State('pc-table', 'data'),
+    State('pc_comm_text', 'value'),
+    State('summary-table', 'data'),
     prevent_initial_call=True
 )
-def master(evt, n_vd, n_pc,
-           s_rows, vd_rows, pc_rows,
-           vd_txt, pc_txt, vd_lbl, pc_lbl):
-
-    s_df = pd.DataFrame(s_rows)
-    trig = dash.callback_context.triggered[0]["prop_id"].split(".")[0]
-
-    # ---- append comments --------------------------------------------------
-    if trig == "vd_comm_btn" and vd_txt and vd_lbl:
-        fld = vd_rows[0]["field_name"] if vd_rows else None
-        if fld:
-            m = s_df["Field Name"] == fld
-            new_entry = f"{vd_lbl} - {vd_txt}"
-            old = s_df.loc[m, "Comment Missing"].iloc[0]
-            s_df.loc[m, "Comment Missing"] = (old + "\n" if old else "") + new_entry
-
-    if trig == "pc_comm_btn" and pc_txt and pc_lbl:
-        fld = pc_rows[0]["field_name"] if pc_rows else None
-        if fld:
-            m = s_df["Field Name"] == fld
-            new_entry = f"{pc_lbl} - {pc_txt}"
-            old = s_df.loc[m, "Comment M2M"].iloc[0]
-            s_df.loc[m, "Comment M2M"] = (old + "\n" if old else "") + new_entry
-
-    # ---- handle cell value changes (editable comments) -------------------
-    if evt and "newValue" in evt:
-        field_name = evt["data"]["Field Name"]
-        if "Comment Missing" in evt["colId"]:
-            new_comment = evt["newValue"]
-            s_df.loc[s_df["Field Name"] == field_name, "Comment Missing"] = new_comment
-        elif "Comment M2M" in evt["colId"]:
-            new_comment = evt["newValue"]
-            s_df.loc[s_df["Field Name"] == field_name, "Comment M2M"] = new_comment
-
-    # ---- field active (for filtering & SQL) ------------------------------
-    fld_active = None
-    if trig == "summary" and evt and "rowIndex" in evt:
-        fld_active = s_df.iloc[evt["rowIndex"]]["Field Name"]
-    elif vd_rows:
-        fld_active = vd_rows[0]["field_name"]
-
-    # ---- filter data for selected field, or show all if no field selected ----
-    if fld_active:
-        vd_filtered = vd_wide[vd_wide["field_name"] == fld_active]
-        pc_filtered = pc_wide[pc_wide["field_name"] == fld_active]
-    else:
-        vd_filtered = vd_wide
-        pc_filtered = pc_wide
-
-    # Add total row at the end
-    vd_filtered_with_total = add_total_row(vd_filtered)
-    pc_filtered_with_total = add_total_row(pc_filtered)
-
-    # ---- SQL logic -------------------------------------------------------
-    def sql_for(fld, analysis):
-        if fld is None:
-            return ""
-        sub = df_data[(df_data.analysis_type == analysis) &
-                      (df_data.field_name == fld) &
-                      (df_data.value_sql_logic.notna())]
-        if sub.empty:
-            return ""
-        return (sub.value_sql_logic.iloc[0]
-                .replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r"))
-
-    vd_sql = sql_for(fld_active, "value_dist")
-    pc_sql = sql_for(fld_active, "pop_comp")
-
-    return (vd_filtered_with_total.to_dict("records"), pc_filtered_with_total.to_dict("records"),
-            vd_sql, pc_sql, s_df.to_dict("records"))
+def update_comments(n_vd, n_pc, vd_sel, vd_data, vd_txt, pc_sel, pc_data, pc_txt, summary_data):
+    df_sum = pd.DataFrame(summary_data)
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return summary_data
+    trig = ctx.triggered[0]['prop_id'].split('.')[0]
+    if trig == 'vd_comm_btn' and vd_sel and vd_txt:
+        idx = vd_sel[0]
+        fld = vd_data[idx]['field_name']
+        val_lbl = vd_data[idx]['value_label']
+        new_entry = f"{val_lbl} - {vd_txt}"
+        mask = df_sum['Field Name'] == fld
+        old = df_sum.loc[mask, 'Comment Missing'].iloc[0]
+        df_sum.loc[mask, 'Comment Missing'] = (old + '\n' if old else '') + new_entry
+    if trig == 'pc_comm_btn' and pc_sel and pc_txt:
+        idx = pc_sel[0]
+        fld = pc_data[idx]['field_name']
+        val_lbl = pc_data[idx]['value_label']
+        new_entry = f"{val_lbl} - {pc_txt}"
+        mask = df_sum['Field Name'] == fld
+        old = df_sum.loc[mask, 'Comment M2M'].iloc[0]
+        df_sum.loc[mask, 'Comment M2M'] = (old + '\n' if old else '') + new_entry
+    return df_sum.to_dict('records')
 
 # ────────────────────────────────────────────────────────────────
-# 10.  Run
+# 8.  Run
 # ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app.run(debug=True)
