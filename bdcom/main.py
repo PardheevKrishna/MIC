@@ -33,37 +33,34 @@ _contains = lambda x: any(re.search(p, str(x)) for p in _PHRASES)
 # ────────────────────────────────────────────────────────────────
 rows = []
 for fld in sorted(df_data["field_name"].unique()):
-    # missing this & prev month
     miss1 = df_data[
-        (df_data.analysis_type == "value_dist")
-        & (df_data.field_name == fld)
-        & (df_data.filemonth_dt == DATE1)
-        & (df_data.value_label.str.contains("Missing", case=False, na=False))
+        (df_data.analysis_type=="value_dist")&
+        (df_data.field_name==fld)&
+        (df_data.filemonth_dt==DATE1)&
+        (df_data.value_label.str.contains("Missing", case=False, na=False))
     ]["value_records"].sum()
     miss2 = df_data[
-        (df_data.analysis_type == "value_dist")
-        & (df_data.field_name == fld)
-        & (df_data.filemonth_dt == prev_month)
-        & (df_data.value_label.str.contains("Missing", case=False, na=False))
+        (df_data.analysis_type=="value_dist")&
+        (df_data.field_name==fld)&
+        (df_data.filemonth_dt==prev_month)&
+        (df_data.value_label.str.contains("Missing", case=False, na=False))
     ]["value_records"].sum()
-    # pop-comp diffs this & prev
     diff1 = df_data[
-        (df_data.analysis_type == "pop_comp")
-        & (df_data.field_name == fld)
-        & (df_data.filemonth_dt == DATE1)
-        & (df_data.value_label.apply(_contains))
+        (df_data.analysis_type=="pop_comp")&
+        (df_data.field_name==fld)&
+        (df_data.filemonth_dt==DATE1)&
+        (df_data.value_label.apply(_contains))
     ]["value_records"].sum()
     diff2 = df_data[
-        (df_data.analysis_type == "pop_comp")
-        & (df_data.field_name == fld)
-        & (df_data.filemonth_dt == prev_month)
-        & (df_data.value_label.apply(_contains))
+        (df_data.analysis_type=="pop_comp")&
+        (df_data.field_name==fld)&
+        (df_data.filemonth_dt==prev_month)&
+        (df_data.value_label.apply(_contains))
     ]["value_records"].sum()
     rows.append([fld, miss1, miss2, "", diff1, diff2, ""])
 
 initial_summary = pd.DataFrame(
-    rows,
-    columns=[
+    rows, columns=[
         "Field Name",
         f"Missing {DATE1:%m/%d/%Y}",
         f"Missing {prev_month:%m/%d/%Y}",
@@ -75,130 +72,97 @@ initial_summary = pd.DataFrame(
 )
 
 # ────────────────────────────────────────────────────────────────
-# 5.  Build wide frames for Value Distribution & Population Comparison
+# 5.  Build wide frames for VD & PC
 # ────────────────────────────────────────────────────────────────
 def wide(df_src):
     df_src = df_src[df_src.filemonth_dt.isin(MONTHS)].copy()
     denom = (
-        df_src.groupby(["field_name", "filemonth_dt"], as_index=False)
+        df_src.groupby(["field_name","filemonth_dt"],as_index=False)
         .value_records.sum()
-        .rename(columns={"value_records": "_tot"})
+        .rename(columns={"value_records":"_tot"})
     )
-    merged = df_src.merge(denom, on=["field_name", "filemonth_dt"])
+    merged = df_src.merge(denom, on=["field_name","filemonth_dt"])
     base = (
-        merged[["field_name", "value_label"]]
+        merged[["field_name","value_label"]]
         .drop_duplicates()
-        .sort_values(["field_name", "value_label"])
+        .sort_values(["field_name","value_label"])
         .reset_index(drop=True)
     )
     for m in MONTHS:
-        mm = merged[
-            merged.filemonth_dt == m
-        ][["field_name", "value_label", "value_records"]]
-        base = base.merge(
-            mm,
-            on=["field_name", "value_label"],
-            how="left",
-        ).rename(columns={"value_records": fmt(m)})
-    cols = [c for c in base.columns if c not in ("field_name", "value_label")]
+        mm = merged[merged.filemonth_dt==m][["field_name","value_label","value_records"]]
+        base = base.merge(mm, on=["field_name","value_label"], how="left")\
+                   .rename(columns={"value_records":fmt(m)})
+    cols = [c for c in base.columns if c not in ("field_name","value_label")]
     base[cols] = base[cols].fillna(0)
     return base
 
-vd_wide = wide(df_data[df_data.analysis_type == "value_dist"])
-pc_wide = wide(
-    df_data[(df_data.analysis_type == "pop_comp") & (df_data.value_label.apply(_contains))]
-)
+vd_wide = wide(df_data[df_data.analysis_type=="value_dist"])
+pc_wide = wide(df_data[(df_data.analysis_type=="pop_comp") & (df_data.value_label.apply(_contains))])
 
 def add_total_row(df):
-    total = {"field_name": "Total", "value_label": "Sum"}
+    total = {"field_name":"Total","value_label":"Sum"}
     for c in df.columns:
-        if c not in ("field_name", "value_label"):
+        if c not in ("field_name","value_label"):
             total[c] = df[c].sum()
     return pd.concat([df, pd.DataFrame([total])], ignore_index=True)
 
-# SQL logic extractor
 def sql_for(fld, analysis):
     sub = df_data[
-        (df_data.analysis_type == analysis)
-        & (df_data.field_name == fld)
-        & (df_data.value_sql_logic.notna())
+        (df_data.analysis_type==analysis)&
+        (df_data.field_name==fld)&
+        (df_data.value_sql_logic.notna())
     ]
     if not sub.empty:
-        return (
-            sub.value_sql_logic.iloc[0]
-            .replace("\\n", "\n")
-            .replace("\\t", "\t")
-        )
+        return sub.value_sql_logic.iloc[0].replace("\\n","\n").replace("\\t","\t")
     return ""
 
 # ────────────────────────────────────────────────────────────────
-# 6.  Load and pivot previous comments from CSV
+# 6.  Load & pivot previous comments
 # ────────────────────────────────────────────────────────────────
 prev_comments = pd.read_csv("prev_comments.csv", parse_dates=["date"])
-prev_months = MONTHS[1:]  # exclude current month
+prev_months = MONTHS[1:]
 temp = prev_comments.copy()
 temp['month'] = temp['date'].dt.to_period('M').dt.to_timestamp()
 temp = temp[temp.month.isin(prev_months)]
-miss = temp[temp.research == 'Missing']
-m2m = temp[temp.research == 'M2M Diff']
+miss = temp[temp.research=="Missing"]
+m2m  = temp[temp.research=="M2M Diff"]
 
 def pivot_comments(df, prefix):
     pts = (
-        df.groupby(['field_name', 'month'])['comment']
-        .agg(lambda x: '\n'.join(x))
+        df.groupby(['field_name','month'])['comment']
+        .agg(lambda x: "\n".join(x))
         .reset_index()
     )
     pts['col'] = pts['month'].apply(fmt)
-    wide = pts.pivot(index='field_name', columns='col', values='comment')
-    wide.columns = [f"{prefix} {c}" for c in wide.columns]
-    return wide.reset_index()
+    w = pts.pivot(index='field_name',columns='col',values='comment')
+    w.columns = [f"{prefix} {c}" for c in w.columns]
+    return w.reset_index()
 
 pivot_miss = pivot_comments(miss, 'Prev Missing')
-pivot_m2m = pivot_comments(m2m, 'Prev M2M')
-prev_comments_wide = pd.merge(
-    pivot_miss,
-    pivot_m2m,
-    on='field_name',
-    how='outer'
-).fillna('')
+pivot_m2m   = pivot_comments(m2m,   'Prev M2M')
+prev_comments_wide = pd.merge(pivot_miss, pivot_m2m, on='field_name', how='outer').fillna('')
 
-# Merge with current-month comments
-cur = initial_summary[
-    ['Field Name', 'Comment Missing', 'Comment M2M']
-].rename(
-    columns={
-        'Comment Missing': 'Comment Missing This Month',
-        'Comment M2M': 'Comment M2M This Month',
-    }
+cur = initial_summary[['Field Name','Comment Missing','Comment M2M']].rename(
+    columns={'Comment Missing':'Comment Missing This Month',
+             'Comment M2M':'Comment M2M This Month'}
 )
-prev_summary = pd.merge(
-    cur,
-    prev_comments_wide,
-    left_on='Field Name',
-    right_on='field_name',
-    how='left'
-)
-prev_summary.drop(columns=['field_name'], inplace=True)
+prev_summary = pd.merge(cur, prev_comments_wide,
+                        left_on='Field Name', right_on='field_name',
+                        how='left').drop(columns=['field_name'])
 
-# ────────────────────────────────────────────────────────────────
-# 6b.  Prepare display version for Previous Comments tab
-# ────────────────────────────────────────────────────────────────
-prev_cols = [
-    c for c in prev_summary.columns
-    if c not in ['Comment Missing This Month', 'Comment M2M This Month']
-]
+prev_cols = [c for c in prev_summary.columns
+             if c not in ['Comment Missing This Month','Comment M2M This Month']]
 prev_summary_display = prev_summary[prev_cols]
 
 style_cell_conditional_prev = []
 for col in prev_cols:
-    width_px = max(len(col) * 8, 100)
     style_cell_conditional_prev.append({
         'if': {'column_id': col},
-        'width': f"{width_px}px"
+        'width': f"{max(len(col)*8,100)}px"
     })
 
 # ────────────────────────────────────────────────────────────────
-# 7.  Dash App Layout with Light-Theme
+# 7.  Layout + Light Theme
 # ────────────────────────────────────────────────────────────────
 external_stylesheets = [
     "https://cdn.jsdelivr.net/npm/bootswatch@4.5.2/dist/flatly/bootstrap.min.css"
@@ -207,190 +171,192 @@ app = Dash(__name__, external_stylesheets=external_stylesheets)
 
 app.layout = html.Div([
     dcc.Store(id='summary-store', data=initial_summary.to_dict('records')),
-    html.H2("BDCOMM FRY14M Field Analysis — 13-Month View", className='text-center mb-4'),
 
-    dcc.Tabs(
-        id='main-tabs',
-        style={'marginBottom': '1rem'},
-        children=[
+    html.H2("BDCOMM FRY14M Field Analysis — 13-Month View",
+            className='text-center mb-4'),
 
-            # ─────────────── Summary ───────────────
-            dcc.Tab(label="Summary", className='p-3', children=[
+    dcc.Tabs(id='main-tabs', style={'marginBottom':'1rem'}, children=[
+
+        # ─────────────── Summary ───────────────
+        dcc.Tab(label="Summary", className='p-3', children=[
+            html.Div([
                 html.Div([
-                    html.Div([
-                        html.Label(f"Missing {DATE1:%b-%Y}"),
-                        dcc.Dropdown(
-                            id='filter-miss1',
-                            options=[{"label": i, "value": i}
-                                     for i in sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())],
-                            multi=True,
-                            value=sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique()),
-                            className='form-control'
-                        ),
-                    ], className='col-md-3'),
-                    html.Div([
-                        html.Label(f"Missing {prev_month:%b-%Y}"),
-                        dcc.Dropdown(
-                            id='filter-miss2',
-                            options=[{"label": i, "value": i}
-                                     for i in sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())],
-                            multi=True,
-                            value=sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique()),
-                            className='form-control'
-                        ),
-                    ], className='col-md-3'),
-                    html.Div([
-                        html.Label(f"M2M Diff {DATE1:%b-%Y}"),
-                        dcc.Dropdown(
-                            id='filter-m2m1',
-                            options=[{"label": i, "value": i}
-                                     for i in sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())],
-                            multi=True,
-                            value=sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique()),
-                            className='form-control'
-                        ),
-                    ], className='col-md-3'),
-                    html.Div([
-                        html.Label(f"M2M Diff {prev_month:%b-%Y}"),
-                        dcc.Dropdown(
-                            id='filter-m2m2',
-                            options=[{"label": i, "value": i}
-                                     for i in sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())],
-                            multi=True,
-                            value=sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique()),
-                            className='form-control'
-                        ),
-                    ], className='col-md-3'),
-                ], className='row mb-3'),
-
-                dash_table.DataTable(
-                    id='summary-table',
-                    columns=[
-                        {"name": c, "id": c,
-                         "editable": (c in ["Comment Missing", "Comment M2M"])}
-                        for c in initial_summary.columns
-                    ],
-                    data=[],
-                    editable=True,
-                    filter_action='none',
-                    sort_action='native',
-                    row_selectable='single',
-                    selected_rows=[],
-                    page_size=20,
-                    style_table={'overflowX': 'auto'},
-                    style_cell={'textAlign': 'left'}
-                ),
-            ]),
-
-            # ────── Value Distribution ──────
-            dcc.Tab(label="Value Distribution", className='p-3', children=[
-                dash_table.DataTable(
-                    id='vd-table',
-                    columns=[{"name": c, "id": c} for c in vd_wide.columns],
-                    data=[],
-                    filter_action='native',
-                    sort_action='native',
-                    row_selectable='single',
-                    page_size=20,
-                    style_table={'overflowX': 'auto'},
-                    style_cell={'textAlign': 'left'}
-                ),
-
-                html.Div([
-                    html.Label("Selected Value Label:"),
-                    dcc.Input(id='vd-val-lbl', value='', readOnly=True, className='form-control mb-2'),
-                    dcc.Textarea(
-                        id='vd_comm_text',
-                        placeholder="Enter comment…",
-                        style={'width': '100%', 'height': '80px'},
-                        className='form-control'
+                    html.Label(f"Missing {DATE1:%b-%Y}"),
+                    dcc.Dropdown(
+                        id='filter-miss1',
+                        options=[{"label":i,"value":i}
+                                 for i in sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())],
+                        multi=True,
+                        value=sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique()),
+                        className='form-control',
+                        style={'position':'relative','zIndex':2000}
                     ),
-                    html.Button('Add Comment', id='vd_comm_btn',
-                                className='btn btn-primary btn-sm mt-2')
-                ], className='mt-3'),
-
+                ], className='col-md-3'),
                 html.Div([
-                    html.H5("Value SQL Logic:"),
-                    html.Div(id='vd_sql', style={'whiteSpace': 'pre-wrap', 'border': '1px solid #ced4da',
-                                                 'padding': '0.5rem', 'borderRadius': '0.25rem'}),
-                    dcc.Clipboard(
-                        target_id='vd_sql',
-                        title='Copy SQL',
-                        style={'marginTop': '0.5rem'}
-                    )
-                ], className='mt-3'),
-            ]),
-
-            # ─── Population Comparison ───
-            dcc.Tab(label="Population Comparison", className='p-3', children=[
-                dash_table.DataTable(
-                    id='pc-table',
-                    columns=[{"name": c, "id": c} for c in pc_wide.columns],
-                    data=[],
-                    filter_action='native',
-                    sort_action='native',
-                    row_selectable='single',
-                    page_size=20,
-                    style_table={'overflowX': 'auto'},
-                    style_cell={'textAlign': 'left'}
-                ),
-
-                html.Div([
-                    html.Label("Selected Value Label:"),
-                    dcc.Input(id='pc-val-lbl', value='', readOnly=True, className='form-control mb-2'),
-                    dcc.Textarea(
-                        id='pc_comm_text',
-                        placeholder="Enter comment…",
-                        style={'width': '100%', 'height': '80px'},
-                        className='form-control'
+                    html.Label(f"Missing {prev_month:%b-%Y}"),
+                    dcc.Dropdown(
+                        id='filter-miss2',
+                        options=[{"label":i,"value":i}
+                                 for i in sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())],
+                        multi=True,
+                        value=sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique()),
+                        className='form-control',
+                        style={'position':'relative','zIndex':2000}
                     ),
-                    html.Button('Add Comment', id='pc_comm_btn',
-                                className='btn btn-primary btn-sm mt-2')
-                ], className='mt-3'),
-
+                ], className='col-md-3'),
                 html.Div([
-                    html.H5("Population-Comp SQL Logic:"),
-                    html.Div(id='pc_sql', style={'whiteSpace': 'pre-wrap', 'border': '1px solid #ced4da',
-                                                 'padding': '0.5rem', 'borderRadius': '0.25rem'}),
-                    dcc.Clipboard(
-                        target_id='pc_sql',
-                        title='Copy SQL',
-                        style={'marginTop': '0.5rem'}
-                    )
-                ], className='mt-3'),
-            ]),
+                    html.Label(f"M2M Diff {DATE1:%b-%Y}"),
+                    dcc.Dropdown(
+                        id='filter-m2m1',
+                        options=[{"label":i,"value":i}
+                                 for i in sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())],
+                        multi=True,
+                        value=sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique()),
+                        className='form-control',
+                        style={'position':'relative','zIndex':2000}
+                    ),
+                ], className='col-md-3'),
+                html.Div([
+                    html.Label(f"M2M Diff {prev_month:%b-%Y}"),
+                    dcc.Dropdown(
+                        id='filter-m2m2',
+                        options=[{"label":i,"value":i}
+                                 for i in sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())],
+                        multi=True,
+                        value=sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique()),
+                        className='form-control',
+                        style={'position':'relative','zIndex':2000}
+                    ),
+                ], className='col-md-3'),
+            ], className='row mb-4'),
 
-            # ───── Previous Comments ─────
-            dcc.Tab(label="Previous Comments", className='p-3', children=[
-                html.Button('Show All Fields', id='prev_show_all_btn',
-                            className='btn btn-secondary btn-sm mb-3'),
-                dash_table.DataTable(
-                    id='prev-comments-table',
-                    columns=[{"name": c, "id": c} for c in prev_cols],
-                    data=prev_summary_display.to_dict('records'),
-                    filter_action='native',
-                    sort_action='native',
-                    page_size=20,
-                    style_table={'overflowX': 'auto'},
-                    style_cell_conditional=style_cell_conditional_prev,
-                    style_cell={'whiteSpace': 'normal', 'textAlign': 'left'}
-                )
-            ]),
-        ]
-    )
-], className='container-fluid p-4')
+            dash_table.DataTable(
+                id='summary-table',
+                columns=[
+                    {"name":c,"id":c,"editable":(c in ["Comment Missing","Comment M2M"])}
+                    for c in initial_summary.columns
+                ],
+                data=[],
+                editable=True,
+                filter_action='none',
+                sort_action='native',
+                row_selectable='single',
+                page_size=20,
+                style_table={'overflowX':'auto'},
+                style_cell={'textAlign':'left','position':'relative','zIndex':1}
+            ),
+        ]),
+
+        # ────── Value Distribution ──────
+        dcc.Tab(label="Value Distribution", className='p-3', children=[
+            dash_table.DataTable(
+                id='vd-table',
+                columns=[{"name":c,"id":c} for c in vd_wide.columns],
+                data=[],
+                filter_action='native',
+                sort_action='native',
+                row_selectable='single',
+                page_size=20,
+                style_table={'overflowX':'auto'},
+                style_cell={'textAlign':'left'}
+            ),
+
+            html.Div([
+                html.Label("Selected Value Label:"),
+                dcc.Input(id='vd-val-lbl', value='', readOnly=True,
+                          className='form-control mb-2'),
+                dcc.Textarea(
+                    id='vd_comm_text',
+                    placeholder="Enter comment…",
+                    style={'width':'100%','height':'80px'},
+                    className='form-control'
+                ),
+                html.Button('Add Comment', id='vd_comm_btn',
+                            className='btn btn-primary btn-sm mt-2')
+            ], className='mt-3'),
+
+            html.Div([
+                html.H5("Value SQL Logic:"),
+                html.Div(id='vd_sql',
+                         style={'whiteSpace':'pre-wrap',
+                                'border':'1px solid #ced4da',
+                                'padding':'0.5rem',
+                                'borderRadius':'0.25rem'}),
+                dcc.Clipboard(target_id='vd_sql', title='Copy SQL',
+                              style={'marginTop':'0.5rem'})
+            ], className='mt-3'),
+        ]),
+
+        # ─── Population Comparison ───
+        dcc.Tab(label="Population Comparison", className='p-3', children=[
+            dash_table.DataTable(
+                id='pc-table',
+                columns=[{"name":c,"id":c} for c in pc_wide.columns],
+                data=[],
+                filter_action='native',
+                sort_action='native',
+                row_selectable='single',
+                page_size=20,
+                style_table={'overflowX':'auto'},
+                style_cell={'textAlign':'left'}
+            ),
+
+            html.Div([
+                html.Label("Selected Value Label:"),
+                dcc.Input(id='pc-val-lbl', value='', readOnly=True,
+                          className='form-control mb-2'),
+                dcc.Textarea(
+                    id='pc_comm_text',
+                    placeholder="Enter comment…",
+                    style={'width':'100%','height':'80px'},
+                    className='form-control'
+                ),
+                html.Button('Add Comment', id='pc_comm_btn',
+                            className='btn btn-primary btn-sm mt-2')
+            ], className='mt-3'),
+
+            html.Div([
+                html.H5("Population-Comp SQL Logic:"),
+                html.Div(id='pc_sql',
+                         style={'whiteSpace':'pre-wrap',
+                                'border':'1px solid #ced4da',
+                                'padding':'0.5rem',
+                                'borderRadius':'0.25rem'}),
+                dcc.Clipboard(target_id='pc_sql', title='Copy SQL',
+                              style={'marginTop':'0.5rem'})
+            ], className='mt-3'),
+        ]),
+
+        # ───── Previous Comments ─────
+        dcc.Tab(label="Previous Comments", className='p-3', children=[
+            html.Button('Show All Fields', id='prev_show_all_btn',
+                        className='btn btn-secondary btn-sm mb-3'),
+            dash_table.DataTable(
+                id='prev-comments-table',
+                columns=[{"name":c,"id":c} for c in prev_cols],
+                data=prev_summary_display.to_dict('records'),
+                filter_action='native',
+                sort_action='native',
+                page_size=20,
+                style_table={'overflowX':'auto'},
+                style_cell_conditional=style_cell_conditional_prev,
+                style_cell={'whiteSpace':'normal','textAlign':'left'}
+            )
+        ]),
+    ])
+], className='container-fluid p-4', style={'backgroundColor':'#f8f9fa'})
 
 
 # ────────────────────────────────────────────────────────────────
-# 8.  Callbacks
+# 8.  Callbacks (unchanged)
 # ────────────────────────────────────────────────────────────────
 @app.callback(
-    Output('summary-table', 'data'),
-    Input('summary-store', 'data'),
-    Input('filter-miss1', 'value'),
-    Input('filter-miss2', 'value'),
-    Input('filter-m2m1', 'value'),
-    Input('filter-m2m2', 'value'),
+    Output('summary-table','data'),
+    Input('summary-store','data'),
+    Input('filter-miss1','value'),
+    Input('filter-miss2','value'),
+    Input('filter-m2m1','value'),
+    Input('filter-m2m2','value'),
 )
 def filter_summary(store_data, m1, m2, d1, d2):
     df = pd.DataFrame(store_data)
@@ -400,117 +366,83 @@ def filter_summary(store_data, m1, m2, d1, d2):
     df = df[df[f"M2M Diff {prev_month:%m/%d/%Y}"].isin(d2)]
     return df.to_dict('records')
 
-
 @app.callback(
-    Output('summary-store', 'data'),
-    Input('vd_comm_btn', 'n_clicks'),
-    Input('pc_comm_btn', 'n_clicks'),
-    State('vd-table', 'active_cell'),
-    State('vd-table', 'data'),
-    State('vd_comm_text', 'value'),
-    State('pc-table', 'active_cell'),
-    State('pc-table', 'data'),
-    State('pc_comm_text', 'value'),
-    State('summary-store', 'data'),
-    prevent_initial_call=True,
+    Output('summary-store','data'),
+    Input('vd_comm_btn','n_clicks'),
+    Input('pc_comm_btn','n_clicks'),
+    State('vd-table','active_cell'), State('vd-table','data'), State('vd_comm_text','value'),
+    State('pc-table','active_cell'), State('pc-table','data'), State('pc_comm_text','value'),
+    State('summary-store','data'), prevent_initial_call=True
 )
-def update_comments(n_vd, n_pc,
-                    vd_act, vd_data, vd_txt,
-                    pc_act, pc_data, pc_txt,
-                    store_data):
+def update_comments(n_vd, n_pc, vd_act, vd_data, vd_txt,
+                    pc_act, pc_data, pc_txt, store_data):
     df_sum = pd.DataFrame(store_data)
     trig = dash.callback_context.triggered[0]['prop_id'].split('.')[0]
-
-    if trig == 'vd_comm_btn' and vd_act and vd_txt:
-        r = vd_act['row']
-        fld = vd_data[r]['field_name']
-        lbl = vd_data[r]['value_label']
-        ent = f"{lbl} - {vd_txt}"
-        m = df_sum['Field Name'] == fld
-        old = df_sum.loc[m, 'Comment Missing'].iloc[0]
-        df_sum.loc[m, 'Comment Missing'] = (old + '\n' if old else '') + ent
-
-    if trig == 'pc_comm_btn' and pc_act and pc_txt:
-        r = pc_act['row']
-        fld = pc_data[r]['field_name']
-        lbl = pc_data[r]['value_label']
-        ent = f"{lbl} - {pc_txt}"
-        m = df_sum['Field Name'] == fld
-        old = df_sum.loc[m, 'Comment M2M'].iloc[0]
-        df_sum.loc[m, 'Comment M2M'] = (old + '\n' if old else '') + ent
-
+    if trig=='vd_comm_btn' and vd_act and vd_txt:
+        r = vd_act['row']; fld = vd_data[r]['field_name']
+        lbl = vd_data[r]['value_label']; ent = f"{lbl} - {vd_txt}"
+        m = df_sum['Field Name']==fld
+        old = df_sum.loc[m,'Comment Missing'].iloc[0]
+        df_sum.loc[m,'Comment Missing'] = (old+"\n" if old else "")+ent
+    if trig=='pc_comm_btn' and pc_act and pc_txt:
+        r = pc_act['row']; fld = pc_data[r]['field_name']
+        lbl = pc_data[r]['value_label']; ent = f"{lbl} - {pc_txt}"
+        m = df_sum['Field Name']==fld
+        old = df_sum.loc[m,'Comment M2M'].iloc[0]
+        df_sum.loc[m,'Comment M2M'] = (old+"\n" if old else "")+ent
     return df_sum.to_dict('records')
 
-
 @app.callback(
-    Output('vd-table', 'data'),
-    Output('pc-table', 'data'),
-    Output('vd_sql', 'children'),
-    Output('pc_sql', 'children'),
-    Input('summary-table', 'selected_rows'),
-    State('summary-table', 'data'),
+    Output('vd-table','data'), Output('pc-table','data'),
+    Output('vd_sql','children'), Output('pc_sql','children'),
+    Input('summary-table','selected_rows'),
+    State('summary-table','data')
 )
 def update_detail(selected, summary_rows):
     if selected:
         fld = summary_rows[selected[0]]['Field Name']
-        vd_df = vd_wide[vd_wide['field_name'] == fld]
-        pc_df = pc_wide[pc_wide['field_name'] == fld]
-        vd_sql = sql_for(fld, 'value_dist')
-        pc_sql = sql_for(fld, 'pop_comp')
+        vd_df = vd_wide[vd_wide.field_name==fld]
+        pc_df = pc_wide[pc_wide.field_name==fld]
+        vd_sql = sql_for(fld,'value_dist')
+        pc_sql = sql_for(fld,'pop_comp')
     else:
-        vd_df, pc_df, vd_sql, pc_sql = vd_wide, pc_wide, '', ''
-
-    return (
-        add_total_row(vd_df).to_dict('records'),
-        add_total_row(pc_df).to_dict('records'),
-        vd_sql,
-        pc_sql,
-    )
-
+        vd_df, pc_df, vd_sql, pc_sql = vd_wide, pc_wide, "", ""
+    return (add_total_row(vd_df).to_dict('records'),
+            add_total_row(pc_df).to_dict('records'),
+            vd_sql, pc_sql)
 
 @app.callback(
-    Output('vd-val-lbl', 'value'),
-    Input('vd-table', 'active_cell'),
-    State('vd-table', 'data'),
+    Output('vd-val-lbl','value'),
+    Input('vd-table','active_cell'),
+    State('vd-table','data'),
 )
 def update_vd_label(active, rows):
     return rows[active['row']]['value_label'] if active else ''
 
-
 @app.callback(
-    Output('pc-val-lbl', 'value'),
-    Input('pc-table', 'active_cell'),
-    State('pc-table', 'data'),
+    Output('pc-val-lbl','value'),
+    Input('pc-table','active_cell'),
+    State('pc-table','data'),
 )
 def update_pc_label(active, rows):
     return rows[active['row']]['value_label'] if active else ''
 
-
-# ────────────────────────────────────────────────────────────────
-# New callback: filter Previous Comments by selected field or reset
-# ────────────────────────────────────────────────────────────────
 @app.callback(
-    Output('prev-comments-table', 'data'),
-    Input('summary-table', 'selected_rows'),
-    Input('prev_show_all_btn', 'n_clicks'),
-    State('summary-table', 'data'),
+    Output('prev-comments-table','data'),
+    Input('summary-table','selected_rows'),
+    Input('prev_show_all_btn','n_clicks'),
+    State('summary-table','data'),
 )
-def update_prev_comments(selected, show_all_clicks, summary_rows):
-    ctx = dash.callback_context
-    trig = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
-
-    # If user clicked "Show All Fields"
-    if trig == 'prev_show_all_btn':
+def update_prev_comments(selected, show_all, summary_rows):
+    trig = dash.callback_context.triggered[0]['prop_id'].split('.')[0]
+    if trig=='prev_show_all_btn':
         filtered = prev_summary_display
-    # Else if they selected a row in Summary
     elif selected:
         fld = summary_rows[selected[0]]['Field Name']
-        filtered = prev_summary_display[prev_summary_display['Field Name'] == fld]
+        filtered = prev_summary_display[prev_summary_display['Field Name']==fld]
     else:
         filtered = prev_summary_display
-
     return filtered.to_dict('records')
-
 
 # ────────────────────────────────────────────────────────────────
 # 9.  Run
