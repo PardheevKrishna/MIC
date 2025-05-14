@@ -172,7 +172,7 @@ app = Dash(__name__, external_stylesheets=external_stylesheets)
 app.layout = html.Div([
     dcc.Store(id='summary-store', data=initial_summary.to_dict('records')),
 
-    html.H2("BDCOMM FRY14M Field Analysis — 13-Month View",
+    html.H2("BDCOMM FRY14M Field Analysis",
             className='text-center mb-4'),
 
     dcc.Tabs(id='main-tabs', style={'marginBottom':'1rem'}, children=[
@@ -228,7 +228,7 @@ app.layout = html.Div([
                         style={'position':'relative','zIndex':2000}
                     ),
                 ], className='col-md-3'),
-            ], className='row mb-4'),
+            ], className='row mb-5'),
 
             dash_table.DataTable(
                 id='summary-table',
