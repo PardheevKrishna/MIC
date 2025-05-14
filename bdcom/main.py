@@ -179,17 +179,14 @@ prev_summary = pd.merge(
 prev_summary.drop(columns=['field_name'], inplace=True)
 
 # ────────────────────────────────────────────────────────────────
-# 6b.  Prepare display version for Previous Comments tab:
-#        drop the "This Month" columns, and recalc widths based on header only
+# 6b.  Prepare display version for Previous Comments tab
 # ────────────────────────────────────────────────────────────────
-# keep only the history columns
 prev_cols = [
     c for c in prev_summary.columns
     if c not in ['Comment Missing This Month', 'Comment M2M This Month']
 ]
 prev_summary_display = prev_summary[prev_cols]
 
-# widths based solely on header length
 style_cell_conditional_prev = []
 for col in prev_cols:
     width_px = max(len(col) * 8, 100)
@@ -204,20 +201,60 @@ for col in prev_cols:
 app = Dash(__name__)
 app.layout = html.Div([
     dcc.Store(id='summary-store', data=initial_summary.to_dict('records')),
-
     html.H2("BDCOMM FRY14M Field Analysis — 13-Month View"),
+
     dcc.Tabs(
         id='main-tabs',
+        style={'display': 'flex', 'flexWrap': 'nowrap'},
         children=[
 
-            # ────────────────── Summary ──────────────────
+            # ─────────────── Summary ───────────────
             dcc.Tab(label="Summary", children=[
                 html.Div([
-                    # filter dropdowns...
-                ], style={'marginBottom':'1rem'}),
+                    html.Div([
+                        html.Label(f"Missing {DATE1:%b-%Y}"),
+                        dcc.Dropdown(
+                            id='filter-miss1',
+                            options=[{"label": i, "value": i}
+                                     for i in sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())],
+                            multi=True,
+                            value=sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())
+                        ),
+                    ], style={'width': '24%', 'display': 'inline-block'}),
+                    html.Div([
+                        html.Label(f"Missing {prev_month:%b-%Y}"),
+                        dcc.Dropdown(
+                            id='filter-miss2',
+                            options=[{"label": i, "value": i}
+                                     for i in sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())],
+                            multi=True,
+                            value=sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())
+                        ),
+                    ], style={'width': '24%', 'display': 'inline-block'}),
+                    html.Div([
+                        html.Label(f"M2M Diff {DATE1:%b-%Y}"),
+                        dcc.Dropdown(
+                            id='filter-m2m1',
+                            options=[{"label": i, "value": i}
+                                     for i in sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())],
+                            multi=True,
+                            value=sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())
+                        ),
+                    ], style={'width': '24%', 'display': 'inline-block'}),
+                    html.Div([
+                        html.Label(f"M2M Diff {prev_month:%b-%Y}"),
+                        dcc.Dropdown(
+                            id='filter-m2m2',
+                            options=[{"label": i, "value": i}
+                                     for i in sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())],
+                            multi=True,
+                            value=sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())
+                        ),
+                    ], style={'width': '24%', 'display': 'inline-block'}),
+                ], style={'marginBottom': '1rem'}),
+
                 dash_table.DataTable(
                     id='summary-table',
-                    # make only the two comment columns editable
                     columns=[
                         {
                             "name": c,
@@ -233,25 +270,74 @@ app.layout = html.Div([
                     row_selectable='single',
                     selected_rows=[],
                     page_size=20,
-                    style_table={'overflowX':'auto'}
+                    style_table={'overflowX': 'auto'}
                 ),
             ]),
 
-            # ─────────────── Value Distribution ───────────────
+            # ────── Value Distribution ──────
             dcc.Tab(label="Value Distribution", children=[
-                # unchanged...
+                html.Div([
+                    html.Div([
+                        html.Label("Selected Value Label:"),
+                        dcc.Input(id='vd-val-lbl', value='', readOnly=True),
+                    ], style={'display': 'inline-block', 'marginRight': '1rem'}),
+                    html.Div([
+                        dcc.Textarea(
+                            id='vd_comm_text',
+                            placeholder="Enter comment…",
+                            style={'width': '70%', 'height': '50px'}
+                        ),
+                        html.Button('Add Comment', id='vd_comm_btn', style={'marginLeft': '1rem'})
+                    ], style={'display': 'inline-block', 'verticalAlign': 'top'}),
+                ], style={'marginBottom': '1rem'}),
+
+                dash_table.DataTable(
+                    id='vd-table',
+                    columns=[{"name": c, "id": c} for c in vd_wide.columns],
+                    data=[],
+                    filter_action='native',
+                    sort_action='native',
+                    row_selectable='single',
+                    page_size=20,
+                    style_table={'overflowX': 'auto'}
+                ),
+                html.Div(id='vd_sql', style={'whiteSpace': 'pre-wrap', 'marginTop': '1rem'})
             ]),
 
-            # ─────────── Population Comparison ───────────
+            # ─── Population Comparison ───
             dcc.Tab(label="Population Comparison", children=[
-                # unchanged...
+                html.Div([
+                    html.Div([
+                        html.Label("Selected Value Label:"),
+                        dcc.Input(id='pc-val-lbl', value='', readOnly=True),
+                    ], style={'display': 'inline-block', 'marginRight': '1rem'}),
+                    html.Div([
+                        dcc.Textarea(
+                            id='pc_comm_text',
+                            placeholder="Enter comment…",
+                            style={'width': '70%', 'height': '50px'}
+                        ),
+                        html.Button('Add Comment', id='pc_comm_btn', style={'marginLeft': '1rem'})
+                    ], style={'display': 'inline-block', 'verticalAlign': 'top'}),
+                ], style={'marginBottom': '1rem'}),
+
+                dash_table.DataTable(
+                    id='pc-table',
+                    columns=[{"name": c, "id": c} for c in pc_wide.columns],
+                    data=[],
+                    filter_action='native',
+                    sort_action='native',
+                    row_selectable='single',
+                    page_size=20,
+                    style_table={'overflowX': 'auto'}
+                ),
+                html.Div(id='pc_sql', style={'whiteSpace': 'pre-wrap', 'marginTop': '1rem'})
             ]),
 
-            # ─────────── Previous Comments ───────────
+            # ───── Previous Comments ─────
             dcc.Tab(label="Previous Comments", children=[
                 dash_table.DataTable(
                     id='prev-comments-table',
-                    # only the history columns
                     columns=[{"name": c, "id": c} for c in prev_cols],
                     data=prev_summary_display.to_dict('records'),
                     filter_action='native',
@@ -262,9 +348,7 @@ app.layout = html.Div([
                     style_cell={'whiteSpace': 'normal'}
                 )
             ]),
-
-        ],
-        style={'display': 'flex', 'flexWrap': 'nowrap'}
+        ]
     )
 ])
 
@@ -272,10 +356,12 @@ app.layout = html.Div([
 # 8.  Callbacks
 # ────────────────────────────────────────────────────────────────
 @app.callback(
-    Output('summary-table','data'),
-    Input('summary-store','data'),
-    Input('filter-miss1','value'), Input('filter-miss2','value'),
-    Input('filter-m2m1','value'), Input('filter-m2m2','value')
+    Output('summary-table', 'data'),
+    Input('summary-store', 'data'),
+    Input('filter-miss1', 'value'),
+    Input('filter-miss2', 'value'),
+    Input('filter-m2m1', 'value'),
+    Input('filter-m2m2', 'value'),
 )
 def filter_summary(store_data, m1, m2, d1, d2):
     df = pd.DataFrame(store_data)
@@ -286,15 +372,25 @@ def filter_summary(store_data, m1, m2, d1, d2):
     return df.to_dict('records')
 
 @app.callback(
-    Output('summary-store','data'),
-    Input('vd_comm_btn','n_clicks'), Input('pc_comm_btn','n_clicks'),
-    State('vd-table','active_cell'), State('vd-table','data'), State('vd_comm_text','value'),
-    State('pc-table','active_cell'), State('pc-table','data'), State('pc_comm_text','value'),
-    State('summary-store','data'), prevent_initial_call=True
+    Output('summary-store', 'data'),
+    Input('vd_comm_btn', 'n_clicks'),
+    Input('pc_comm_btn', 'n_clicks'),
+    State('vd-table', 'active_cell'),
+    State('vd-table', 'data'),
+    State('vd_comm_text', 'value'),
+    State('pc-table', 'active_cell'),
+    State('pc-table', 'data'),
+    State('pc_comm_text', 'value'),
+    State('summary-store', 'data'),
+    prevent_initial_call=True,
 )
-def update_comments(n_vd, n_pc, vd_act, vd_data, vd_txt, pc_act, pc_data, pc_txt, store_data):
+def update_comments(n_vd, n_pc,
+                    vd_act, vd_data, vd_txt,
+                    pc_act, pc_data, pc_txt,
+                    store_data):
     df_sum = pd.DataFrame(store_data)
     trig = dash.callback_context.triggered[0]['prop_id'].split('.')[0]
+
     if trig == 'vd_comm_btn' and vd_act and vd_txt:
         r = vd_act['row']
         fld = vd_data[r]['field_name']
@@ -303,6 +399,7 @@ def update_comments(n_vd, n_pc, vd_act, vd_data, vd_txt, pc_act, pc_data, pc_txt
         m = df_sum['Field Name'] == fld
         old = df_sum.loc[m, 'Comment Missing'].iloc[0]
         df_sum.loc[m, 'Comment Missing'] = (old + '\n' if old else '') + ent
+
     if trig == 'pc_comm_btn' and pc_act and pc_txt:
         r = pc_act['row']
         fld = pc_data[r]['field_name']
@@ -311,12 +408,16 @@ def update_comments(n_vd, n_pc, vd_act, vd_data, vd_txt, pc_act, pc_data, pc_txt
         m = df_sum['Field Name'] == fld
         old = df_sum.loc[m, 'Comment M2M'].iloc[0]
         df_sum.loc[m, 'Comment M2M'] = (old + '\n' if old else '') + ent
+
     return df_sum.to_dict('records')
 
 @app.callback(
-    Output('vd-table','data'), Output('pc-table','data'),
-    Output('vd_sql','children'), Output('pc_sql','children'),
-    Input('summary-table','selected_rows'), State('summary-table','data')
+    Output('vd-table', 'data'),
+    Output('pc-table', 'data'),
+    Output('vd_sql', 'children'),
+    Output('pc_sql', 'children'),
+    Input('summary-table', 'selected_rows'),
+    State('summary-table', 'data'),
 )
 def update_detail(selected, summary_rows):
     if selected:
@@ -327,6 +428,7 @@ def update_detail(selected, summary_rows):
         pc_sql = sql_for(fld, 'pop_comp')
     else:
         vd_df, pc_df, vd_sql, pc_sql = vd_wide, pc_wide, '', ''
+
     return (
         add_total_row(vd_df).to_dict('records'),
         add_total_row(pc_df).to_dict('records'),
@@ -335,15 +437,17 @@ def update_detail(selected, summary_rows):
     )
 
 @app.callback(
-    Output('vd-val-lbl','value'),
-    Input('vd-table','active_cell'), State('vd-table','data')
+    Output('vd-val-lbl', 'value'),
+    Input('vd-table', 'active_cell'),
+    State('vd-table', 'data'),
 )
 def update_vd_label(active, rows):
     return rows[active['row']]['value_label'] if active else ''
 
 @app.callback(
-    Output('pc-val-lbl','value'),
-    Input('pc-table','active_cell'), State('pc-table','data')
+    Output('pc-val-lbl', 'value'),
+    Input('pc-table', 'active_cell'),
+    State('pc-table', 'data'),
 )
 def update_pc_label(active, rows):
     return rows[active['row']]['value_label'] if active else ''
@@ -352,13 +456,13 @@ def update_pc_label(active, rows):
 # New callback: filter Previous Comments by selected field
 # ────────────────────────────────────────────────────────────────
 @app.callback(
-    Output('prev-comments-table','data'),
-    Input('summary-table','selected_rows'),
-    State('summary-table','data')
+    Output('prev-comments-table', 'data'),
+    Input('summary-table', 'selected_rows'),
+    State('summary-table', 'data'),
 )
-def update_prev_comments(selected_rows, summary_rows):
-    if selected_rows:
-        fld = summary_rows[selected_rows[0]]['Field Name']
+def update_prev_comments(selected, summary_rows):
+    if selected:
+        fld = summary_rows[selected[0]]['Field Name']
         filtered = prev_summary_display[prev_summary_display['Field Name'] == fld]
     else:
         filtered = prev_summary_display
