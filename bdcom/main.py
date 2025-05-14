@@ -33,6 +33,7 @@ _contains = lambda x: any(re.search(p, str(x)) for p in _PHRASES)
 # ────────────────────────────────────────────────────────────────
 rows = []
 for fld in sorted(df_data["field_name"].unique()):
+    # missing this & prev month
     miss1 = df_data[
         (df_data.analysis_type == "value_dist")
         & (df_data.field_name == fld)
@@ -45,6 +46,7 @@ for fld in sorted(df_data["field_name"].unique()):
         & (df_data.filemonth_dt == prev_month)
         & (df_data.value_label.str.contains("Missing", case=False, na=False))
     ]["value_records"].sum()
+    # pop-comp diffs this & prev
     diff1 = df_data[
         (df_data.analysis_type == "pop_comp")
         & (df_data.field_name == fld)
@@ -73,7 +75,7 @@ initial_summary = pd.DataFrame(
 )
 
 # ────────────────────────────────────────────────────────────────
-# 5.  Build wide frames for Value Distribution and Population Comparison
+# 5.  Build wide frames for Value Distribution & Population Comparison
 # ────────────────────────────────────────────────────────────────
 def wide(df_src):
     df_src = df_src[df_src.filemonth_dt.isin(MONTHS)].copy()
@@ -196,20 +198,24 @@ for col in prev_cols:
     })
 
 # ────────────────────────────────────────────────────────────────
-# 7.  Dash App Layout
+# 7.  Dash App Layout with Light-Theme
 # ────────────────────────────────────────────────────────────────
-app = Dash(__name__)
+external_stylesheets = [
+    "https://cdn.jsdelivr.net/npm/bootswatch@4.5.2/dist/flatly/bootstrap.min.css"
+]
+app = Dash(__name__, external_stylesheets=external_stylesheets)
+
 app.layout = html.Div([
     dcc.Store(id='summary-store', data=initial_summary.to_dict('records')),
-    html.H2("BDCOMM FRY14M Field Analysis — 13-Month View"),
+    html.H2("BDCOMM FRY14M Field Analysis — 13-Month View", className='text-center mb-4'),
 
     dcc.Tabs(
         id='main-tabs',
-        style={'display': 'flex', 'flexWrap': 'nowrap'},
+        style={'marginBottom': '1rem'},
         children=[
 
             # ─────────────── Summary ───────────────
-            dcc.Tab(label="Summary", children=[
+            dcc.Tab(label="Summary", className='p-3', children=[
                 html.Div([
                     html.Div([
                         html.Label(f"Missing {DATE1:%b-%Y}"),
@@ -218,9 +224,10 @@ app.layout = html.Div([
                             options=[{"label": i, "value": i}
                                      for i in sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())],
                             multi=True,
-                            value=sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())
+                            value=sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique()),
+                            className='form-control'
                         ),
-                    ], style={'width': '24%', 'display': 'inline-block'}),
+                    ], className='col-md-3'),
                     html.Div([
                         html.Label(f"Missing {prev_month:%b-%Y}"),
                         dcc.Dropdown(
@@ -228,9 +235,10 @@ app.layout = html.Div([
                             options=[{"label": i, "value": i}
                                      for i in sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())],
                             multi=True,
-                            value=sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())
+                            value=sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique()),
+                            className='form-control'
                         ),
-                    ], style={'width': '24%', 'display': 'inline-block'}),
+                    ], className='col-md-3'),
                     html.Div([
                         html.Label(f"M2M Diff {DATE1:%b-%Y}"),
                         dcc.Dropdown(
@@ -238,9 +246,10 @@ app.layout = html.Div([
                             options=[{"label": i, "value": i}
                                      for i in sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())],
                             multi=True,
-                            value=sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())
+                            value=sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique()),
+                            className='form-control'
                         ),
-                    ], style={'width': '24%', 'display': 'inline-block'}),
+                    ], className='col-md-3'),
                     html.Div([
                         html.Label(f"M2M Diff {prev_month:%b-%Y}"),
                         dcc.Dropdown(
@@ -248,19 +257,17 @@ app.layout = html.Div([
                             options=[{"label": i, "value": i}
                                      for i in sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())],
                             multi=True,
-                            value=sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())
+                            value=sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique()),
+                            className='form-control'
                         ),
-                    ], style={'width': '24%', 'display': 'inline-block'}),
-                ], style={'marginBottom': '1rem'}),
+                    ], className='col-md-3'),
+                ], className='row mb-3'),
 
                 dash_table.DataTable(
                     id='summary-table',
                     columns=[
-                        {
-                            "name": c,
-                            "id": c,
-                            "editable": True if c in ["Comment Missing", "Comment M2M"] else False
-                        }
+                        {"name": c, "id": c,
+                         "editable": (c in ["Comment Missing", "Comment M2M"])}
                         for c in initial_summary.columns
                     ],
                     data=[],
@@ -270,27 +277,13 @@ app.layout = html.Div([
                     row_selectable='single',
                     selected_rows=[],
                     page_size=20,
-                    style_table={'overflowX': 'auto'}
+                    style_table={'overflowX': 'auto'},
+                    style_cell={'textAlign': 'left'}
                 ),
             ]),
 
             # ────── Value Distribution ──────
-            dcc.Tab(label="Value Distribution", children=[
-                html.Div([
-                    html.Div([
-                        html.Label("Selected Value Label:"),
-                        dcc.Input(id='vd-val-lbl', value='', readOnly=True),
-                    ], style={'display': 'inline-block', 'marginRight': '1rem'}),
-                    html.Div([
-                        dcc.Textarea(
-                            id='vd_comm_text',
-                            placeholder="Enter comment…",
-                            style={'width': '70%', 'height': '50px'}
-                        ),
-                        html.Button('Add Comment', id='vd_comm_btn', style={'marginLeft': '1rem'})
-                    ], style={'display': 'inline-block', 'verticalAlign': 'top'}),
-                ], style={'marginBottom': '1rem'}),
-
+            dcc.Tab(label="Value Distribution", className='p-3', children=[
                 dash_table.DataTable(
                     id='vd-table',
                     columns=[{"name": c, "id": c} for c in vd_wide.columns],
@@ -299,28 +292,37 @@ app.layout = html.Div([
                     sort_action='native',
                     row_selectable='single',
                     page_size=20,
-                    style_table={'overflowX': 'auto'}
+                    style_table={'overflowX': 'auto'},
+                    style_cell={'textAlign': 'left'}
                 ),
-                html.Div(id='vd_sql', style={'whiteSpace': 'pre-wrap', 'marginTop': '1rem'})
+
+                html.Div([
+                    html.Label("Selected Value Label:"),
+                    dcc.Input(id='vd-val-lbl', value='', readOnly=True, className='form-control mb-2'),
+                    dcc.Textarea(
+                        id='vd_comm_text',
+                        placeholder="Enter comment…",
+                        style={'width': '100%', 'height': '80px'},
+                        className='form-control'
+                    ),
+                    html.Button('Add Comment', id='vd_comm_btn',
+                                className='btn btn-primary btn-sm mt-2')
+                ], className='mt-3'),
+
+                html.Div([
+                    html.H5("Value SQL Logic:"),
+                    html.Div(id='vd_sql', style={'whiteSpace': 'pre-wrap', 'border': '1px solid #ced4da',
+                                                 'padding': '0.5rem', 'borderRadius': '0.25rem'}),
+                    dcc.Clipboard(
+                        target_id='vd_sql',
+                        title='Copy SQL',
+                        style={'marginTop': '0.5rem'}
+                    )
+                ], className='mt-3'),
             ]),
 
             # ─── Population Comparison ───
-            dcc.Tab(label="Population Comparison", children=[
-                html.Div([
-                    html.Div([
-                        html.Label("Selected Value Label:"),
-                        dcc.Input(id='pc-val-lbl', value='', readOnly=True),
-                    ], style={'display': 'inline-block', 'marginRight': '1rem'}),
-                    html.Div([
-                        dcc.Textarea(
-                            id='pc_comm_text',
-                            placeholder="Enter comment…",
-                            style={'width': '70%', 'height': '50px'}
-                        ),
-                        html.Button('Add Comment', id='pc_comm_btn', style={'marginLeft': '1rem'})
-                    ], style={'display': 'inline-block', 'verticalAlign': 'top'}),
-                ], style={'marginBottom': '1rem'}),
-
+            dcc.Tab(label="Population Comparison", className='p-3', children=[
                 dash_table.DataTable(
                     id='pc-table',
                     columns=[{"name": c, "id": c} for c in pc_wide.columns],
@@ -329,13 +331,39 @@ app.layout = html.Div([
                     sort_action='native',
                     row_selectable='single',
                     page_size=20,
-                    style_table={'overflowX': 'auto'}
+                    style_table={'overflowX': 'auto'},
+                    style_cell={'textAlign': 'left'}
                 ),
-                html.Div(id='pc_sql', style={'whiteSpace': 'pre-wrap', 'marginTop': '1rem'})
+
+                html.Div([
+                    html.Label("Selected Value Label:"),
+                    dcc.Input(id='pc-val-lbl', value='', readOnly=True, className='form-control mb-2'),
+                    dcc.Textarea(
+                        id='pc_comm_text',
+                        placeholder="Enter comment…",
+                        style={'width': '100%', 'height': '80px'},
+                        className='form-control'
+                    ),
+                    html.Button('Add Comment', id='pc_comm_btn',
+                                className='btn btn-primary btn-sm mt-2')
+                ], className='mt-3'),
+
+                html.Div([
+                    html.H5("Population-Comp SQL Logic:"),
+                    html.Div(id='pc_sql', style={'whiteSpace': 'pre-wrap', 'border': '1px solid #ced4da',
+                                                 'padding': '0.5rem', 'borderRadius': '0.25rem'}),
+                    dcc.Clipboard(
+                        target_id='pc_sql',
+                        title='Copy SQL',
+                        style={'marginTop': '0.5rem'}
+                    )
+                ], className='mt-3'),
             ]),
 
             # ───── Previous Comments ─────
-            dcc.Tab(label="Previous Comments", children=[
+            dcc.Tab(label="Previous Comments", className='p-3', children=[
+                html.Button('Show All Fields', id='prev_show_all_btn',
+                            className='btn btn-secondary btn-sm mb-3'),
                 dash_table.DataTable(
                     id='prev-comments-table',
                     columns=[{"name": c, "id": c} for c in prev_cols],
@@ -345,12 +373,13 @@ app.layout = html.Div([
                     page_size=20,
                     style_table={'overflowX': 'auto'},
                     style_cell_conditional=style_cell_conditional_prev,
-                    style_cell={'whiteSpace': 'normal'}
+                    style_cell={'whiteSpace': 'normal', 'textAlign': 'left'}
                 )
             ]),
         ]
     )
-])
+], className='container-fluid p-4')
+
 
 # ────────────────────────────────────────────────────────────────
 # 8.  Callbacks
@@ -370,6 +399,7 @@ def filter_summary(store_data, m1, m2, d1, d2):
     df = df[df[f"M2M Diff {DATE1:%m/%d/%Y}"].isin(d1)]
     df = df[df[f"M2M Diff {prev_month:%m/%d/%Y}"].isin(d2)]
     return df.to_dict('records')
+
 
 @app.callback(
     Output('summary-store', 'data'),
@@ -411,6 +441,7 @@ def update_comments(n_vd, n_pc,
 
     return df_sum.to_dict('records')
 
+
 @app.callback(
     Output('vd-table', 'data'),
     Output('pc-table', 'data'),
@@ -436,6 +467,7 @@ def update_detail(selected, summary_rows):
         pc_sql,
     )
 
+
 @app.callback(
     Output('vd-val-lbl', 'value'),
     Input('vd-table', 'active_cell'),
@@ -443,6 +475,7 @@ def update_detail(selected, summary_rows):
 )
 def update_vd_label(active, rows):
     return rows[active['row']]['value_label'] if active else ''
+
 
 @app.callback(
     Output('pc-val-lbl', 'value'),
@@ -452,21 +485,32 @@ def update_vd_label(active, rows):
 def update_pc_label(active, rows):
     return rows[active['row']]['value_label'] if active else ''
 
+
 # ────────────────────────────────────────────────────────────────
-# New callback: filter Previous Comments by selected field
+# New callback: filter Previous Comments by selected field or reset
 # ────────────────────────────────────────────────────────────────
 @app.callback(
     Output('prev-comments-table', 'data'),
     Input('summary-table', 'selected_rows'),
+    Input('prev_show_all_btn', 'n_clicks'),
     State('summary-table', 'data'),
 )
-def update_prev_comments(selected, summary_rows):
-    if selected:
+def update_prev_comments(selected, show_all_clicks, summary_rows):
+    ctx = dash.callback_context
+    trig = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
+
+    # If user clicked "Show All Fields"
+    if trig == 'prev_show_all_btn':
+        filtered = prev_summary_display
+    # Else if they selected a row in Summary
+    elif selected:
         fld = summary_rows[selected[0]]['Field Name']
         filtered = prev_summary_display[prev_summary_display['Field Name'] == fld]
     else:
         filtered = prev_summary_display
+
     return filtered.to_dict('records')
+
 
 # ────────────────────────────────────────────────────────────────
 # 9.  Run
