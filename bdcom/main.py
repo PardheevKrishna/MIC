@@ -269,7 +269,7 @@ app.layout = html.Div([
 ])
 
 # ────────────────────────────────────────────────────────────────
-# 8.  Callbacks (unchanged)
+# 8.  Callbacks
 # ────────────────────────────────────────────────────────────────
 @app.callback(
     Output('summary-table','data'),
@@ -347,6 +347,22 @@ def update_vd_label(active, rows):
 )
 def update_pc_label(active, rows):
     return rows[active['row']]['value_label'] if active else ''
+
+# ────────────────────────────────────────────────────────────────
+# New callback: filter Previous Comments by selected field
+# ────────────────────────────────────────────────────────────────
+@app.callback(
+    Output('prev-comments-table','data'),
+    Input('summary-table','selected_rows'),
+    State('summary-table','data')
+)
+def update_prev_comments(selected_rows, summary_rows):
+    if selected_rows:
+        fld = summary_rows[selected_rows[0]]['Field Name']
+        filtered = prev_summary_display[prev_summary_display['Field Name'] == fld]
+    else:
+        filtered = prev_summary_display
+    return filtered.to_dict('records')
 
 # ────────────────────────────────────────────────────────────────
 # 9.  Run
