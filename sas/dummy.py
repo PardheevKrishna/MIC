@@ -1,22 +1,25 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
+import pyreadstat
 
-# Prepare an empty list to hold rows
-data = []
+# Parameters
+n_rows = 10**6
+n_cols = 1000
+col_names = [f'col{i}' for i in range(n_cols)]
+chunksize = 100000  # adjust based on your available RAM
 
-# Loop to generate one million rows with progress indication
-for i in tqdm(range(1_000_000), desc="Generating rows"):
-    row = {
-        'id': i,
-        'value1': np.random.random(),         # Random float between 0 and 1
-        'value2': np.random.randint(0, 100)      # Random integer from 0 to 99
-    }
-    data.append(row)
+# 1. Generate dummy data in chunks
+dfs = []
+for _ in tqdm(range(n_rows // chunksize), desc="Generating data"):
+    data = np.random.rand(chunksize, n_cols)
+    df_chunk = pd.DataFrame(data, columns=col_names)
+    dfs.append(df_chunk)
 
-# Convert list of dictionaries into a DataFrame
-df = pd.DataFrame(data)
+# 2. Concatenate all chunks
+df = pd.concat(dfs, ignore_index=True)
 
-# Save to CSV for later use
-df.to_csv("million_rows.csv", index=False)
-print("Dataset saved to 'million_rows.csv'")
+# 3. Write to SAS7BDAT
+pyreadstat.write_sas7bdat(df, 'dummy_data.sas7bdat')
+
+print("Created dummy_data.sas7bdat (1M rows × 1000 cols)")
