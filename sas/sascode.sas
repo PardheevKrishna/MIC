@@ -1,35 +1,34 @@
-/* --- Step 1: Import the CSV File --- */
-/* Adjust the file path below as per your local setup */
-proc import datafile="C:\Path\to\million_rows.csv"
-            out=million
-            dbms=csv
-            replace;
-     getnames=yes;
-run;
+/* run_complex_sql_timed.sas */
 
-/* --- Step 2: Heavy Processing with Runtime Logging --- */
-options fullstimer;  /* Enables detailed timing info in the SAS log */
+/* Enable detailed timing */
+options fullstimer;
 
-/* Record the start time */
-%let start = %sysfunc(datetime());
+/* 1. Point libname to folder where table1.csv/table2.csv/table3.csv live */
+libname mycsv csv '/path/to/your/csv/folder';
 
-data processed;
-    set million;
-    
-    /* Simulate heavy computation: inner loop of 100 iterations */
-    computed = 0;
-    do j = 1 to 100;
-        computed + sin(value1) * cos(value2) / j;
-    end;
-    
-    output;
-    
-    /* Debug message: print every 100,000 rows processed */
-    if mod(_N_, 100000) = 0 then do;
-        put "DEBUG: Processed " _N_ " rows";
-    end;
-run;
+/* 2. Capture start time */
+%let t0 = %sysfunc(datetime());
 
-/* Record the end time and print the elapsed time */
-%let end = %sysfunc(datetime());
-%put NOTE: Elapsed time for heavy processing: %sysevalf(&end - &start) seconds;
+/* 3. Complex PROC SQL */
+proc sql;
+  create table work.joined as
+  select 
+    a.key,
+    count(distinct b.col1)   as cnt_col1,
+    sum(c.col2)              as sum_col2,
+    case when avg(a.col3)>50 then 'High' else 'Low' end as Category,
+    std(c.col5)              as stddev_col5
+  from mycsv.table1 as a
+    inner join mycsv.table2 as b on a.key = b.key
+    left  join mycsv.table3 as c on a.key = c.key
+  where a.col4 between 10 and 90
+  group by a.key, calculated Category
+  having count(*) > 100
+  order by sum_col2 desc
+  ;
+quit;
+
+/* 4. Capture end time and print */
+%let t1      = %sysfunc(datetime());
+%let elapsed = %sysevalf(&t1 - &t0);
+%put NOTE: >>> SAS PROC SQL elapsed time: &elapsed seconds. <<<;
