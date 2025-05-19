@@ -6,11 +6,12 @@ import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 import dash
-from dash import dcc, html, Input, Output, State, dash_table
+from dash import dcc, html, Input, Output, State
 import dash_bootstrap_components as dbc
+from dash_ag_grid import AgGrid
 
 # -----------------------------------------------------------------------------
-# Helper functions (unchanged)
+# Helper functions (identical to your Streamlit logic)
 # -----------------------------------------------------------------------------
 
 def normalize_columns(df, mapping=None):
@@ -68,9 +69,9 @@ def process_dqe_analysis(data_input_df, thresholds_df, date1):
             except:
                 thr_val = 0
             status = "Pass" if pct <= thr_val else "Fail"
-            out[f"{m} Errors"] = err
-            out[f"{m} Error%"]  = round(pct, 2)
-            out[f"{m} Status"] = status
+            out[f"{m} Errors"]         = err
+            out[f"{m} Error%"]         = round(pct, 2)
+            out[f"{m} Status"]         = status
             out[f"{m} Error Comments"] = ""
         results.append(out)
 
@@ -83,7 +84,13 @@ def process_dqe_analysis(data_input_df, thresholds_df, date1):
 
 app = dash.Dash(
     __name__,
-    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    external_stylesheets=[
+        # Bootstrap for layout
+        dbc.themes.BOOTSTRAP,
+        # AG-Grid core + theme CSS
+        "https://unpkg.com/ag-grid-community/dist/styles/ag-grid.css",
+        "https://unpkg.com/ag-grid-community/dist/styles/ag-theme-alpine.css",
+    ],
     title="DQE Analysis"
 )
 server = app.server
@@ -91,7 +98,11 @@ server = app.server
 FOLDERS = ["BDCOM", "WFHMSA", "BCards"]
 
 app.layout = dbc.Container(fluid=True, children=[
-    # ---------- Single row of selectors ----------
+
+    # Title with top margin
+    html.H1("DQE Analysis", className="text-center my-4"),
+
+    # Single row of 3 selectors
     dbc.Row(
         [
             dbc.Col(
@@ -111,7 +122,7 @@ app.layout = dbc.Container(fluid=True, children=[
                     html.Label("DATA_INPUT Excel File", className="form-label"),
                     dcc.Dropdown(id="excel-dropdown", className="form-select"),
                 ]),
-                width=5
+                width=6
             ),
             dbc.Col(
                 html.Div([
@@ -125,48 +136,33 @@ app.layout = dbc.Container(fluid=True, children=[
                 ]),
                 width=3
             ),
-            dbc.Col(
-                html.Div(id="folder-path", className="text-muted"),
-                width=1
-            ),
         ],
-        className="align-items-end mb-3"
+        className="mb-4 align-items-end"
     ),
 
-    # ---------- Table + Download below, full width ----------
+    # AG-Grid & Download button
     dbc.Row(
         dbc.Col([
-            dash_table.DataTable(
-                id="dqe-table",
-                columns=[],
-                data=[],
-                editable=True,
-                filter_action="native",
-                sort_action="native",
-                page_size=30,
-                style_table={'overflowX': 'auto', 'maxHeight': '65vh'},
-                style_cell={
-                    'whiteSpace': 'normal',
-                    'height': 'auto',
-                    'textAlign': 'left',
-                    'padding': '5px'
+            AgGrid(
+                id="dqe-grid",
+                columnDefs=[],
+                rowData=[],
+                defaultColDef={
+                    "filter": True,
+                    "sortable": True,
+                    "resizable": True,
+                    "wrapText": True,
+                    "autoHeight": True
                 },
-                style_header={
-                    'backgroundColor': '#f8f9fa',
-                    'fontWeight': 'bold'
-                },
+                className="ag-theme-alpine",
+                style={"width": "100%", "height": "calc(100vh - 250px)"}
             ),
             html.Br(),
-            dbc.Button(
-                "Download Excel Report",
-                id="download-button",
-                color="primary",
-                className="mb-4"
-            ),
+            dbc.Button("Download Excel Report", id="download-button", color="primary"),
             dcc.Download(id="download-report"),
-            html.Div(id="csv-warning", className="text-danger")
         ], width=12)
-    )
+    ),
+
 ])
 
 # -----------------------------------------------------------------------------
@@ -174,56 +170,61 @@ app.layout = dbc.Container(fluid=True, children=[
 # -----------------------------------------------------------------------------
 
 @app.callback(
-    Output("folder-path",    "children"),
     Output("excel-dropdown", "options"),
     Output("excel-dropdown", "value"),
-    Output("csv-warning",    "children"),
     Input("folder-dropdown", "value"),
 )
-def refresh_file_list(folder):
-    base = os.path.join(os.getcwd(), folder)
-    if not os.path.exists(base):
-        return "", [], None, f"Folder '{folder}' not found."
-    excels = [f for f in os.listdir(base) if f.lower().endswith((".xlsx",".xlsb"))]
-    opts = [{"label": f, "value": f} for f in excels]
-    warn = ""
-    if not excels:
-        warn = "No Excel files found."
-    if not os.path.exists(os.path.join(base, "dqe_thresholds.csv")):
-        warn += " Missing 'dqe_thresholds.csv'."
-    return f"{base}", opts, (opts[0]["value"] if opts else None), warn
+def update_file_list(folder):
+    folder_path = os.path.join(os.getcwd(), folder)
+    if not os.path.exists(folder_path):
+        return [], None
+    files = [f for f in os.listdir(folder_path) if f.lower().endswith((".xlsx", ".xlsb"))]
+    opts = [{"label": f, "value": f} for f in files]
+    return opts, (opts[0]["value"] if opts else None)
 
 @app.callback(
-    Output("dqe-table", "data"),
-    Output("dqe-table", "columns"),
+    Output("dqe-grid", "columnDefs"),
+    Output("dqe-grid", "rowData"),
     Input("folder-dropdown", "value"),
     Input("excel-dropdown",  "value"),
     Input("date-picker",     "date"),
 )
-def update_table(folder, excel_file, date):
+def update_grid(folder, excel_file, date):
     if not (folder and excel_file and date):
         return [], []
     base = os.path.join(os.getcwd(), folder)
-    data_input = load_data_input(os.path.join(base, excel_file))
-    thresholds = load_dqe_thresholds(os.path.join(base, "dqe_thresholds.csv"))
-    dt1 = datetime.datetime.fromisoformat(date)
-    out_df = process_dqe_analysis(data_input, thresholds, dt1)
+    data_input  = load_data_input(os.path.join(base, excel_file))
+    thresholds  = load_dqe_thresholds(os.path.join(base, "dqe_thresholds.csv"))
+    dt1         = datetime.datetime.fromisoformat(date)
+    result_df   = process_dqe_analysis(data_input, thresholds, dt1)
 
-    cols = [
-        {"name": c, "id": c, "editable": ("Error Comments" in c)}
-        for c in out_df.columns
-    ]
-    return out_df.to_dict("records"), cols
+    # Build AG-Grid column definitions
+    col_defs = []
+    for col in result_df.columns:
+        col_defs.append({
+            "headerName": col,
+            "field": col,
+            "filter": True,
+            "sortable": True,
+            "resizable": True,
+            "editable": True if "Error Comments" in col else False,
+            "minWidth": 150
+        })
+
+    return col_defs, result_df.to_dict("records")
 
 @app.callback(
     Output("download-report", "data"),
     Input("download-button", "n_clicks"),
-    State("dqe-table",    "data"),
-    State("dqe-table",    "columns"),
+    State("dqe-grid", "rowData"),
+    State("dqe-grid", "columnDefs"),
     prevent_initial_call=True
 )
-def func_download(n, rows, cols):
-    df = pd.DataFrame(rows, columns=[c["id"] for c in cols])
+def download_excel(n_clicks, rows, cols):
+    # Reconstruct DataFrame in original column order
+    fields = [c["field"] for c in cols]
+    df = pd.DataFrame(rows, columns=fields)
+
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="DQE Analysis")
@@ -232,4 +233,5 @@ def func_download(n, rows, cols):
 
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run_server(debug=True, port=8051)
+    # Use server.run() instead of app.run_server()
+    server.run(debug=True, port=8051)
