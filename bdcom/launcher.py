@@ -2,14 +2,38 @@
 
 import os
 import glob
+import multiprocessing
 import sys
-import subprocess
 
 from dash import Dash, dcc, html
 from dash.dependencies import Input, Output, State
 
 # ────────────────────────────────────────────────────────────────
-# 1.  Launcher Dash app: Folder → Analysis → Excel → Start
+# 1.  Wrappers that spawn each dashboard in its own process
+# ────────────────────────────────────────────────────────────────
+
+def _start_field(input_file, port=8051):
+    # import and override, then run with no reloader
+    import dash_fieldanalysis
+    dash_fieldanalysis.INPUT_FILE = input_file
+    dash_fieldanalysis.app.run = dash_fieldanalysis.app.run_server
+    dash_fieldanalysis.app.run(debug=True, port=port, use_reloader=False)
+
+def _start_dqe(input_file, port=8052):
+    import dash_dqe
+    dash_dqe.INPUT_FILE = input_file
+    dash_dqe.app.run = dash_dqe.app.run_server
+    dash_dqe.app.run(debug=True, port=port, use_reloader=False)
+
+def _start_9avar(input_file, port=8053):
+    import dash_9avar
+    dash_9avar.INPUT_FILE = input_file
+    dash_9avar.app.run = dash_9avar.app.run_server
+    dash_9avar.app.run(debug=True, port=port, use_reloader=False)
+
+
+# ────────────────────────────────────────────────────────────────
+# 2.  Build the “launcher” Dash app
 # ────────────────────────────────────────────────────────────────
 
 BASE_PATH = os.getcwd()
@@ -56,7 +80,7 @@ launcher.layout = html.Div([
             html.Label("Excel File"),
             dcc.Dropdown(
                 id="file-dropdown",
-                placeholder="Choose folder first…"
+                placeholder="Choose folder & analysis first…"
             ),
         ]),
     ]),
@@ -68,70 +92,61 @@ launcher.layout = html.Div([
 
 
 # ────────────────────────────────────────────────────────────────
-# 2.  Populate Excel‐file dropdown when folder is chosen
+# 3.  Populate the Excel-file dropdown
 # ────────────────────────────────────────────────────────────────
 @launcher.callback(
-    Output("file-dropdown","options"),
-    Input("folder-dropdown","value")
+    Output("file-dropdown", "options"),
+    Input("folder-dropdown", "value"),
+    Input("analysis-dropdown", "value")
 )
-def update_file_list(folder):
-    if not folder:
+def _update_file_list(folder, analysis):
+    if not folder or not analysis:
         return []
     folder_path = os.path.join(BASE_PATH, folder)
     files = sorted(glob.glob(os.path.join(folder_path, "*.xlsx")))
-    return [{"label":os.path.basename(f), "value":f} for f in files]
+    return [{"label": os.path.basename(f), "value": f} for f in files]
 
 
 # ────────────────────────────────────────────────────────────────
-# 3.  On Start: spawn the selected dash_xxx.py in its own process
+# 4.  When Start is clicked → spawn the right dashboard
 # ────────────────────────────────────────────────────────────────
 @launcher.callback(
-    Output("start-output","children"),
-    Input("start-btn","n_clicks"),
-    State("analysis-dropdown","value"),
-    State("file-dropdown","value"),
+    Output("start-output", "children"),
+    Input("start-btn", "n_clicks"),
+    State("analysis-dropdown", "value"),
+    State("file-dropdown", "value"),
     prevent_initial_call=True
 )
-def launch_dashboard(n_clicks, analysis, filepath):
-    if not analysis or not filepath:
+def _launch(n_clicks, analysis, filepath):
+    if not (analysis and filepath):
         return html.Div(
-            "⚠️ Please select an analysis type and an Excel file.",
+            "⚠️ Please select an Analysis type and an Excel file.",
             style={"color":"red"}
         )
 
-    # map analysis → (module, port)
-    mapping = {
-        "field":   ("dash_fieldanalysis", 8051),
-        "dqe":     ("dash_dqe",           8052),
-        "9a_var":  ("dash_9avar",         8053),
-    }
-    module_name, port = mapping[analysis]
+    if analysis == "field":
+        target, port, label = _start_field, 8051, "Field Analysis"
+    elif analysis == "dqe":
+        target, port, label = _start_dqe, 8052, "DQE"
+    else:
+        target, port, label = _start_9avar, 8053, "9a_Var"
 
-    # build command to run in a fresh interpreter:
-    #   python -c "import MODULE; MODULE.INPUT_FILE=r'...'; MODULE.app.run_server(debug=True, port=PORT)"
-    cmd = [
-        sys.executable, "-c",
-        (
-            f"import {module_name}; "
-            f"{module_name}.INPUT_FILE = r'{filepath}'; "
-            f"{module_name}.app.run_server(debug=True, port={port})"
-        )
-    ]
-
-    # spawn it (non-blocking)
-    subprocess.Popen(cmd, cwd=BASE_PATH)
+    # spawn it in its own process
+    proc = multiprocessing.Process(target=target, args=(filepath, port))
+    proc.daemon = True
+    proc.start()
 
     link = f"http://127.0.0.1:{port}"
     return html.Div([
-        f"🚀 Launched **{module_name}** on port {port}. ",
+        f"🚀 Launched **{label}** on port {port}. ",
         html.A("Open it here", href=link, target="_blank")
     ])
 
 
 # ────────────────────────────────────────────────────────────────
-# 4.  Run the launcher itself (on port 8050)
+# 5.  Run the launcher itself on 8050
 # ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # alias so we can call .run(...)
+    # alias for convenience
     launcher.run = launcher.run_server
     launcher.run(debug=True, port=8050)
