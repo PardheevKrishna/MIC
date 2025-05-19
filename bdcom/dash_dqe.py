@@ -10,7 +10,7 @@ from dash import dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
 
 # -----------------------------------------------------------------------------
-# Helper functions (identical to your Streamlit logic)
+# Helper functions (unchanged)
 # -----------------------------------------------------------------------------
 
 def normalize_columns(df, mapping=None):
@@ -91,51 +91,50 @@ server = app.server
 FOLDERS = ["BDCOM", "WFHMSA", "BCards"]
 
 app.layout = dbc.Container(fluid=True, children=[
-
+    # ---------- Single row of selectors ----------
     dbc.Row(
-        dbc.Col(html.H1("DQE Analysis Report"), className="my-4")
+        [
+            dbc.Col(
+                html.Div([
+                    html.Label("Folder", className="form-label"),
+                    dcc.Dropdown(
+                        id="folder-dropdown",
+                        options=[{"label": f, "value": f} for f in FOLDERS],
+                        value=FOLDERS[0],
+                        className="form-select"
+                    ),
+                ]),
+                width=3
+            ),
+            dbc.Col(
+                html.Div([
+                    html.Label("DATA_INPUT Excel File", className="form-label"),
+                    dcc.Dropdown(id="excel-dropdown", className="form-select"),
+                ]),
+                width=5
+            ),
+            dbc.Col(
+                html.Div([
+                    html.Label("Analysis Date (Date1)", className="form-label"),
+                    dcc.DatePickerSingle(
+                        id="date-picker",
+                        date=datetime.date(2025, 1, 1),
+                        display_format="YYYY-MM-DD",
+                        className="w-100"
+                    ),
+                ]),
+                width=3
+            ),
+            dbc.Col(
+                html.Div(id="folder-path", className="text-muted"),
+                width=1
+            ),
+        ],
+        className="align-items-end mb-3"
     ),
 
-    dbc.Row([
-
-        # ┌─────────── Sidebar controls ───────────┐
-        dbc.Col([
-            # Folder chooser
-            html.Div([
-                html.Label("Select Folder", htmlFor="folder-dropdown", className="form-label"),
-                dcc.Dropdown(
-                    id="folder-dropdown",
-                    options=[{"label": f, "value": f} for f in FOLDERS],
-                    value=FOLDERS[0],
-                    className="form-select"
-                ),
-            ], className="mb-3"),
-
-            # Display path / errors
-            html.Div(id="folder-path", className="text-muted mb-3"),
-
-            # Excel file chooser
-            html.Div([
-                html.Label("Select DATA_INPUT Excel File", htmlFor="excel-dropdown", className="form-label"),
-                dcc.Dropdown(id="excel-dropdown", className="form-select"),
-                html.Div(id="csv-warning", className="text-danger mt-1"),
-            ], className="mb-3"),
-
-            # Date picker
-            html.Div([
-                html.Label("Select Analysis Date (Date1)", htmlFor="date-picker", className="form-label"),
-                dcc.DatePickerSingle(
-                    id="date-picker",
-                    date=datetime.date(2025, 1, 1),
-                    display_format="YYYY-MM-DD"
-                ),
-            ], className="mb-3"),
-
-        ], width=3),
-        # └─────────────────────────────────────────┘
-
-
-        # ┌───────────── Main table & download ──────────────┐
+    # ---------- Table + Download below, full width ----------
+    dbc.Row(
         dbc.Col([
             dash_table.DataTable(
                 id="dqe-table",
@@ -145,7 +144,7 @@ app.layout = dbc.Container(fluid=True, children=[
                 filter_action="native",
                 sort_action="native",
                 page_size=30,
-                style_table={'overflowX': 'auto', 'maxHeight': '600px'},
+                style_table={'overflowX': 'auto', 'maxHeight': '65vh'},
                 style_cell={
                     'whiteSpace': 'normal',
                     'height': 'auto',
@@ -159,16 +158,15 @@ app.layout = dbc.Container(fluid=True, children=[
             ),
             html.Br(),
             dbc.Button(
-                "Download DQE Analysis Report as Excel",
+                "Download Excel Report",
                 id="download-button",
-                color="primary"
+                color="primary",
+                className="mb-4"
             ),
             dcc.Download(id="download-report"),
-        ], width=9),
-        # └──────────────────────────────────────────────────┘
-
-    ]),
-
+            html.Div(id="csv-warning", className="text-danger")
+        ], width=12)
+    )
 ])
 
 # -----------------------------------------------------------------------------
@@ -176,11 +174,11 @@ app.layout = dbc.Container(fluid=True, children=[
 # -----------------------------------------------------------------------------
 
 @app.callback(
-    Output("folder-path",         "children"),
-    Output("excel-dropdown",      "options"),
-    Output("excel-dropdown",      "value"),
-    Output("csv-warning",         "children"),
-    Input("folder-dropdown",      "value"),
+    Output("folder-path",    "children"),
+    Output("excel-dropdown", "options"),
+    Output("excel-dropdown", "value"),
+    Output("csv-warning",    "children"),
+    Input("folder-dropdown", "value"),
 )
 def refresh_file_list(folder):
     base = os.path.join(os.getcwd(), folder)
@@ -190,10 +188,10 @@ def refresh_file_list(folder):
     opts = [{"label": f, "value": f} for f in excels]
     warn = ""
     if not excels:
-        warn = f"No Excel files found in '{folder}'."
+        warn = "No Excel files found."
     if not os.path.exists(os.path.join(base, "dqe_thresholds.csv")):
-        warn += "\nMissing 'dqe_thresholds.csv'."
-    return f"Folder path: {base}", opts, (opts[0]["value"] if opts else None), warn
+        warn += " Missing 'dqe_thresholds.csv'."
+    return f"{base}", opts, (opts[0]["value"] if opts else None), warn
 
 @app.callback(
     Output("dqe-table", "data"),
@@ -234,4 +232,4 @@ def func_download(n, rows, cols):
 
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run_server(debug=True)
+    app.run_server(debug=True, port=8051)
