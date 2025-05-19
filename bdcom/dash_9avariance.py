@@ -19,23 +19,22 @@ def normalize_columns(df):
     return df
 
 def load_output_data(excel_path):
-    # Load the OUTPUT sheet (header row 0)
     output_df = pd.read_excel(excel_path, sheet_name="OUTPUT", header=0)
     return normalize_columns(output_df)
 
 def load_variance_analysis_sheet(excel_path):
-    # Load the Variance_Analysis sheet (header is row 8 → header=7)
     var_df = pd.read_excel(excel_path, sheet_name="Variance_Analysis", header=7)
     return normalize_columns(var_df)
 
 def process_variance_analysis(output_df, var_df):
-    # Compute current and prior values
     current_values = []
     prior_values = []
     for _, row in var_df.iterrows():
         name = row["Field Name"]
-        curr = output_df[output_df.iloc[:,1] == name].iloc[:,2].sum() if name in output_df.iloc[:,1].values else 0
-        prior = output_df[output_df.iloc[:,4] == name].iloc[:,5].sum() if name in output_df.iloc[:,4].values else 0
+        curr = (output_df[output_df.iloc[:,1] == name].iloc[:,2].sum()
+                if name in output_df.iloc[:,1].values else 0)
+        prior = (output_df[output_df.iloc[:,4] == name].iloc[:,5].sum()
+                 if name in output_df.iloc[:,4].values else 0)
         current_values.append(curr)
         prior_values.append(prior)
 
@@ -47,12 +46,10 @@ def process_variance_analysis(output_df, var_df):
         axis=1
     )
 
-    # Ensure editable columns exist
     for col in ["Comments", "Detail File Link"]:
         if col not in var_df.columns:
             var_df[col] = ""
 
-    # Final column order
     final_cols = [
         "14M file", "Field No.", "Field Name",
         "Current Value", "Prior value", "$Variance", "%Variance",
@@ -80,10 +77,8 @@ FOLDERS = ["BDCOM", "WFHMSA", "BCards"]
 
 app.layout = dbc.Container(fluid=True, children=[
 
-    # Title
     html.H1("Variance Analysis Report", className="text-center my-4"),
 
-    # Folder & File selectors
     dbc.Row(
         [
             dbc.Col([
@@ -95,7 +90,6 @@ app.layout = dbc.Container(fluid=True, children=[
                     className="form-select"
                 ),
             ], width=4),
-
             dbc.Col([
                 html.Label("Excel File", className="form-label"),
                 dcc.Dropdown(id="file-dropdown", className="form-select"),
@@ -104,7 +98,6 @@ app.layout = dbc.Container(fluid=True, children=[
         className="mb-4 align-items-end"
     ),
 
-    # AG-Grid table + Download
     dbc.Row(
         dbc.Col([
             AgGrid(
@@ -163,7 +156,9 @@ def update_grid(folder, filename):
     var_df    = load_variance_analysis_sheet(path)
     result_df = process_variance_analysis(output_df, var_df)
 
-    # Build column definitions
+    # Identify numeric columns for thousands‐separator formatting
+    numeric_cols = result_df.select_dtypes(include="number").columns.tolist()
+
     col_defs = []
     for col in result_df.columns:
         cfg = {
@@ -178,6 +173,16 @@ def update_grid(folder, filename):
             cfg["editable"] = True
         if col in ["14M file", "Field No.", "Field Name"]:
             cfg["pinned"] = "left"
+        # Apply JavaScript formatter for numbers to include commas
+        if col in numeric_cols:
+            cfg["valueFormatter"] = {
+                "function":
+                "function(params) {"
+                "  return params.value != null "
+                "    ? params.value.toLocaleString(undefined, {maximumFractionDigits:2}) "
+                "    : '';"
+                "}"
+            }
         col_defs.append(cfg)
 
     return col_defs, result_df.to_dict("records")
@@ -191,7 +196,6 @@ def update_grid(folder, filename):
     prevent_initial_call=True
 )
 def download_excel(n_clicks, rows, folder, filename):
-    # Reconstruct the two sheets
     df_updated = pd.DataFrame(rows)
     path       = os.path.join(os.getcwd(), folder, filename)
     output_df  = load_output_data(path)
@@ -205,4 +209,4 @@ def download_excel(n_clicks, rows, folder, filename):
 
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    server.run(debug=True, port=8052)
+    server.run(debug=True, port=8051)
