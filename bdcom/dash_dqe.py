@@ -10,7 +10,7 @@ from dash import dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
 
 # -----------------------------------------------------------------------------
-# Helper functions (identical logic to your Streamlit app)
+# Helper functions (identical to your Streamlit logic)
 # -----------------------------------------------------------------------------
 
 def normalize_columns(df, mapping=None):
@@ -43,7 +43,6 @@ def load_dqe_thresholds(csv_path):
     return df
 
 def process_dqe_analysis(data_input_df, thresholds_df, date1):
-    # build the list of 5 month‐strings YYYY-MM
     months = [date1 - relativedelta(months=i) for i in range(5)]
     month_strs = [format_date_to_ym(m) for m in months]
 
@@ -87,41 +86,56 @@ app = dash.Dash(
     external_stylesheets=[dbc.themes.BOOTSTRAP],
     title="DQE Analysis"
 )
-server = app.server  # for gunicorn, etc.
+server = app.server
 
 FOLDERS = ["BDCOM", "WFHMSA", "BCards"]
 
 app.layout = dbc.Container(fluid=True, children=[
-    dbc.Row(dbc.Col(html.H1("DQE Analysis Report"), className="my-4")),
+
+    dbc.Row(
+        dbc.Col(html.H1("DQE Analysis Report"), className="my-4")
+    ),
 
     dbc.Row([
+
+        # ┌─────────── Sidebar controls ───────────┐
         dbc.Col([
-            dbc.FormGroup([
-                dbc.Label("Select Folder"),
+            # Folder chooser
+            html.Div([
+                html.Label("Select Folder", htmlFor="folder-dropdown", className="form-label"),
                 dcc.Dropdown(
                     id="folder-dropdown",
                     options=[{"label": f, "value": f} for f in FOLDERS],
-                    value=FOLDERS[0]
+                    value=FOLDERS[0],
+                    className="form-select"
                 ),
-            ]),
-            html.Div(id="folder-path", className="text-muted mb-2"),
+            ], className="mb-3"),
 
-            dbc.FormGroup([
-                dbc.Label("Select DATA_INPUT Excel File"),
-                dcc.Dropdown(id="excel-dropdown"),
+            # Display path / errors
+            html.Div(id="folder-path", className="text-muted mb-3"),
+
+            # Excel file chooser
+            html.Div([
+                html.Label("Select DATA_INPUT Excel File", htmlFor="excel-dropdown", className="form-label"),
+                dcc.Dropdown(id="excel-dropdown", className="form-select"),
                 html.Div(id="csv-warning", className="text-danger mt-1"),
-            ]),
+            ], className="mb-3"),
 
-            dbc.FormGroup([
-                dbc.Label("Select Analysis Date (Date1)"),
+            # Date picker
+            html.Div([
+                html.Label("Select Analysis Date (Date1)", htmlFor="date-picker", className="form-label"),
                 dcc.DatePickerSingle(
                     id="date-picker",
                     date=datetime.date(2025, 1, 1),
                     display_format="YYYY-MM-DD"
                 ),
-            ]),
-        ], width=3),
+            ], className="mb-3"),
 
+        ], width=3),
+        # └─────────────────────────────────────────┘
+
+
+        # ┌───────────── Main table & download ──────────────┐
         dbc.Col([
             dash_table.DataTable(
                 id="dqe-table",
@@ -151,7 +165,10 @@ app.layout = dbc.Container(fluid=True, children=[
             ),
             dcc.Download(id="download-report"),
         ], width=9),
+        # └──────────────────────────────────────────────────┘
+
     ]),
+
 ])
 
 # -----------------------------------------------------------------------------
@@ -169,7 +186,7 @@ def refresh_file_list(folder):
     base = os.path.join(os.getcwd(), folder)
     if not os.path.exists(base):
         return "", [], None, f"Folder '{folder}' not found."
-    excels = [f for f in os.listdir(base) if f.lower().endswith((".xlsx"," .xlsb"))]
+    excels = [f for f in os.listdir(base) if f.lower().endswith((".xlsx",".xlsb"))]
     opts = [{"label": f, "value": f} for f in excels]
     warn = ""
     if not excels:
