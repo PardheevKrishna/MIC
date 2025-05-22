@@ -1,4 +1,4 @@
-# ─── Monkey‐patch NumPy so pandas_ta can do `from numpy import NaN` ───────────
+# ─── Monkey-patch NumPy so pandas_ta can import NaN ─────────────────────────────
 import numpy as np
 if not hasattr(np, "NaN"):
     np.NaN = np.nan
@@ -12,25 +12,29 @@ import yfinance as yf
 import pandas_ta as ta
 from tqdm import tqdm
 
-from river import preprocessing, ensemble, metrics
+from river import preprocessing, metrics, ensemble, tree
 
 # ─── PARAMETERS ────────────────────────────────────────────────────────────────
-SYMBOL        = "AAPL"      # ticker
-HIST_MINUTES  = 50          # look-back for indicators
-WINDOW_MOM    = 5           # momentum window
-BUDGET        = 10.0        # starting cash in USD
+SYMBOL        = "AAPL"
+HIST_MINUTES  = 50
+WINDOW_MOM    = 5
+BUDGET        = 10.0
 
-# ─── ONLINE MODEL & ROLLING METRICS ────────────────────────────────────────────
-model      = (
-    preprocessing.StandardScaler() |
-    ensemble.AdaptiveRandomForestClassifier(n_models=20, seed=42)
+# ─── ONLINE MODEL & ROLLING METRICS ─────────────────────────────────────────────
+model       = (
+    preprocessing.StandardScaler()
+    | ensemble.BaggingClassifier(
+        model=tree.HoeffdingTreeClassifier(),  # base learner
+        n_models=15,
+        seed=42
+      )
 )
 metric_acc  = metrics.Rolling(metrics.Accuracy(),  window_size=200)
 metric_prec = metrics.Rolling(metrics.Precision(), window_size=200)
 metric_rec  = metrics.Rolling(metrics.Recall(),    window_size=200)
 prev_acc    = None  # for trend-confidence
 
-# ─── WARM-UP: download history & compute indicators once ───────────────────────
+# ─── WARM-UP HISTORY ────────────────────────────────────────────────────────────
 print("DEBUG: Downloading warm-up history…")
 df_hist = (
     yf.download(SYMBOL, period=f"{HIST_MINUTES}m", interval="1m", progress=False)
@@ -41,23 +45,18 @@ df_hist.ta.macd(append=True)
 df_hist.ta.bbands(length=20, std=2, append=True)
 df_hist.ta.atr(length=14, append=True)
 df_hist.ta.obv(append=True)
-
-# VWAP & rolling volatility
-df_hist["vwap"]  = (
-    df_hist.Volume * (df_hist.High + df_hist.Low + df_hist.Close) / 3
-).cumsum() / df_hist.Volume.cumsum()
+df_hist["vwap"]  = (df_hist.Volume * (df_hist.High + df_hist.Low + df_hist.Close) / 3).cumsum() \
+                   / df_hist.Volume.cumsum()
 df_hist["volat"] = df_hist.Close.pct_change().rolling(14).std()
-
 df_hist.dropna(inplace=True)
 print(f"DEBUG: Warm-up complete, {len(df_hist)} bars loaded.")
 
 pending = None
 cash, pos = BUDGET, 0.0
 
-# ─── FEATURE EXTRACTION ───────────────────────────────────────────────────────
+# ─── FEATURE EXTRACTION ────────────────────────────────────────────────────────
 def make_features(df: pd.DataFrame) -> dict:
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
+    last, prev = df.iloc[-1], df.iloc[-2]
     return {
         "pct_chg":  (last.Close - prev.Close) / prev.Close,
         "mom5":     (last.Close - df.Close.shift(WINDOW_MOM).iloc[-1])
@@ -79,13 +78,11 @@ def make_features(df: pd.DataFrame) -> dict:
 
 # ─── MAIN LOOP (tqdm-wrapped) ───────────────────────────────────────────────────
 for iteration in tqdm(itertools.count(1), desc="Signal iterations"):
-    # 1) align to the next exact minute
     now      = datetime.datetime.now()
     to_sleep = 60 - now.second - now.microsecond / 1e6
-    print(f"DEBUG: Sleeping for {to_sleep:.2f}s")
+    print(f"DEBUG: Sleeping {to_sleep:.2f}s")
     time.sleep(to_sleep)
 
-    # 2) fetch the last two 1-min bars
     df2 = yf.download(SYMBOL, period="2m", interval="1m", progress=False).dropna()
     if len(df2) < 2:
         print("DEBUG: Insufficient data, retrying…")
@@ -93,7 +90,7 @@ for iteration in tqdm(itertools.count(1), desc="Signal iterations"):
     prev_bar, curr_bar = df2.iloc[-2], df2.iloc[-1]
     ts = curr_bar.name.to_pydatetime()
 
-    # 3) learn from last prediction
+    # ── Learn from last prediction ──────────────────────────────────────────────
     if pending:
         true_lbl = int(curr_bar.Close > pending["price"])
         print(f"DEBUG: Learning – pred={pending['pred']}, true={true_lbl}")
@@ -114,27 +111,25 @@ for iteration in tqdm(itertools.count(1), desc="Signal iterations"):
               f"Rec={curr_rec:.3f}, PerfConf={perf_conf:.2f}")
         pending = None
 
-    # 4) update history & indicators
+    # ── Update history & recompute indicators ────────────────────────────────────
     df_hist = pd.concat([df_hist, curr_bar.to_frame().T]).iloc[-HIST_MINUTES:]
     df_hist.ta.rsi(length=14, append=True)
     df_hist.ta.macd(append=True)
     df_hist.ta.bbands(length=20, std=2, append=True)
     df_hist.ta.atr(length=14, append=True)
     df_hist.ta.obv(append=True)
-    df_hist["vwap"]  = (
-        df_hist.Volume * (df_hist.High + df_hist.Low + df_hist.Close) / 3
-    ).cumsum() / df_hist.Volume.cumsum()
+    df_hist["vwap"]  = (df_hist.Volume * (df_hist.High + df_hist.Low + df_hist.Close) / 3).cumsum() \
+                       / df_hist.Volume.cumsum()
     df_hist["volat"] = df_hist.Close.pct_change().rolling(14).std()
     df_hist.dropna(inplace=True)
 
-    # 5) extract features & predict
+    # ── Predict & execute ───────────────────────────────────────────────────────
     feats  = make_features(df_hist)
     y_pred = model.predict_one(feats) or 0
     p_up   = model.predict_proba_one(feats).get(1, 0.0)
     action = "BUY" if y_pred else "SELL"
     print(f"[{ts:%H:%M}] SIGNAL → {action} | P(up)={p_up:.2f}")
 
-    # 6) simulated execution & sizing
     price = curr_bar.Close
     if action == "BUY" and cash > 0:
         qty = cash / price
@@ -148,7 +143,7 @@ for iteration in tqdm(itertools.count(1), desc="Signal iterations"):
     else:
         print(f"DEBUG: HOLD — cash=${cash:.2f}, pos={pos:.6f}")
 
-    # 7) explain via top-2 importances
+    # ── Explain via top-2 feature importances ────────────────────────────────────
     try:
         imps = model.feature_importances_
         top2 = sorted(imps.items(), key=lambda x: abs(x[1]), reverse=True)[:2]
@@ -157,5 +152,5 @@ for iteration in tqdm(itertools.count(1), desc="Signal iterations"):
         reason = "—"
     print(f"Reason: {reason}\n")
 
-    # 8) stash for next-minute feedback
+    # ── Stash for the next update ────────────────────────────────────────────────
     pending = {"feats": feats, "price": price, "pred": y_pred}
