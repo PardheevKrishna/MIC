@@ -1,1 +1,26 @@
 
+Act as an expert VBA developer for PowerPoint automation.  
+Generate a single VBA Sub that, when run in the active presentation, will:
+
+1. Clear all existing slides.  
+2. Create exactly 10 slides, each with a title and bullet-point body.  
+3. Populate each slide with content pulled from the FR Y-14M Form page (https://www.federalreserve.gov/apps/reportingforms/Report/Index/FR_Y-14M), covering:
+   - FR Y-14M overview and purpose  
+   - Historical background and regulatory milestones  
+   - Monthly data collections and respondent panel  
+   - Reporting frequency  
+   - Key risk metrics (MAE, RMSE, forecast horizon)  
+   - Q&A and methodology resources  
+4. Position the text box on the left (e.g. Left = 50, Top = 100, Width = 400) so charts can sit to the right.  
+5. Apply a professional color theme:
+   - Background: light gray  
+   - Titles: dark blue, Calibri Light, 32pt  
+   - Body text: dark gray, Calibri, 18pt  
+   - Bullet accents and chart fills: teal  
+6. Add two charts:
+   - Slide 4: a pie chart showing the four FR Y-14M data collections.  
+   - Slide 7: a clustered-column chart showing MAE, RMSE, and 12-month forecast horizon.  
+   Style chart fills using the accent color with subtle transparency.  
+7. Save the presentation and display a confirmation message box.
+
+Use only built-in PowerPoint constants (e.g. `ppLayoutText`, `msoTrue`) and avoid unsupported properties. Provide the complete VBA code ready to paste into the VBA editor.
