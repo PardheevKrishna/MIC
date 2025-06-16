@@ -1,0 +1,132 @@
+Option Explicit
+
+Public Sub ReplaceCurrentPPTWithFRY14M()
+    Dim pptPres As Presentation
+    Dim pptSlide As Slide
+    Dim txtBox As Shape
+    Dim titles As Variant, bodies As Variant
+    Dim i As Long
+
+    ' Define professional color scheme
+    Const TitleColor As Long = &H00713A93  ' Dark Blue
+    Const BodyColor As Long = &H00464646   ' Dark Gray
+    Const AccentColor As Long = &H00B0504F  ' Teal
+    Const BackgroundColor As Long = &H00F2F2F2  ' Light Gray
+
+    ' Active presentation
+    Set pptPres = Application.ActivePresentation
+
+    ' Remove existing slides
+    For i = pptPres.Slides.Count To 1 Step -1
+        pptPres.Slides(i).Delete
+    Next i
+
+    ' Slide titles
+    titles = Array( _
+        "1. FR Y-14M Overview", _
+        "2. Purpose of FR Y-14M", _
+        "3. Historical Background", _
+        "4. Data Collections", _
+        "5. Respondent Panel", _
+        "6. Submission Frequency", _
+        "7. Key Metrics", _
+        "8. Regulatory Updates", _
+        "9. Q&A & Data Methodology", _
+        "10. Resources & Contact" _
+    )
+
+    ' Initialize bodies array
+    bodies = Array("", "", "", "", "", "", "", "", "", "")
+
+    ' Assign slide content
+    bodies(0) = "- Monthly detailed loan-portfolio data for BHCs, SLHCs, and IHCs" & vbCrLf & _
+                 "- Covers first-lien residential, home equity, credit card, and address matching"
+    bodies(1) = "- Assess capital adequacy with forward-looking revenue/loss projections" & vbCrLf & _
+                 "- Support supervisory stress test models (DFAST, CCAR)" & vbCrLf & _
+                 "- Enhance continuous risk monitoring (Dodd-Frank Act)"
+    bodies(2) = "- SCAP stress tests in 2009" & vbCrLf & _
+                 "- CCAR introduced in 2011" & vbCrLf & _
+                 "- FR Y-14M implemented June 2012; SLHC inclusion 2020"
+    bodies(3) = "- Three portfolio-level collections (residential, home equity, card)" & vbCrLf & _
+                 "- One address matching collection" & vbCrLf & _
+                 "- Materiality thresholds determine schedules"
+    bodies(4) = "- U.S. Bank Holding Companies (BHCs)" & vbCrLf & _
+                 "- Intermediate Holding Companies (IHCs) of FBOs" & vbCrLf & _
+                 "- Covered SLHCs with ≥$100B assets"
+    bodies(5) = "- Data due last business day of each calendar month" & vbCrLf & _
+                 "- ZIP download of current form available online"
+    bodies(6) = "- MAE, RMSE, and other stress-test metrics" & vbCrLf & _
+                 "- Forward-looking capital forecasts" & vbCrLf & _
+                 "- Continuous monitoring outputs"
+    bodies(7) = "- 2016 FR notice: IHC filing requirements expanded" & vbCrLf & _
+                 "- 2019 FR notice: SLHCs required filing starting June 2020"
+    bodies(8) = "- Q&As released for clarifications" & vbCrLf & _
+                 "- Data methodology documentation by Philly Fed" & vbCrLf & _
+                 "- Deloitte and IBM guides on reporting changes"
+    bodies(9) = "- Download Form & Instructions (.ZIP, PDF)" & vbCrLf & _
+                 "- FR Y-14M Q&A portal" & vbCrLf & _
+                 "- Federal Reserve Supervision website"
+
+    ' Generate slides
+    For i = LBound(titles) To UBound(titles)
+        ' Add slide
+        Set pptSlide = pptPres.Slides.Add(i + 1, ppLayoutText)
+        pptSlide.FollowMasterBackground = msoFalse
+        pptSlide.Background.Fill.ForeColor.RGB = BackgroundColor
+
+        ' Title formatting
+        With pptSlide.Shapes(1).TextFrame.TextRange
+            .Text = titles(i)
+            .Font.Name = "Calibri Light"
+            .Font.Size = 32
+            .Font.Color.RGB = TitleColor
+        End With
+
+        ' Body position and formatting
+        Set txtBox = pptSlide.Shapes(2)
+        txtBox.Left = 50: txtBox.Top = 100: txtBox.Width = 400
+        With txtBox.TextFrame.TextRange
+            .Text = bodies(i)
+            .Font.Name = "Calibri"
+            .Font.Size = 18
+            .Font.Color.RGB = BodyColor
+            Dim p As Long
+            For p = 1 To .Paragraphs.Count
+                With .Paragraphs(p).ParagraphFormat
+                    .Bullet.Visible = msoTrue
+                    .Bullet.Character = 149
+                End With
+            Next p
+        End With
+
+        ' Add pie chart on slide 4 data collections
+        If i = 3 Then
+            Dim pie As Chart
+            Set pie = pptSlide.Shapes.AddChart2(5, xlPie, 480, 100, 300, 300).Chart
+            With pie.ChartArea.Format.Fill
+                .Visible = msoTrue
+                .ForeColor.RGB = AccentColor
+                .Transparency = 0.2
+            End With
+            With pie.SeriesCollection(1)
+                .Points(1).Format.Fill.ForeColor.RGB = AccentColor
+            End With
+            pie.Refresh
+        End If
+
+        ' Add column chart on slide 7 key metrics
+        If i = 6 Then
+            Dim col As Chart
+            Set col = pptSlide.Shapes.AddChart2(201, xlColumnClustered, 480, 100, 400, 300).Chart
+            With col.SeriesCollection(1).Format.Fill
+                .ForeColor.RGB = AccentColor
+                .Visible = msoTrue
+            End With
+            col.Refresh
+        End If
+    Next i
+
+    ' Save
+    pptPres.Save
+    MsgBox "Slides updated with FR Y-14M content, charts, and professional colors.", vbInformation
+End Sub
