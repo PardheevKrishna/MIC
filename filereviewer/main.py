@@ -1,31 +1,32 @@
 import os
+import time
 import datetime
 import pandas as pd
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-# Requires: pandas, openpyxl, pywin32
+# Requires: pandas, openpyxl, pywin32, tkcalendar, tqdm
 try:
     import win32com.client as win32
 except ImportError:
     win32 = None
 
 from openpyxl import load_workbook
+from tkcalendar import DateEntry
+from tqdm import tqdm
 
 class FileReportApp:
     def __init__(self, master):
         self.master = master
         master.title('Access Folder File Report')
-        master.geometry('520x300')
+        master.geometry('650x450')
         master.resizable(False, False)
 
-        # standard width for entry/combobox
         width_value = 40
-
         style = ttk.Style()
         style.theme_use('clam')
 
-        main = ttk.Frame(master, padding=20)
+        main = ttk.Frame(master, padding=10)
         main.pack(fill='both', expand=True)
 
         # --- Excel selector ---
@@ -42,150 +43,167 @@ class FileReportApp:
         self.person_cb.grid(row=1, column=1, columnspan=2, sticky='w')
         self.person_cb.bind('<<ComboboxSelected>>', self._person_selected)
 
-        # --- Days threshold ---
-        ttk.Label(main, text='Days Threshold:').grid(row=2, column=0, sticky='w')
-        self.days_var = tk.IntVar(value=3)
-        ttk.Spinbox(main, from_=0, to=3650, textvariable=self.days_var, width=5).grid(row=2, column=1, sticky='w')
-
-        # --- Recipient email ---
-        ttk.Label(main, text='Recipient Email:').grid(row=3, column=0, pady=10, sticky='w')
+        # --- Entitlement Owner Email ---
+        ttk.Label(main, text='To (Email):').grid(row=2, column=0, sticky='w')
         self.email_var = tk.StringVar()
-        ttk.Entry(main, textvariable=self.email_var, width=width_value).grid(row=3, column=1, columnspan=2, sticky='w')
+        ttk.Entry(main, textvariable=self.email_var, width=width_value).grid(row=2, column=1, columnspan=2, sticky='w')
 
-        # --- Run button & status ---
+        # --- Delegate Email CC ---
+        ttk.Label(main, text='CC:').grid(row=3, column=0, pady=10, sticky='w')
+        self.cc_var = tk.StringVar()
+        ttk.Entry(main, textvariable=self.cc_var, width=width_value).grid(row=3, column=1, columnspan=2, sticky='w')
+
+        # --- Date selector ---
+        ttk.Label(main, text='Select Start Date:').grid(row=4, column=0, sticky='w')
+        self.date_entry = DateEntry(main, width=12, background='darkblue',
+                                    foreground='white', borderwidth=2,
+                                    year=datetime.datetime.now().year)
+        self.date_entry.grid(row=4, column=1, sticky='w')
+
+        # --- Run button ---
         self.run_btn = ttk.Button(main, text='Generate & Send', command=self._generate_and_send)
-        self.run_btn.grid(row=4, column=1, pady=20)
+        self.run_btn.grid(row=5, column=1, pady=20)
+
+        # --- Progress bar and time label ---
+        self.progress = ttk.Progressbar(main, orient='horizontal', length=500, mode='determinate')
+        self.progress.grid(row=6, column=0, columnspan=3, pady=(10, 0))
+        self.time_var = tk.StringVar(value='Estimated time left: N/A')
+        ttk.Label(main, textvariable=self.time_var).grid(row=7, column=0, columnspan=3, sticky='w')
+
+        # --- Status ---
         self.status = ttk.Label(main, text='', foreground='green',
-                                wraplength=480, justify='left')
-        self.status.grid(row=5, column=0, columnspan=3)
+                                wraplength=600, justify='left')
+        self.status.grid(row=8, column=0, columnspan=3, pady=(10, 0))
 
-        # Storage for email lookup
-        self.email_map = {}
-
-        for child in main.winfo_children():
-            child.grid_configure(padx=5, pady=5)
+        # Storage
+        self.df_access = None
 
     def _browse_excel(self):
         path = filedialog.askopenfilename(filetypes=[('Excel files','*.xlsx *.xls')])
         if not path:
             return
         self.excel_path.set(path)
-
-        # Load headers from 'Access Folder' sheet
         try:
-            df0 = pd.read_excel(path, sheet_name='Access Folder', nrows=0)
-            headers = list(df0.columns)
-            self.person_cb['values'] = headers
-            if headers:
+            df = pd.read_excel(path, sheet_name='Access Folder')
+            self.df_access = df
+            owners = sorted(df['Entitlement Owner'].dropna().unique())
+            self.person_cb['values'] = owners
+            if owners:
                 self.person_cb.current(0)
+                self._person_selected()
         except Exception as e:
-            messagebox.showerror('Error', f'Could not read "Access Folder" sheet headers:\n{e}')
+            messagebox.showerror('Error', f'Could not read "Access Folder" sheet:\n{e}')
+
+    def _person_selected(self, event=None):
+        if self.df_access is None:
             return
-
-        # Load email mappings from 'emails' sheet
-        try:
-            df_emails = pd.read_excel(path, sheet_name='emails')
-            self.email_map = dict(zip(df_emails['TM'], df_emails['Email']))
-            sel = self.person_var.get()
-            if sel in self.email_map:
-                self.email_var.set(self.email_map[sel])
-        except Exception:
-            self.email_map = {}
-
-    def _person_selected(self, event):
-        tm = self.person_var.get()
-        self.email_var.set(self.email_map.get(tm, ''))
+        owner = self.person_var.get()
+        df_person = self.df_access[self.df_access['Entitlement Owner'] == owner]
+        if not df_person.empty:
+            email = df_person['Entitlement Owner Email'].iloc[0]
+            cc = df_person['Delegate Email'].iloc[0] if 'Delegate Email' in df_person else ''
+            self.email_var.set(email)
+            self.cc_var.set(cc)
 
     def _generate_and_send(self):
-        excel_file = self.excel_path.get().strip()
-        person = self.person_var.get().strip()
-        days = self.days_var.get()
-        email = self.email_var.get().strip()
-
-        if not excel_file or not person or not email:
-            messagebox.showerror('Missing Data', 'Please select an Excel file, a person, and enter an email address.')
+        path = self.excel_path.get().strip()
+        owner = self.person_var.get().strip()
+        to_email = self.email_var.get().strip()
+        cc_email = self.cc_var.get().strip()
+        start_date = self.date_entry.get_date()
+        if not path or not owner or not to_email:
+            messagebox.showerror('Missing Data', 'Please select Excel, person, and To email.')
             return
 
-        # Read folder paths from 'Access Folder' sheet
-        try:
-            df_access = pd.read_excel(excel_file, sheet_name='Access Folder')
-            paths = df_access[person].dropna().tolist()
-        except Exception as e:
-            messagebox.showerror('Error', f'Failed to load paths for "{person}" from "Access Folder":\n{e}')
+        df = self.df_access
+        df_person = df[df['Entitlement Owner'] == owner]
+        if df_person.empty:
+            messagebox.showerror('Error', f'No entries for {owner}')
             return
 
-        now = datetime.datetime.now()
-        cutoff = now - datetime.timedelta(days=days)
+        # Gather base paths
+        base_paths = df_person['Full Path'].dropna().tolist()
+        # Build file list
+        file_list = []
+        for base in base_paths:
+            if os.path.isdir(base):
+                for root, dirs, files in os.walk(base):
+                    for f in files:
+                        file_list.append(os.path.join(root, f))
+
+        total = len(file_list)
+        if total == 0:
+            messagebox.showinfo('No files', 'No files found under given paths.')
+            return
+
         rows = []
+        now = datetime.datetime.now()
+        cutoff = datetime.datetime.combine(start_date, datetime.time.min)
+        self.progress['maximum'] = total
+        start_time = time.time()
 
-        for base in paths:
-            if not os.path.isdir(base):
-                continue
-            for root, dirs, files in os.walk(base):
-                for fname in files:
-                    fp = os.path.join(root, fname)
-                    cts = datetime.datetime.fromtimestamp(os.path.getctime(fp))
-                    if cts <= cutoff:
-                        mts = datetime.datetime.fromtimestamp(os.path.getmtime(fp))
-                        age = (now - cts).days
-                        rows.append({
-                            'Person':        person,
-                            'File Name':     fname,
-                            'File Path':     fp,
-                            'Created':       cts.strftime('%Y-%m-%d %H:%M:%S'),
-                            'Last Modified': mts.strftime('%Y-%m-%d %H:%M:%S'),
-                            'Days Ago':      age
-                        })
+        # Process with terminal and GUI progress
+        for idx, fp in enumerate(tqdm(file_list, desc='Processing files'), start=1):
+            cts = datetime.datetime.fromtimestamp(os.path.getctime(fp))
+            if cutoff <= cts <= now:
+                mts = datetime.datetime.fromtimestamp(os.path.getmtime(fp))
+                ats = datetime.datetime.fromtimestamp(os.path.getatime(fp))
+                rows.append({
+                    'Person':         owner,
+                    'File Name':      os.path.basename(fp),
+                    'File Path':      fp,
+                    'Created':        cts.strftime('%Y-%m-%d %H:%M:%S'),
+                    'Last Modified':  mts.strftime('%Y-%m-%d %H:%M:%S'),
+                    'Last Accessed':  ats.strftime('%Y-%m-%d %H:%M:%S'),
+                })
+            # Update GUI progress
+            elapsed = time.time() - start_time
+            avg = elapsed / idx
+            rem = avg * (total - idx)
+            self.time_var.set(f"Estimated time left: {int(rem)}s")
+            self.progress['value'] = idx
+            self.master.update_idletasks()
 
-        if not rows:
-            messagebox.showinfo('No Matches', f'No files older than {days} days were found.')
-            return
-
+        # Build output DataFrame
         out_df = pd.DataFrame(rows)
         stamp = now.strftime('%Y%m%d_%H%M%S')
-        safe = person.replace(' ', '_')
+        safe = owner.replace(' ', '_')
         report_fn = f"{safe}_report_{stamp}.xlsx"
 
-        # Write to Excel with auto-fit columns
+        # Write & auto-fit columns
         out_df.to_excel(report_fn, index=False, engine='openpyxl')
         wb = load_workbook(report_fn)
         ws = wb.active
         for col in ws.columns:
-            max_length = 0
-            col_letter = col[0].column_letter
-            for cell in col:
-                val = cell.value
-                if val is None:
-                    continue
-                length = len(str(val))
-                if length > max_length:
-                    max_length = length
-            ws.column_dimensions[col_letter].width = max_length + 2
+            max_length = max((len(str(cell.value)) for cell in col if cell.value), default=0)
+            ws.column_dimensions[col[0].column_letter].width = max_length + 2
         wb.save(report_fn)
 
-        # Send email via Outlook
+        # Send Outlook email
         status_msg = f"Report saved as {report_fn}"
         if win32:
             try:
                 outlook = win32.Dispatch('Outlook.Application')
-                mail    = outlook.CreateItem(0)
-                mail.To       = email
-                mail.Subject  = f"File Report for {person}"
-                html_tbl      = out_df.to_html(index=False)
+                mail = outlook.CreateItem(0)
+                mail.To = to_email
+                mail.CC = cc_email
+                mail.Subject = f"File Report for {owner}"
+                html = out_df.to_html(index=False)
                 mail.HTMLBody = (
-                    f"<p>Dear {person},</p>"
-                    f"<p>Please find below the list of files older than {days} days:</p>"
-                    f"{html_tbl}"
-                    "<p>Best regards,</p>"
+                    f"<p>Dear {owner},</p>"
+                    f"<p>Please find files from {start_date} to now:</p>"
+                    f"{html}"
+                    "<p>Regards,</p>"
                 )
                 mail.Attachments.Add(os.path.abspath(report_fn))
                 mail.Send()
-                status_msg += f"\nand emailed to {email}"
+                status_msg += f"\nand emailed to {to_email}"
+                if cc_email:
+                    status_msg += f" (CC: {cc_email})"
             except Exception as e:
-                messagebox.showerror('Email Error', f'Failed to send email:\n{e}')
+                messagebox.showerror('Email Error', str(e))
         else:
-            messagebox.showwarning('Outlook Unavailable',
-                                   'pywin32 not installed – report saved but email not sent.')
+            messagebox.showwarning('Outlook Unavailable', 'pywin32 not installed: report saved only.')
 
         self.status.config(text=status_msg)
 
