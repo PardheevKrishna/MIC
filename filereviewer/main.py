@@ -19,7 +19,7 @@ class FileReportApp:
         master.geometry('520x300')
         master.resizable(False, False)
 
-        # define a standard width for entry/combobox
+        # standard width for entry/combobox
         width_value = 40
 
         style = ttk.Style()
@@ -55,7 +55,6 @@ class FileReportApp:
         # --- Run button & status ---
         self.run_btn = ttk.Button(main, text='Generate & Send', command=self._generate_and_send)
         self.run_btn.grid(row=4, column=1, pady=20)
-        # wraplength ensures long text wraps to next line
         self.status = ttk.Label(main, text='', foreground='green',
                                 wraplength=480, justify='left')
         self.status.grid(row=5, column=0, columnspan=3)
@@ -72,34 +71,30 @@ class FileReportApp:
             return
         self.excel_path.set(path)
 
+        # Load headers from 'Access Folder' sheet
         try:
-            # load headers for the first sheet
-            df0 = pd.read_excel(path, nrows=0)
+            df0 = pd.read_excel(path, sheet_name='Access Folder', nrows=0)
             headers = list(df0.columns)
             self.person_cb['values'] = headers
             if headers:
                 self.person_cb.current(0)
         except Exception as e:
-            messagebox.showerror('Error', f'Could not read Excel headers:\n{e}')
+            messagebox.showerror('Error', f'Could not read "Access Folder" sheet headers:\n{e}')
             return
 
+        # Load email mappings from 'emails' sheet
         try:
-            # load the emails sheet
             df_emails = pd.read_excel(path, sheet_name='emails')
-            # expect columns 'TM' and 'Email'
             self.email_map = dict(zip(df_emails['TM'], df_emails['Email']))
-            # populate the email field for the initial selection
             sel = self.person_var.get()
             if sel in self.email_map:
                 self.email_var.set(self.email_map[sel])
         except Exception:
-            # if no emails sheet or bad format, just skip
             self.email_map = {}
 
     def _person_selected(self, event):
         tm = self.person_var.get()
-        email = self.email_map.get(tm, '')
-        self.email_var.set(email)
+        self.email_var.set(self.email_map.get(tm, ''))
 
     def _generate_and_send(self):
         excel_file = self.excel_path.get().strip()
@@ -111,12 +106,12 @@ class FileReportApp:
             messagebox.showerror('Missing Data', 'Please select an Excel file, a person, and enter an email address.')
             return
 
-        # read folder paths for that person
+        # Read folder paths from 'Access Folder' sheet
         try:
-            df_access = pd.read_excel(excel_file, header=0)
+            df_access = pd.read_excel(excel_file, sheet_name='Access Folder')
             paths = df_access[person].dropna().tolist()
         except Exception as e:
-            messagebox.showerror('Error', f'Failed to load paths for "{person}":\n{e}')
+            messagebox.showerror('Error', f'Failed to load paths for "{person}" from "Access Folder":\n{e}')
             return
 
         now = datetime.datetime.now()
@@ -151,7 +146,7 @@ class FileReportApp:
         safe = person.replace(' ', '_')
         report_fn = f"{safe}_report_{stamp}.xlsx"
 
-        # write to Excel then auto-adjust column widths
+        # Write to Excel with auto-fit columns
         out_df.to_excel(report_fn, index=False, engine='openpyxl')
         wb = load_workbook(report_fn)
         ws = wb.active
@@ -168,7 +163,7 @@ class FileReportApp:
             ws.column_dimensions[col_letter].width = max_length + 2
         wb.save(report_fn)
 
-        # send email via Outlook
+        # Send email via Outlook
         status_msg = f"Report saved as {report_fn}"
         if win32:
             try:
@@ -192,7 +187,6 @@ class FileReportApp:
             messagebox.showwarning('Outlook Unavailable',
                                    'pywin32 not installed – report saved but email not sent.')
 
-        # update status label (will wrap if too long)
         self.status.config(text=status_msg)
 
 if __name__ == '__main__':
