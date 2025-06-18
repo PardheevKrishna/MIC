@@ -42,9 +42,16 @@ class FileReportApp:
         # Person dropdown
         ttk.Label(main, text='Select Person:').grid(row=1, column=0, pady=10, sticky='w')
         self.person_var = tk.StringVar()
-        self.person_cb = ttk.Combobox(main, textvariable=self.person_var, state='readonly', width=width_value)
+        self.person_cb = ttk.Combobox(
+            main,
+            textvariable=self.person_var,
+            state='readonly',
+            width=width_value
+        )
         self.person_cb.grid(row=1, column=1, columnspan=2, sticky='w')
+        # update on selection and on any variable change
         self.person_cb.bind('<<ComboboxSelected>>', self._person_selected)
+        self.person_var.trace_add('write', lambda *args: self._person_selected())
 
         # To and CC
         ttk.Label(main, text='To (Email):').grid(row=2, column=0, sticky='w')
@@ -56,9 +63,14 @@ class FileReportApp:
 
         # Date selector
         ttk.Label(main, text='Select Start Date:').grid(row=4, column=0, sticky='w')
-        self.date_entry = DateEntry(main, width=12, background='darkblue',
-                                    foreground='white', borderwidth=2,
-                                    year=datetime.datetime.now().year)
+        self.date_entry = DateEntry(
+            main,
+            width=12,
+            background='darkblue',
+            foreground='white',
+            borderwidth=2,
+            year=datetime.datetime.now().year
+        )
         self.date_entry.grid(row=4, column=1, sticky='w')
 
         # Run button
@@ -72,10 +84,16 @@ class FileReportApp:
         ttk.Label(main, textvariable=self.time_var).grid(row=7, column=0, columnspan=3, sticky='w')
 
         # Status message
-        self.status = ttk.Label(main, text='', foreground='green', wraplength=600, justify='left')
+        self.status = ttk.Label(
+            main,
+            text='',
+            foreground='green',
+            wraplength=600,
+            justify='left'
+        )
         self.status.grid(row=8, column=0, columnspan=3, pady=(10,0))
 
-        # data holders
+        # DataFrame holder
         self.df_access = None
 
         # start the queue-poll loop
@@ -83,9 +101,9 @@ class FileReportApp:
 
     def _browse_excel(self):
         path = filedialog.askopenfilename(filetypes=[('Excel files','*.xlsx *.xls')])
-        if not path: return
+        if not path:
+            return
         self.excel_path.set(path)
-
         try:
             df = pd.read_excel(path, sheet_name='Access Folder')
         except Exception as e:
@@ -100,12 +118,17 @@ class FileReportApp:
             self._person_selected()
 
     def _person_selected(self, event=None):
-        if self.df_access is None: return
+        if self.df_access is None:
+            return
         owner = self.person_var.get()
-        dfp = self.df_access[self.df_access['Entitlement Owner']==owner]
-        if not dfp.empty:
-            self.email_var.set(dfp['Entitlement Owner Email'].iloc[0] or '')
-            self.cc_var.set(dfp.get('Delegate Email', pd.Series()).iloc[0] or '')
+        dfp = self.df_access[self.df_access['Entitlement Owner'] == owner]
+        if dfp.empty:
+            return
+        row = dfp.iloc[0]
+        to_email = row.get('Entitlement Owner Email', '') or ''
+        cc_email = row.get('Delegate Email', '') or ''
+        self.email_var.set(to_email)
+        self.cc_var.set(cc_email)
 
     def _on_run(self):
         # disable UI
@@ -113,29 +136,27 @@ class FileReportApp:
         self.status.config(text='')
         self.progress['value'] = 0
         self.time_var.set('Estimated time left: N/A')
-
-        # fire background thread
+        # start background processing
         threading.Thread(target=self._process_files, daemon=True).start()
 
     def _process_files(self):
-        """Runs in background thread: two-pass walk, build report, send email."""
         path = self.excel_path.get().strip()
         owner = self.person_var.get().strip()
         to_email = self.email_var.get().strip()
         cc_email = self.cc_var.get().strip()
         start_date = self.date_entry.get_date()
 
-        dfp = self.df_access[self.df_access['Entitlement Owner']==owner]
+        dfp = self.df_access[self.df_access['Entitlement Owner'] == owner]
         base_paths = dfp['Full Path'].dropna().tolist()
 
-        # 1) count total files
+        # first pass: count total files
         total = 0
         for base in base_paths:
             for _, _, files in os.walk(base or ''):
                 total += len(files)
         self.queue.put(('init', total))
 
-        # 2) process each file
+        # second pass: process files
         now = datetime.datetime.now()
         cutoff = datetime.datetime.combine(start_date, datetime.time.min)
         start_time = time.time()
@@ -164,7 +185,7 @@ class FileReportApp:
                             'Days Ago':      days_ago
                         })
                     except Exception:
-                        # skip missing/permission/out-of-range
+                        # skip errors or out-of-range
                         pass
 
                     elapsed = time.time() - start_time
@@ -172,7 +193,7 @@ class FileReportApp:
                     rem  = avg * (total - idx)
                     self.queue.put(('progress', idx, rem))
 
-        # 3) build DataFrame & save
+        # build and save report
         out_df = pd.DataFrame(rows)
         stamp = now.strftime('%Y%m%d_%H%M%S')
         safe  = owner.replace(' ', '_')
@@ -186,7 +207,7 @@ class FileReportApp:
             ws.column_dimensions[col[0].column_letter].width = max_len + 2
         wb.save(report_fn)
 
-        # 4) send Outlook email
+        # send email
         status_msg = f"Report saved as {report_fn}"
         if win32:
             try:
@@ -209,11 +230,9 @@ class FileReportApp:
             except Exception as e:
                 status_msg += f"\n(Email failed: {e})"
 
-        # signal done
         self.queue.put(('done', status_msg))
 
     def _process_queue(self):
-        """Poll for progress updates and apply them on the main thread."""
         try:
             while True:
                 msg = self.queue.get_nowait()
