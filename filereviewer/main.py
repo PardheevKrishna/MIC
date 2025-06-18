@@ -62,7 +62,7 @@ class FileReportApp:
         ttk.Entry(main, textvariable=self.cc_var, width=width_value).grid(row=3, column=1, columnspan=2, sticky='w')
 
         # Date selector
-        ttk.Label(main, text='Select Start Date:').grid(row=4, column=0, sticky='w')
+        ttk.Label(main, text='Select Cutoff Date:').grid(row=4, column=0, sticky='w')
         self.date_entry = DateEntry(
             main,
             width=12,
@@ -144,7 +144,9 @@ class FileReportApp:
         owner = self.person_var.get().strip()
         to_email = self.email_var.get().strip()
         cc_email = self.cc_var.get().strip()
-        start_date = self.date_entry.get_date()
+        cutoff_date = self.date_entry.get_date()
+        # make cutoff at end of that day
+        cutoff_dt = datetime.datetime.combine(cutoff_date, datetime.time.max)
 
         dfp = self.df_access[self.df_access['Entitlement Owner'] == owner]
         base_paths = dfp['Full Path'].dropna().tolist()
@@ -158,7 +160,6 @@ class FileReportApp:
 
         # second pass: process files
         now = datetime.datetime.now()
-        cutoff = datetime.datetime.combine(start_date, datetime.time.min)
         start_time = time.time()
         rows = []
         idx = 0
@@ -170,7 +171,8 @@ class FileReportApp:
                     fp = os.path.join(root, fname)
                     try:
                         cts = datetime.datetime.fromtimestamp(os.path.getctime(fp))
-                        if not (cutoff <= cts <= now):
+                        # include if created **on or before** cutoff_dt
+                        if cts > cutoff_dt:
                             raise ValueError()
                         mts = datetime.datetime.fromtimestamp(os.path.getmtime(fp))
                         ats = datetime.datetime.fromtimestamp(os.path.getatime(fp))
@@ -185,7 +187,7 @@ class FileReportApp:
                             'Days Ago':      days_ago
                         })
                     except Exception:
-                        # skip errors or out-of-range
+                        # skip errors or files created after cutoff
                         pass
 
                     elapsed = time.time() - start_time
@@ -218,7 +220,7 @@ class FileReportApp:
                 m.Subject = f"File Report for {owner}"
                 m.HTMLBody = (
                     f"<p>Dear {owner},</p>"
-                    f"<p>Files from {start_date} to now:</p>"
+                    f"<p>Files created on or before {cutoff_date}:</p>"
                     f"{out_df.to_html(index=False)}"
                     "<p>Regards,</p>"
                 )
