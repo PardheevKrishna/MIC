@@ -19,7 +19,7 @@ class FileReportApp:
     def __init__(self, master):
         self.master = master
         master.title('Access Folder File Report')
-        master.geometry('650x450')
+        master.geometry('650x480')
         master.resizable(False, False)
 
         width_value = 40
@@ -75,7 +75,6 @@ class FileReportApp:
                                 wraplength=600, justify='left')
         self.status.grid(row=8, column=0, columnspan=3, pady=(10, 0))
 
-        # Storage
         self.df_access = None
 
     def _browse_excel(self):
@@ -100,10 +99,8 @@ class FileReportApp:
         owner = self.person_var.get()
         df_person = self.df_access[self.df_access['Entitlement Owner'] == owner]
         if not df_person.empty:
-            email = df_person['Entitlement Owner Email'].iloc[0]
-            cc = df_person['Delegate Email'].iloc[0] if 'Delegate Email' in df_person else ''
-            self.email_var.set(email)
-            self.cc_var.set(cc)
+            self.email_var.set(df_person['Entitlement Owner Email'].iloc[0] or '')
+            self.cc_var.set(df_person.get('Delegate Email', pd.Series()).iloc[0] or '')
 
     def _generate_and_send(self):
         path = self.excel_path.get().strip()
@@ -117,37 +114,36 @@ class FileReportApp:
 
         df = self.df_access
         df_person = df[df['Entitlement Owner'] == owner]
-        if df_person.empty:
-            messagebox.showerror('Error', f'No entries for {owner}')
-            return
-
-        # Gather base paths
         base_paths = df_person['Full Path'].dropna().tolist()
-        # Build file list
+
+        # collect all file paths
         file_list = []
         for base in base_paths:
-            if os.path.isdir(base):
-                for root, dirs, files in os.walk(base):
-                    for f in files:
-                        file_list.append(os.path.join(root, f))
+            for root, dirs, files in os.walk(base or ''):
+                for f in files:
+                    file_list.append(os.path.join(root, f))
 
         total = len(file_list)
         if total == 0:
             messagebox.showinfo('No files', 'No files found under given paths.')
             return
 
-        rows = []
         now = datetime.datetime.now()
         cutoff = datetime.datetime.combine(start_date, datetime.time.min)
+        rows = []
+
         self.progress['maximum'] = total
         start_time = time.time()
 
-        # Process with terminal and GUI progress
         for idx, fp in enumerate(tqdm(file_list, desc='Processing files'), start=1):
-            cts = datetime.datetime.fromtimestamp(os.path.getctime(fp))
-            if cutoff <= cts <= now:
+            try:
+                cts = datetime.datetime.fromtimestamp(os.path.getctime(fp))
+                # filter by date range
+                if not (cutoff <= cts <= now):
+                    raise ValueError('out of range')
                 mts = datetime.datetime.fromtimestamp(os.path.getmtime(fp))
                 ats = datetime.datetime.fromtimestamp(os.path.getatime(fp))
+                days_ago = (now - cts).days
                 rows.append({
                     'Person':         owner,
                     'File Name':      os.path.basename(fp),
@@ -155,8 +151,13 @@ class FileReportApp:
                     'Created':        cts.strftime('%Y-%m-%d %H:%M:%S'),
                     'Last Modified':  mts.strftime('%Y-%m-%d %H:%M:%S'),
                     'Last Accessed':  ats.strftime('%Y-%m-%d %H:%M:%S'),
+                    'Days Ago':       days_ago
                 })
-            # Update GUI progress
+            except Exception:
+                # skip files with errors or out of date range
+                pass
+
+            # update progress & time estimate
             elapsed = time.time() - start_time
             avg = elapsed / idx
             rem = avg * (total - idx)
@@ -164,13 +165,16 @@ class FileReportApp:
             self.progress['value'] = idx
             self.master.update_idletasks()
 
-        # Build output DataFrame
+        if not rows:
+            messagebox.showinfo('No Matches', 'No files matched the date criteria.')
+            return
+
+        # build and save report
         out_df = pd.DataFrame(rows)
         stamp = now.strftime('%Y%m%d_%H%M%S')
         safe = owner.replace(' ', '_')
         report_fn = f"{safe}_report_{stamp}.xlsx"
 
-        # Write & auto-fit columns
         out_df.to_excel(report_fn, index=False, engine='openpyxl')
         wb = load_workbook(report_fn)
         ws = wb.active
@@ -179,7 +183,7 @@ class FileReportApp:
             ws.column_dimensions[col[0].column_letter].width = max_length + 2
         wb.save(report_fn)
 
-        # Send Outlook email
+        # send email
         status_msg = f"Report saved as {report_fn}"
         if win32:
             try:
@@ -203,9 +207,11 @@ class FileReportApp:
             except Exception as e:
                 messagebox.showerror('Email Error', str(e))
         else:
-            messagebox.showwarning('Outlook Unavailable', 'pywin32 not installed: report saved only.')
+            messagebox.showwarning('Outlook Unavailable',
+                                   'pywin32 not installed: report saved only.')
 
         self.status.config(text=status_msg)
+
 
 if __name__ == '__main__':
     root = tk.Tk()
