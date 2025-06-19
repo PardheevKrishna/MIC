@@ -1,0 +1,40 @@
+=COUNTIFS(
+  CREFedits!E8:E35000, 
+  "Syntax"
+)
+
+=SUM(
+  COUNTIFS(
+    CREFedits!D8:D35000, 
+      {"105","CC88","276","313","81","73","CC39","309","23","13","70","260","21","279","26","242","235","42"},
+    CREFedits!E8:E35000, "<>Syntax"
+  )
+)
+
+=SUMPRODUCT(
+  --(ISNUMBER(SEARCH("Data Under Review", CREFedits!R8:R35000))),
+  --(CREFedits!E8:E35000 <> "Syntax"),
+  --(ISNA(
+      MATCH(
+        CREFedits!D8:D35000,
+        {"105","CC88","276","313","81","73","CC39","309","23","13","70","260","21","279","26","242","235","42"},
+        0
+      )
+    )
+  )
+)
+
+=SUMPRODUCT(
+  --(CREFedits!E8:E35000 = "Validity"),
+  --(CREFedits!N8:N35000 = ""),
+  --(CREFedits!E8:E35000 <> "Syntax"),
+  --(ISNA(
+      MATCH(
+        CREFedits!D8:D35000,
+        {"105","CC88","276","313","81","73","CC39","309","23","13","70","260","21","279","26","242","235","42"},
+        0
+      )
+    )
+  ),
+  --(ISERROR(SEARCH("Data Under Review", CREFedits!R8:R35000)))
+)
