@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class FileReportApp:
-    UPDATE_INTERVAL = 5000  # how often to push progress updates
+    UPDATE_INTERVAL = 5000  # update GUI every N files
 
     def __init__(self, master):
         logger.info("Starting GUI")
@@ -39,7 +39,6 @@ class FileReportApp:
         self.queue = queue.Queue()
         self.df_access = None
 
-        # --- Layout ---
         width = 40
         style = ttk.Style(master)
         style.theme_use('clam')
@@ -56,9 +55,8 @@ class FileReportApp:
         # Person selector
         ttk.Label(frm, text='Select Person:').grid(row=1, column=0, pady=10, sticky='w')
         self.person_var = tk.StringVar()
-        self.person_cb = ttk.Combobox(
-            frm, textvariable=self.person_var, state='readonly', width=width
-        )
+        self.person_cb = ttk.Combobox(frm, textvariable=self.person_var,
+                                      state='readonly', width=width)
         self.person_cb.grid(row=1, column=1, columnspan=2, sticky='w')
         self.person_cb.bind('<<ComboboxSelected>>', self._person_selected)
         self.person_var.trace_add('write', lambda *a: self._person_selected())
@@ -86,10 +84,10 @@ class FileReportApp:
         # Progress spinner & ETA
         self.progress = ttk.Progressbar(frm, mode='indeterminate', length=500)
         self.progress.grid(row=6, column=0, columnspan=3, pady=(10, 0))
-        self.time_var = tk.StringVar(value='Processed: 0 files')
+        self.time_var = tk.StringVar(value='Processed: 0 files | Elapsed: 00:00:00')
         ttk.Label(frm, textvariable=self.time_var).grid(row=7, column=0, columnspan=3, sticky='w')
 
-        # Status
+        # Status label
         self.status = ttk.Label(frm, text='', foreground='green', wraplength=600, justify='left')
         self.status.grid(row=8, column=0, columnspan=3, pady=(10, 0))
 
@@ -111,7 +109,6 @@ class FileReportApp:
         self.df_access = df
         owners = sorted(df['Entitlement Owner'].dropna().unique())
         logger.info("Owners found: %s", owners)
-        # directly set combobox values
         self.person_cb['values'] = owners
         if owners:
             self.person_var.set(owners[0])
@@ -134,8 +131,8 @@ class FileReportApp:
 
     def _on_run(self):
         self.run_btn.config(state='disabled')
-        self.progress.start(10)  # 10ms step
         self.status.config(text='')
+        self.progress.start(10)  # 10ms step
         logger.info("Starting scan thread")
         threading.Thread(target=self._scan_and_report, daemon=True).start()
 
@@ -176,23 +173,28 @@ class FileReportApp:
                         continue
                     days = int((now_ts - st.st_ctime)//86400)
                     rows.append({
-                        'Person': owner,
-                        'File Name': ent.name,
-                        'File Path': ent.path,
-                        'Created': datetime.datetime.fromtimestamp(st.st_ctime)
-                                   .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Person':        owner,
+                        'File Name':     ent.name,
+                        'File Path':     ent.path,
+                        'Created':       datetime.datetime.fromtimestamp(st.st_ctime)
+                                           .strftime('%Y-%m-%d %H:%M:%S'),
                         'Last Modified': datetime.datetime.fromtimestamp(st.st_mtime)
-                                         .strftime('%Y-%m-%d %H:%M:%S'),
+                                           .strftime('%Y-%m-%d %H:%M:%S'),
                         'Last Accessed': datetime.datetime.fromtimestamp(st.st_atime)
-                                        .strftime('%Y-%m-%d %H:%M:%S'),
-                        'Days Ago': days
+                                           .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Days Ago':      days
                     })
                 except Exception as e:
                     logger.error("Error on %s: %s", ent.path, e)
 
                 if idx % self.UPDATE_INTERVAL == 0:
                     elapsed = time.time() - start
-                    self.queue.put(('update', idx, int(elapsed)))
+                    elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
+                    self.queue.put(('update', idx, elapsed_str))
+
+        # final elapsed
+        total_elapsed = time.time() - start
+        total_elapsed_str = time.strftime('%H:%M:%S', time.gmtime(total_elapsed))
 
         # Save Excel
         df_out = pd.DataFrame(rows)
@@ -231,21 +233,24 @@ class FileReportApp:
                 logger.exception("Email failure")
                 status += f" (email failed: {e})"
 
-        self.queue.put(('done', idx, status))
+        # signal done, include total elapsed
+        self.queue.put(('done', idx, status, total_elapsed_str))
         logger.info("Scan complete, %d files matched", len(rows))
 
     def _process_queue(self):
         try:
             while True:
-                typ, a, b = self.queue.get_nowait()
+                msg = self.queue.get_nowait()
+                typ = msg[0]
                 if typ == 'update':
-                    self.time_var.set(f"Processed: {a} files (~{b}s elapsed)")
+                    _, count, elapsed = msg
+                    self.time_var.set(f"Processed: {count} files | Elapsed: {elapsed}")
                 elif typ == 'done':
-                    _, count, msg = typ, a, b
+                    _, count, status, elapsed = msg
                     self.progress.stop()
-                    self.status.config(text=msg)
+                    self.status.config(text=status)
                     self.run_btn.config(state='normal')
-                    self.time_var.set(f"Total processed: {count}")
+                    self.time_var.set(f"Total processed: {count} | Elapsed: {elapsed}")
         except queue.Empty:
             pass
         finally:
