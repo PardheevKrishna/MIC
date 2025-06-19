@@ -56,9 +56,11 @@ class FileReportApp:
         # Person selector
         ttk.Label(frm, text='Select Person:').grid(row=1, column=0, pady=10, sticky='w')
         self.person_var = tk.StringVar()
-        cb = ttk.Combobox(frm, textvariable=self.person_var, state='readonly', width=width)
-        cb.grid(row=1, column=1, columnspan=2, sticky='w')
-        cb.bind('<<ComboboxSelected>>', self._person_selected)
+        self.person_cb = ttk.Combobox(
+            frm, textvariable=self.person_var, state='readonly', width=width
+        )
+        self.person_cb.grid(row=1, column=1, columnspan=2, sticky='w')
+        self.person_cb.bind('<<ComboboxSelected>>', self._person_selected)
         self.person_var.trace_add('write', lambda *a: self._person_selected())
 
         # To / CC
@@ -103,13 +105,14 @@ class FileReportApp:
         try:
             df = pd.read_excel(path, sheet_name='Access Folder')
         except Exception as e:
-            logger.exception("Failed to read sheet")
+            logger.exception("Failed to read 'Access Folder' sheet")
             return messagebox.showerror('Error', f'Could not read "Access Folder":\n{e}')
 
         self.df_access = df
         owners = sorted(df['Entitlement Owner'].dropna().unique())
-        logger.info("Owners: %s", owners)
-        self.master.nametowidget(self.person_var._name).config(values=owners)
+        logger.info("Owners found: %s", owners)
+        # directly set combobox values
+        self.person_cb['values'] = owners
         if owners:
             self.person_var.set(owners[0])
             self._person_selected()
@@ -119,13 +122,13 @@ class FileReportApp:
             return
         owner = self.person_var.get()
         logger.info("Owner: %s", owner)
-        dfp = self.df_access[self.df_access['Entitlement Owner']==owner]
+        dfp = self.df_access[self.df_access['Entitlement Owner'] == owner]
         if dfp.empty:
             return
         row = dfp.iloc[0]
-        to = row.get('Entitlement Owner Email','') or ''
-        cc = row.get('Delegate Email','') or ''
-        logger.debug("To=%s, CC=%s", to, cc)
+        to = row.get('Entitlement Owner Email', '') or ''
+        cc = row.get('Delegate Email', '') or ''
+        logger.debug("Setting To=%s, CC=%s", to, cc)
         self.email_var.set(to)
         self.cc_var.set(cc)
 
@@ -145,7 +148,7 @@ class FileReportApp:
         cutoff_ts = datetime.datetime.combine(cutoff_d, datetime.time.max).timestamp()
         now_ts    = time.time()
 
-        dfp = self.df_access[self.df_access['Entitlement Owner']==owner]
+        dfp = self.df_access[self.df_access['Entitlement Owner'] == owner]
         bases = dfp['Full Path'].dropna().tolist()
         logger.info("Paths to scan: %s", bases)
 
@@ -154,7 +157,6 @@ class FileReportApp:
         start = time.time()
 
         def scan(p):
-            """Recursively yield DirEntry objects."""
             try:
                 with os.scandir(p) as it:
                     for ent in it:
@@ -188,25 +190,21 @@ class FileReportApp:
                 except Exception as e:
                     logger.error("Error on %s: %s", ent.path, e)
 
-                # update every UPDATE_INTERVAL files
                 if idx % self.UPDATE_INTERVAL == 0:
                     elapsed = time.time() - start
-                    avg = elapsed/idx
-                    rem = avg*(idx)  # can't know total → show processed count
-                    self.queue.put(('update', idx, rem))
+                    self.queue.put(('update', idx, int(elapsed)))
 
         # Save Excel
         df_out = pd.DataFrame(rows)
         stamp  = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        name   = owner.replace(' ','_')
-        fn     = f"{name}_report_{stamp}.xlsx"
+        fn     = f"{owner.replace(' ','_')}_report_{stamp}.xlsx"
         logger.info("Writing report %s (%d rows)", fn, len(rows))
         df_out.to_excel(fn, index=False, engine='openpyxl')
         wb = load_workbook(fn)
         ws = wb.active
         for col in ws.columns:
             ml = max((len(str(c.value)) for c in col if c.value), default=0)
-            ws.column_dimensions[col[0].column_letter].width = ml+2
+            ws.column_dimensions[col[0].column_letter].width = ml + 2
         wb.save(fn)
 
         # Send Email
@@ -233,7 +231,6 @@ class FileReportApp:
                 logger.exception("Email failure")
                 status += f" (email failed: {e})"
 
-        # done
         self.queue.put(('done', idx, status))
         logger.info("Scan complete, %d files matched", len(rows))
 
@@ -242,7 +239,7 @@ class FileReportApp:
             while True:
                 typ, a, b = self.queue.get_nowait()
                 if typ == 'update':
-                    self.time_var.set(f"Processed: {a} files (≈{int(b)}s elapsed)")
+                    self.time_var.set(f"Processed: {a} files (~{b}s elapsed)")
                 elif typ == 'done':
                     _, count, msg = typ, a, b
                     self.progress.stop()
