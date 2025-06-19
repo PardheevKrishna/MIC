@@ -25,10 +25,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 class FileReportApp:
-    UPDATE_INTERVAL = 5000  # update GUI every N files
-
     def __init__(self, master):
         logger.info("Starting GUI")
         self.master = master
@@ -87,7 +84,7 @@ class FileReportApp:
         self.time_var = tk.StringVar(value='Processed: 0 files | Elapsed: 00:00:00')
         ttk.Label(frm, textvariable=self.time_var).grid(row=7, column=0, columnspan=3, sticky='w')
 
-        # Status label
+        # Status
         self.status = ttk.Label(frm, text='', foreground='green', wraplength=600, justify='left')
         self.status.grid(row=8, column=0, columnspan=3, pady=(10, 0))
 
@@ -171,7 +168,7 @@ class FileReportApp:
                     st = ent.stat(follow_symlinks=False)
                     if st.st_ctime > cutoff_ts:
                         continue
-                    days = int((now_ts - st.st_ctime)//86400)
+                    days = int((now_ts - st.st_ctime) // 86400)
                     rows.append({
                         'Person':        owner,
                         'File Name':     ent.name,
@@ -187,10 +184,10 @@ class FileReportApp:
                 except Exception as e:
                     logger.error("Error on %s: %s", ent.path, e)
 
-                if idx % self.UPDATE_INTERVAL == 0:
-                    elapsed = time.time() - start
-                    elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
-                    self.queue.put(('update', idx, elapsed_str))
+                # real-time update for each file
+                elapsed = time.time() - start
+                elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
+                self.queue.put(('update', idx, elapsed_str))
 
         # final elapsed
         total_elapsed = time.time() - start
