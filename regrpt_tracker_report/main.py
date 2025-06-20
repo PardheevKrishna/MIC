@@ -36,7 +36,7 @@ EMAIL_CC      = ["cc1@example.com"]
 EMAIL_SUBJECT = "CRIT Automated Summary"
 # ─── END CONFIG ───────────────────────────────────────────────────────────────
 
-# set up console logging
+# ─── logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -58,20 +58,20 @@ def send_via_outlook(to, cc, subject, html_body, attachments):
 
 def worker(start, end, q):
     try:
-        # 1) build flat list of (sheet, list_name, emp_list)
+        # build flat list of tasks
         tasks = [
             (sheet, list_name, emp_list)
             for sheet, lists in SHEET_MAP.items()
             for list_name, emp_list in lists
         ]
         q.put(('init', len(tasks)))
-        logger.info(f"{len(tasks)} tasks to run.")
+        logger.info(f"{len(tasks)} tasks queued.")
 
         now       = datetime.datetime.now()
         ts        = now.strftime("%Y%m%d_%H%M%S")
         downloads = os.path.join(os.path.expanduser("~"), "Downloads")
 
-        # 2) preload all sheets into pandas DataFrames
+        # preload all sheets into pandas
         logger.info("Loading sheets into pandas...")
         sheet_dfs = {
             sheet: pd.read_excel(
@@ -82,9 +82,9 @@ def worker(start, end, q):
         }
         logger.info("All sheets loaded.")
 
-        attachments = []
-        missing_map = {}
-        done = 0
+        attachments   = []
+        missing_map   = {}
+        done          = 0
 
         for sheet, list_name, emp_list in tasks:
             desc = f"{sheet} → {list_name}"
@@ -98,7 +98,7 @@ def worker(start, end, q):
             total_rows = len(df)
             q.put(('sheet_info', total_rows))
 
-            # 3) filter in-memory
+            # filter rows in range
             mask = (
                 (df[date_col].dt.date >= start) &
                 (df[date_col].dt.date <= end) &
@@ -107,23 +107,38 @@ def worker(start, end, q):
             df_f = df.loc[mask].copy()
             q.put(('filtered_info', len(df_f)))
 
-            # 4) identify missing employees
+            # find missing employees
             present = set(df_f[emp_col].dropna())
             missing = sorted(set(emp_list) - present)
-            missing_map[list_name] = missing
+
+            # compute last update before start date for each missing
+            df_before = df[df[date_col].dt.date < start]
+            last_before = {}
+            for emp in missing:
+                df_e = df_before[df_before[emp_col] == emp]
+                if df_e.empty:
+                    last_before[emp] = "N/A"
+                else:
+                    d = df_e[date_col].max().date()
+                    last_before[emp] = d.strftime("%m/%d/%Y")
+
+            # store for email
+            missing_map[list_name] = [
+                {"employee": emp, "last_before": last_before[emp]}
+                for emp in missing
+            ]
             q.put(('missing_info', missing))
 
-            # 5) strip time from **all** datetime columns
+            # strip time from any datetime columns
             for col in df_f.columns:
                 if pd.api.types.is_datetime64_any_dtype(df_f[col]):
                     df_f[col] = df_f[col].dt.date
 
-            # 6) write out to .xlsx **always** creating at least one sheet
+            # write out filtered .xlsx (always at least headers)
             out_name = f"{list_name}_{ts}.xlsx"
             out_path = os.path.join(downloads, out_name)
             with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
                 if df_f.empty:
-                    # write just headers
                     pd.DataFrame(columns=df.columns).to_excel(
                         writer,
                         sheet_name=list_name[:31],
@@ -135,27 +150,33 @@ def worker(start, end, q):
                         sheet_name=list_name[:31],
                         index=False
                     )
-            logger.info(f"Saved {out_name} ({len(df_f)}/{total_rows} rows)")
             attachments.append(out_path)
+            logger.info(f"Saved {out_name} ({len(df_f)}/{total_rows} rows)")
 
             done += 1
             q.put(('progress', done))
 
-        # 7) compose email HTML
+        # build email HTML with last-before column
         html = ['<html><body><h1>Missing Entries</h1>']
-        for ln, miss in missing_map.items():
+        for ln, items in missing_map.items():
             html.append(f"<h2>{ln}</h2>")
-            if not miss:
+            if not items:
                 html.append("<p>All employees reported in range.</p>")
             else:
-                html.append("<ul>")
-                for name in miss:
-                    html.append(f"<li>{name}</li>")
-                html.append("</ul>")
+                html.append(
+                    "<table border='1' cellpadding='4'>"
+                    "<tr><th>Employee</th><th>Last Update Before Start</th></tr>"
+                )
+                for it in items:
+                    html.append(
+                        f"<tr><td>{it['employee']}</td>"
+                        f"<td>{it['last_before']}</td></tr>"
+                    )
+                html.append("</table>")
         html.append("</body></html>")
         body = "\n".join(html)
 
-        # 8) send via Outlook
+        # send via Outlook
         send_via_outlook(EMAIL_TO, EMAIL_CC, EMAIL_SUBJECT, body, attachments)
 
         q.put(('done', attachments, missing_map))
