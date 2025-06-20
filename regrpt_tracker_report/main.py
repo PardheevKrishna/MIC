@@ -60,28 +60,15 @@ def send_via_outlook(to, cc, subject, html_body, attachments):
     logger.info("Email sent via Outlook.")
 
 def worker(start, end, q):
-    """
-    Background processing thread.
-    Reports via queue:
-      ('init', total_tasks)
-      ('task', task_desc)
-      ('row_init', total_rows)
-      ('row_progress', rows_done)
-      ('employee', emp_name)
-      ('progress', tasks_done)
-      ('done', attachments, missing_info)
-      ('error', message)
-    """
     try:
         logger.info("Worker thread starting.")
-        # Build list of tasks (sheet, list_name, emp_list)
+        # 1) build task list
         tasks = []
         for sheet, lists in SHEET_MAP.items():
             for list_name, emp_list in lists:
                 tasks.append((sheet, list_name, emp_list))
         total_tasks = len(tasks)
         q.put(('init', total_tasks))
-        logger.info(f"{total_tasks} tasks to process.")
 
         now       = datetime.datetime.now()
         ts        = now.strftime("%Y%m%d_%H%M%S")
@@ -90,7 +77,7 @@ def worker(start, end, q):
         attachments = []
         missing_info = {}
 
-        # Preload DataFrames for each sheet
+        # 2) preload DataFrames
         logger.info("Loading sheets into memory...")
         sheet_dfs = {
             sheet: pd.read_excel(
@@ -103,26 +90,27 @@ def worker(start, end, q):
 
         tasks_done = 0
         for sheet, list_name, emp_list in tasks:
-            task_desc = f"{sheet} → {list_name}"
-            logger.info(f"Starting task: {task_desc}")
-            q.put(('task', task_desc))
+            desc = f"{sheet} → {list_name}"
+            logger.info(f"Starting task: {desc}")
+            q.put(('task', desc))
 
             df_full = sheet_dfs[sheet]
             date_col = df_full.columns[0]
             emp_col  = df_full.columns[4]
 
-            # Preview workbook for row count & scan
-            wb_preview = load_workbook(SRC_FILE, keep_vba=True, read_only=True)
-            ws_prev    = wb_preview[sheet]
-            total_rows = ws_prev.max_row - 1  # exclude header
+            # 3) **Read-only preview** for row count & scan
+            wb_prev = load_workbook(SRC_FILE, read_only=True, data_only=True)
+            ws_prev = wb_prev[sheet]
+            total_rows = ws_prev.max_row - 1
             q.put(('row_init', total_rows))
 
             to_delete = []
             rows_scanned = 0
             for r in range(2, total_rows + 2):
                 rows_scanned += 1
-                if rows_scanned % 50 == 0 or rows_scanned == total_rows:
-                    q.put(('row_progress', rows_scanned))
+                # **real-time update** every row
+                q.put(('row_progress', rows_scanned))
+
                 cell = ws_prev.cell(r, 1).value
                 try:
                     dt = pd.to_datetime(cell).date()
@@ -131,10 +119,10 @@ def worker(start, end, q):
                 emp = ws_prev.cell(r, 5).value
                 if dt is None or dt < start or dt > end or emp not in emp_list:
                     to_delete.append(r)
-            wb_preview.close()  # close after scanning
-            logger.info(f"{len(to_delete)} rows marked for deletion in {task_desc}.")
+            wb_prev.close()
+            logger.info(f"{len(to_delete)} rows marked for deletion in {desc}.")
 
-            # Determine missing employees
+            # 4) figure out missing employees
             mask = (
                 (df_full[date_col].dt.date >= start) &
                 (df_full[date_col].dt.date <= end) &
@@ -151,18 +139,17 @@ def worker(start, end, q):
                 else:
                     last_dt = df_emp[date_col].max().date()
                     idx0    = df_emp[df_emp[date_col].dt.date == last_dt].index[0]
-                    excel_row = idx0 + 2
                     info.append({
                         "employee": emp,
                         "last_date": last_dt.strftime("%m/%d/%Y"),
-                        "last_row":  excel_row
+                        "last_row":  idx0 + 2
                     })
             missing_info[list_name] = info
-            logger.info(f"{len(missing)} missing employees for {list_name}.")
+            logger.info(f"{len(missing)} missing for {list_name}.")
 
-            # Open full workbook to delete rows & save filtered .xlsm
+            # 5) delete rows & save filtered .xlsm
             wb = load_workbook(SRC_FILE, keep_vba=True)
-            for s in wb.sheetnames:
+            for s in list(wb.sheetnames):
                 if s != sheet:
                     wb.remove(wb[s])
             ws = wb[sheet]
@@ -178,7 +165,7 @@ def worker(start, end, q):
             tasks_done += 1
             q.put(('progress', tasks_done))
 
-        # Build HTML email body
+        # 6) build email HTML
         logger.info("Composing HTML email body.")
         html = ['<html><body><h1>Missing Entries</h1>']
         for ln, rows in missing_info.items():
@@ -200,7 +187,7 @@ def worker(start, end, q):
         html.append("</body></html>")
         body = "\n".join(html)
 
-        # Send via Outlook
+        # 7) send via Outlook
         logger.info("Sending email via Outlook.")
         send_via_outlook(EMAIL_TO, EMAIL_CC, EMAIL_SUBJECT, body, attachments)
 
@@ -215,7 +202,7 @@ def start_process():
     start = start_cal.get_date()
     end   = end_cal.get_date()
     if start > end:
-        messagebox.showerror("Error", "Start date must be on or before End date.")
+        messagebox.showerror("Error", "Start must be on or before End.")
         return
 
     root.start_time = datetime.datetime.now()
@@ -265,17 +252,15 @@ def poll_queue():
     elif kind == 'row_progress':
         done_rows = msg[1]
         row_bar['value'] = done_rows
-        total_r = row_bar['maximum']
-        row_progress_var.set(f"Rows: {done_rows} of {total_r}")
+        row_progress_var.set(f"Rows: {done_rows} of {row_bar['maximum']}")
 
     elif kind == 'employee':
         current_emp_var.set(f"Employee: {msg[1]}")
 
     elif kind == 'progress':
         done = msg[1]
-        total = prog_bar['maximum']
         prog_bar['value'] = done
-        progress_var.set(f"{done} of {total} tasks")
+        progress_var.set(f"{done} of {prog_bar['maximum']} tasks")
 
     elif kind == 'done':
         btn_submit.config(state='normal')
@@ -300,7 +285,6 @@ root.geometry("480x440")
 root.resizable(False, False)
 
 q = queue.Queue()
-
 padx = 10
 wrap = 460
 
