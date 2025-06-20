@@ -61,7 +61,8 @@ def send_via_outlook(to, cc, subject, html_body, attachments):
 
 def worker(start, end, q):
     """
-    Runs in background thread. Puts messages into q:
+    Background processing thread.
+    Reports via queue:
       ('init', total_tasks)
       ('task', task_desc)
       ('row_init', total_rows)
@@ -69,18 +70,18 @@ def worker(start, end, q):
       ('employee', emp_name)
       ('progress', tasks_done)
       ('done', attachments, missing_info)
-      ('error', error_msg)
+      ('error', message)
     """
     try:
         logger.info("Worker thread starting.")
-        # build task list
+        # Build list of tasks (sheet, list_name, emp_list)
         tasks = []
         for sheet, lists in SHEET_MAP.items():
             for list_name, emp_list in lists:
                 tasks.append((sheet, list_name, emp_list))
         total_tasks = len(tasks)
         q.put(('init', total_tasks))
-        logger.info(f"{total_tasks} tasks queued.")
+        logger.info(f"{total_tasks} tasks to process.")
 
         now       = datetime.datetime.now()
         ts        = now.strftime("%Y%m%d_%H%M%S")
@@ -89,8 +90,8 @@ def worker(start, end, q):
         attachments = []
         missing_info = {}
 
-        # preload pandas DataFrames
-        logger.info("Loading all sheets into memory...")
+        # Preload DataFrames for each sheet
+        logger.info("Loading sheets into memory...")
         sheet_dfs = {
             sheet: pd.read_excel(
                 SRC_FILE, sheet_name=sheet,
@@ -103,45 +104,44 @@ def worker(start, end, q):
         tasks_done = 0
         for sheet, list_name, emp_list in tasks:
             task_desc = f"{sheet} → {list_name}"
-            logger.info(f"Starting {task_desc}")
+            logger.info(f"Starting task: {task_desc}")
             q.put(('task', task_desc))
 
             df_full = sheet_dfs[sheet]
             date_col = df_full.columns[0]
             emp_col  = df_full.columns[4]
 
-            # determine rows to scan in openpyxl
+            # Preview workbook for row count & scan
             wb_preview = load_workbook(SRC_FILE, keep_vba=True, read_only=True)
             ws_prev    = wb_preview[sheet]
             total_rows = ws_prev.max_row - 1  # exclude header
-            wb_preview.close()
             q.put(('row_init', total_rows))
 
-            # scan for deletion and collect to_delete
             to_delete = []
             rows_scanned = 0
-            for r in range(2, total_rows+2):
+            for r in range(2, total_rows + 2):
                 rows_scanned += 1
                 if rows_scanned % 50 == 0 or rows_scanned == total_rows:
                     q.put(('row_progress', rows_scanned))
-                cell = ws_prev.cell(r,1).value
+                cell = ws_prev.cell(r, 1).value
                 try:
                     dt = pd.to_datetime(cell).date()
                 except:
                     dt = None
-                emp = ws_prev.cell(r,5).value
+                emp = ws_prev.cell(r, 5).value
                 if dt is None or dt < start or dt > end or emp not in emp_list:
                     to_delete.append(r)
-            logger.info(f"{len(to_delete)} rows marked for deletion.")
+            wb_preview.close()  # close after scanning
+            logger.info(f"{len(to_delete)} rows marked for deletion in {task_desc}.")
 
-            # compute missing employees
+            # Determine missing employees
             mask = (
                 (df_full[date_col].dt.date >= start) &
                 (df_full[date_col].dt.date <= end) &
                 (df_full[emp_col].isin(emp_list))
             )
-            present  = set(df_full.loc[mask, emp_col].dropna().unique())
-            missing  = sorted(set(emp_list) - present)
+            present = set(df_full.loc[mask, emp_col].dropna().unique())
+            missing = sorted(set(emp_list) - present)
             info = []
             for emp in missing:
                 q.put(('employee', emp))
@@ -158,9 +158,9 @@ def worker(start, end, q):
                         "last_row":  excel_row
                     })
             missing_info[list_name] = info
-            logger.info(f"{len(missing)} missing employees in {list_name}.")
+            logger.info(f"{len(missing)} missing employees for {list_name}.")
 
-            # now open full workbook to delete rows & save
+            # Open full workbook to delete rows & save filtered .xlsm
             wb = load_workbook(SRC_FILE, keep_vba=True)
             for s in wb.sheetnames:
                 if s != sheet:
@@ -173,13 +173,13 @@ def worker(start, end, q):
             wb.save(out_path)
             wb.close()
             logger.info(f"Saved filtered workbook: {out_path}")
-
             attachments.append(out_path)
+
             tasks_done += 1
             q.put(('progress', tasks_done))
 
-        # compose HTML for email
-        logger.info("Building email HTML body.")
+        # Build HTML email body
+        logger.info("Composing HTML email body.")
         html = ['<html><body><h1>Missing Entries</h1>']
         for ln, rows in missing_info.items():
             html.append(f"<h2>{ln}</h2>")
@@ -200,25 +200,24 @@ def worker(start, end, q):
         html.append("</body></html>")
         body = "\n".join(html)
 
-        # send via Outlook
+        # Send via Outlook
         logger.info("Sending email via Outlook.")
         send_via_outlook(EMAIL_TO, EMAIL_CC, EMAIL_SUBJECT, body, attachments)
 
         q.put(('done', attachments, missing_info))
-        logger.info("Worker finished successfully.")
+        logger.info("Worker thread completed successfully.")
 
     except Exception as e:
-        logger.exception("Worker thread error")
+        logger.exception("Error in worker thread")
         q.put(('error', str(e)))
 
 def start_process():
     start = start_cal.get_date()
     end   = end_cal.get_date()
     if start > end:
-        messagebox.showerror("Error", "Start must be ≤ End.")
+        messagebox.showerror("Error", "Start date must be on or before End date.")
         return
 
-    # record start time
     root.start_time = datetime.datetime.now()
     elapsed_var.set("Elapsed: 00:00:00")
 
