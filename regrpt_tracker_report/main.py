@@ -9,8 +9,6 @@ from tkinter import messagebox, ttk
 from tkcalendar import DateEntry
 import pandas as pd
 import win32com.client as win32
-from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 SRC_FILE = r"C:\path\to\your\CRIT_Master.xlsm"
@@ -38,13 +36,12 @@ EMAIL_CC      = ["cc1@example.com"]
 EMAIL_SUBJECT = "CRIT Automated Summary"
 # ─── END CONFIG ───────────────────────────────────────────────────────────────
 
-# ─── logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S"
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 
 def send_via_outlook(to, cc, subject, html_body, attachments):
     ol = win32.Dispatch('Outlook.Application')
@@ -56,20 +53,22 @@ def send_via_outlook(to, cc, subject, html_body, attachments):
     for f in attachments:
         mail.Attachments.Add(f)
     mail.Send()
+    logger.info("Email sent via Outlook.")
 
 def worker(start, end, q):
     try:
+        # build tasks
         tasks = [
             (sheet, list_name, emp_list)
             for sheet, lists in SHEET_MAP.items()
             for list_name, emp_list in lists
         ]
         q.put(('init', len(tasks)))
+        now = datetime.datetime.now()
+        ts  = now.strftime("%Y%m%d_%H%M%S")
+        dl  = os.path.join(os.path.expanduser("~"), "Downloads")
 
-        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        downloads = os.path.join(os.path.expanduser("~"), "Downloads")
-
-        # preload
+        # preload into pandas
         sheet_dfs = {
             sheet: pd.read_excel(
                 SRC_FILE, sheet_name=sheet,
@@ -79,19 +78,19 @@ def worker(start, end, q):
         }
 
         attachments = []
-        missing_overall = {}
+        missing_map = {}
         done = 0
 
         for sheet, list_name, emp_list in tasks:
             desc = f"{sheet} → {list_name}"
             q.put(('task', desc))
+
             df = sheet_dfs[sheet]
             date_col = df.columns[0]
             emp_col  = df.columns[4]
-
             q.put(('sheet_info', len(df)))
 
-            # filter
+            # filter by date & employees
             mask = (
                 (df[date_col].dt.date >= start) &
                 (df[date_col].dt.date <= end) &
@@ -100,61 +99,44 @@ def worker(start, end, q):
             df_f = df.loc[mask].copy()
             q.put(('filtered_info', len(df_f)))
 
-            present = set(df_f[emp_col].dropna().unique())
+            # find missing
+            present = set(df_f[emp_col].dropna())
             missing = sorted(set(emp_list) - present)
-            missing_overall[list_name] = missing
+            missing_map[list_name] = missing
             q.put(('missing_info', missing))
-
-            # strip time portion on date columns in df_f
-            for idx in [0, 5, 6]:
-                if idx < len(df_f.columns) and pd.api.types.is_datetime64_any_dtype(df_f[df_f.columns[idx]]):
-                    df_f[df_f.columns[idx]] = df_f[df_f.columns[idx]].dt.date
 
             # write to .xlsx
             out_name = f"{list_name}_{ts}.xlsx"
-            out_path = os.path.join(downloads, out_name)
-            with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-                df_f.to_excel(writer, sheet_name=list_name[:31], index=False)
-
-            # openpyxl: format date-only and auto-fit columns
-            wb2 = load_workbook(out_path)
-            ws2 = wb2[list_name[:31]]
-            for col_idx, col in enumerate(ws2.iter_cols(min_row=1, max_row=ws2.max_row), start=1):
-                maxlen = 0
-                col_letter = get_column_letter(col_idx)
-                for cell in col:
-                    val = cell.value
-                    # if datetime or date, set to date-only number format
-                    if isinstance(val, (datetime.datetime, datetime.date)):
-                        cell.number_format = "M/D/YYYY"
-                        val = val.date() if isinstance(val, datetime.datetime) else val
-                    text = "" if val is None else str(val)
-                    maxlen = max(maxlen, len(text))
-                ws2.column_dimensions[col_letter].width = maxlen + 2
-            wb2.save(out_path)
+            out_path = os.path.join(dl, out_name)
+            with pd.ExcelWriter(out_path, engine="openpyxl") as w:
+                # ensure dates are date only
+                for col in [df_f.columns[0]] + [c for c in df_f.columns if pd.api.types.is_datetime64_any_dtype(df_f[c])]:
+                    df_f[col] = df_f[col].dt.date
+                df_f.to_excel(w, sheet_name=list_name[:31], index=False)
 
             attachments.append(out_path)
             done += 1
             q.put(('progress', done))
 
-        # build email
+        # build email HTML (with missing before-start if needed)
         html = ['<html><body><h1>Missing Entries</h1>']
-        for ln, miss in missing_overall.items():
+        for ln, miss in missing_map.items():
             html.append(f"<h2>{ln}</h2>")
             if not miss:
                 html.append("<p>All employees reported in range.</p>")
             else:
-                html.append("<table border='1' cellpadding='4'>"
-                            "<tr><th>Employee</th></tr>")
+                html.append("<ul>")
                 for name in miss:
-                    html.append(f"<tr><td>{name}</td></tr>")
-                html.append("</table>")
+                    html.append(f"<li>{name}</li>")
+                html.append("</ul>")
         html.append("</body></html>")
-        send_via_outlook(EMAIL_TO, EMAIL_CC, EMAIL_SUBJECT, "\n".join(html), attachments)
+        body = "\n".join(html)
 
-        q.put(('done', attachments, missing_overall))
+        send_via_outlook(EMAIL_TO, EMAIL_CC, EMAIL_SUBJECT, body, attachments)
+        q.put(('done', attachments, missing_map))
 
     except Exception as e:
+        logger.exception("Worker error")
         q.put(('error', str(e)))
 
 def start_process():
@@ -163,40 +145,54 @@ def start_process():
     if start > end:
         return messagebox.showerror("Error", "Start must be ≤ End.")
     btn_submit.config(state='disabled')
-    q.put(('init', 0))
+    progress_var.set("Initializing…")
+    task_var.set(sheet_var.set(filt_var.set(miss_var.set(""))))
+    prog_bar['value'] = 0
+
     threading.Thread(target=worker, args=(start, end, q), daemon=True).start()
     root.after(100, poll_queue)
 
 def poll_queue():
     try:
-        kind, data = q.get_nowait()
+        msg = q.get_nowait()
     except queue.Empty:
-        root.after(100, poll_queue)
-        return
+        return root.after(100, poll_queue)
+
+    kind, *rest = msg
 
     if kind == 'init':
-        total = data
+        total = rest[0]
         prog_bar['maximum'] = total
         progress_var.set(f"0 of {total} tasks")
+
     elif kind == 'task':
-        task_var.set(f"Task: {data}")
+        task_var.set(f"Task: {rest[0]}")
+
     elif kind == 'sheet_info':
-        sheet_var.set(f"Total rows: {data}")
+        sheet_var.set(f"Total rows: {rest[0]}")
+
     elif kind == 'filtered_info':
-        filt_var.set(f"Filtered rows: {data}")
+        filt_var.set(f"Filtered rows: {rest[0]}")
+
     elif kind == 'missing_info':
-        miss_var.set("Missing: " + (", ".join(data) if data else "None"))
+        lst = rest[0]
+        miss_var.set("Missing: " + (", ".join(lst) if lst else "None"))
+
     elif kind == 'progress':
-        prog_bar['value'] = data
-        progress_var.set(f"{data} of {prog_bar['maximum']} tasks")
+        done = rest[0]
+        prog_bar['value'] = done
+        progress_var.set(f"{done} of {prog_bar['maximum']} tasks")
+
     elif kind == 'done':
         btn_submit.config(state='normal')
-        messagebox.showinfo("Finished", "Reports saved & email sent.")
+        messagebox.showinfo("Finished", "Reports saved & email sent via Outlook.")
+
     elif kind == 'error':
         btn_submit.config(state='normal')
-        messagebox.showerror("Error", data)
+        messagebox.showerror("Error", rest[0])
 
     root.after(100, poll_queue)
+
 
 # ─── BUILD UI ─────────────────────────────────────────────────────────────────
 root = tk.Tk()
