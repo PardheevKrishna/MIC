@@ -36,6 +36,7 @@ EMAIL_CC      = ["cc1@example.com"]
 EMAIL_SUBJECT = "CRIT Automated Summary"
 # ─── END CONFIG ───────────────────────────────────────────────────────────────
 
+# set up console logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -57,18 +58,21 @@ def send_via_outlook(to, cc, subject, html_body, attachments):
 
 def worker(start, end, q):
     try:
-        # build tasks
+        # 1) build flat list of (sheet, list_name, emp_list)
         tasks = [
             (sheet, list_name, emp_list)
             for sheet, lists in SHEET_MAP.items()
             for list_name, emp_list in lists
         ]
         q.put(('init', len(tasks)))
-        now = datetime.datetime.now()
-        ts  = now.strftime("%Y%m%d_%H%M%S")
-        dl  = os.path.join(os.path.expanduser("~"), "Downloads")
+        logger.info(f"{len(tasks)} tasks to run.")
 
-        # preload into pandas
+        now       = datetime.datetime.now()
+        ts        = now.strftime("%Y%m%d_%H%M%S")
+        downloads = os.path.join(os.path.expanduser("~"), "Downloads")
+
+        # 2) preload all sheets into pandas DataFrames
+        logger.info("Loading sheets into pandas...")
         sheet_dfs = {
             sheet: pd.read_excel(
                 SRC_FILE, sheet_name=sheet,
@@ -76,6 +80,7 @@ def worker(start, end, q):
             )
             for sheet in SHEET_MAP
         }
+        logger.info("All sheets loaded.")
 
         attachments = []
         missing_map = {}
@@ -84,13 +89,16 @@ def worker(start, end, q):
         for sheet, list_name, emp_list in tasks:
             desc = f"{sheet} → {list_name}"
             q.put(('task', desc))
+            logger.info("Starting " + desc)
 
             df = sheet_dfs[sheet]
             date_col = df.columns[0]
             emp_col  = df.columns[4]
-            q.put(('sheet_info', len(df)))
 
-            # filter by date & employees
+            total_rows = len(df)
+            q.put(('sheet_info', total_rows))
+
+            # 3) filter in-memory
             mask = (
                 (df[date_col].dt.date >= start) &
                 (df[date_col].dt.date <= end) &
@@ -99,26 +107,41 @@ def worker(start, end, q):
             df_f = df.loc[mask].copy()
             q.put(('filtered_info', len(df_f)))
 
-            # find missing
+            # 4) identify missing employees
             present = set(df_f[emp_col].dropna())
             missing = sorted(set(emp_list) - present)
             missing_map[list_name] = missing
             q.put(('missing_info', missing))
 
-            # write to .xlsx
-            out_name = f"{list_name}_{ts}.xlsx"
-            out_path = os.path.join(dl, out_name)
-            with pd.ExcelWriter(out_path, engine="openpyxl") as w:
-                # ensure dates are date only
-                for col in [df_f.columns[0]] + [c for c in df_f.columns if pd.api.types.is_datetime64_any_dtype(df_f[c])]:
+            # 5) strip time from **all** datetime columns
+            for col in df_f.columns:
+                if pd.api.types.is_datetime64_any_dtype(df_f[col]):
                     df_f[col] = df_f[col].dt.date
-                df_f.to_excel(w, sheet_name=list_name[:31], index=False)
 
+            # 6) write out to .xlsx **always** creating at least one sheet
+            out_name = f"{list_name}_{ts}.xlsx"
+            out_path = os.path.join(downloads, out_name)
+            with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+                if df_f.empty:
+                    # write just headers
+                    pd.DataFrame(columns=df.columns).to_excel(
+                        writer,
+                        sheet_name=list_name[:31],
+                        index=False
+                    )
+                else:
+                    df_f.to_excel(
+                        writer,
+                        sheet_name=list_name[:31],
+                        index=False
+                    )
+            logger.info(f"Saved {out_name} ({len(df_f)}/{total_rows} rows)")
             attachments.append(out_path)
+
             done += 1
             q.put(('progress', done))
 
-        # build email HTML (with missing before-start if needed)
+        # 7) compose email HTML
         html = ['<html><body><h1>Missing Entries</h1>']
         for ln, miss in missing_map.items():
             html.append(f"<h2>{ln}</h2>")
@@ -132,23 +155,25 @@ def worker(start, end, q):
         html.append("</body></html>")
         body = "\n".join(html)
 
+        # 8) send via Outlook
         send_via_outlook(EMAIL_TO, EMAIL_CC, EMAIL_SUBJECT, body, attachments)
+
         q.put(('done', attachments, missing_map))
+        logger.info("Worker finished successfully.")
 
     except Exception as e:
-        logger.exception("Worker error")
+        logger.exception("Error in worker")
         q.put(('error', str(e)))
 
 def start_process():
     start = start_cal.get_date()
     end   = end_cal.get_date()
     if start > end:
-        return messagebox.showerror("Error", "Start must be ≤ End.")
+        return messagebox.showerror("Error", "Start must be on or before End.")
     btn_submit.config(state='disabled')
     progress_var.set("Initializing…")
     task_var.set(sheet_var.set(filt_var.set(miss_var.set(""))))
     prog_bar['value'] = 0
-
     threading.Thread(target=worker, args=(start, end, q), daemon=True).start()
     root.after(100, poll_queue)
 
@@ -192,7 +217,6 @@ def poll_queue():
         messagebox.showerror("Error", rest[0])
 
     root.after(100, poll_queue)
-
 
 # ─── BUILD UI ─────────────────────────────────────────────────────────────────
 root = tk.Tk()
