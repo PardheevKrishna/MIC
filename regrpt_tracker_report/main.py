@@ -3,138 +3,177 @@ import os
 import datetime
 import tkinter as tk
 from tkinter import messagebox
+from tkcalendar import DateEntry
 import pandas as pd
-from openpyxl.utils import get_column_letter
+from openpyxl import load_workbook
+import win32com.client as win32
+
+# ─── USER CONFIGURATION ───────────────────────────────────────────────────────
+SRC_FILE = r"C:\path\to\your\RegulatoryReporting.xlsm"
+
+consumer_dataProvider   = ["Alice Johnson", "Bob Smith",     # …
+                          ]
+commercial_dataProvider = ["Carol Lee",      "Dan Patel",    # …
+                          ]
+scheduleOwner           = ["Eve Zhang",      "Frank Müller", # …
+                          ]
+CR360Transformation     = ["Grace Kim",      "Hiro Tanaka",  # …
+                          ]
+
+SHEET_MAP = {
+    "Reg_Reporting_DP": [
+        ("consumer_dataProvider",   consumer_dataProvider),
+        ("commercial_dataProvider", commercial_dataProvider),
+    ],
+    "Reg_Reporting_SO": [
+        ("scheduleOwner", scheduleOwner),
+    ],
+    "CR360": [
+        ("CR360Transformation", CR360Transformation),
+    ],
+}
+
+# Predefine email fields
+EMAIL_TO      = ["to1@example.com"]
+EMAIL_CC      = ["cc1@example.com"]
+EMAIL_SUBJECT = "Automated Regulatory Reporting Summary"
+# ─── END USER CONFIG ──────────────────────────────────────────────────────────
+
+def send_via_outlook(to, cc, subject, html_body, attachments):
+    outlook = win32.Dispatch('Outlook.Application')
+    mail    = outlook.CreateItem(0)  # olMailItem
+    mail.To      = ";".join(to)
+    mail.CC      = ";".join(cc)
+    mail.Subject = subject
+    mail.HTMLBody = html_body
+    for path in attachments:
+        mail.Attachments.Add(path)
+    mail.Send()
 
 def main():
-    # ←— SET YOUR SOURCE .xlsm PATH HERE:
-    src_file = r"C:\path\to\your\RegulatoryReporting.xlsm"
-    
-    # ←— YOUR EMPLOYEE LIST:
-    employees = [
-        "Alice Johnson",
-        "Bob Smith",
-        "Carol Lee",
-        # …
-    ]
-    
-    # ←— PREPARE default output path in your Downloads folder
-    now = datetime.datetime.now()
+    now       = datetime.datetime.now()
     downloads = os.path.join(os.path.expanduser("~"), "Downloads")
-    filename = f"Filtered_Report_{now.strftime('%Y%m%d_%H%M%S')}.xlsx"
-    dst_file = os.path.join(downloads, filename)
-    
-    # --- 0) Pre-scan all sheets for month-year options
-    excel = pd.ExcelFile(src_file, engine="openpyxl")
-    month_periods = set()
-    for sheet in excel.sheet_names:
-        df_tmp = pd.read_excel(src_file, sheet_name=sheet, usecols=[0], engine="openpyxl")
-        dates = pd.to_datetime(df_tmp.iloc[:,0], errors="coerce")
-        month_periods.update(dates.dropna().dt.to_period("M").unique())
-    sorted_periods = sorted(month_periods)
-    options = [p.strftime("%B %Y") for p in sorted_periods]
-    period_map = {p.strftime("%B %Y"): p for p in sorted_periods}
-    
-    # --- 1) GUI
+    timestamp = now.strftime("%Y%m%d_%H%M%S")
+
     root = tk.Tk()
-    root.title("Filter by Month-Year & Employee")
-    root.geometry("440x540")
+    root.title("Regulatory Reporting Filter & Emailer")
+    root.geometry("380x240")
     root.resizable(False, False)
-    
-    # Source file (predefined)
-    tk.Label(root, text="Source file (predefined):").pack(anchor="w", padx=10, pady=(10,0))
-    tk.Entry(root, width=60, state="readonly", 
-             readonlybackground="white", fg="black",
-             textvariable=tk.StringVar(value=src_file)
-            ).pack(padx=10, pady=(0,5))
-    
-    # Month-Year multi-select
-    tk.Label(root, text="Select month-year(s):").pack(anchor="w", padx=10, pady=(15,0))
-    lb = tk.Listbox(root, selectmode="multiple", height=14, exportselection=False)
-    for opt in options:
-        lb.insert("end", opt)
-    lb.pack(padx=10, pady=5, fill="x")
-    
-    # Output file (predefined in Downloads)
-    tk.Label(root, text="Output file (predefined):").pack(anchor="w", padx=10, pady=(15,0))
-    tk.Entry(root, width=60, state="readonly", 
-             readonlybackground="white", fg="black",
-             textvariable=tk.StringVar(value=dst_file)
-            ).pack(padx=10, pady=(0,5))
-    
-    # Process button
+
+    tk.Label(root, text="Source (predefined):").pack(anchor="w", padx=10, pady=(10,0))
+    tk.Entry(root, width=50, state="readonly",
+             textvariable=tk.StringVar(value=SRC_FILE)).pack(padx=10, pady=(0,10))
+
+    tk.Label(root, text="Start date:").pack(anchor="w", padx=10)
+    start_cal = DateEntry(root, date_pattern="mm/dd/yyyy"); start_cal.pack(padx=10)
+
+    tk.Label(root, text="End date:").pack(anchor="w", padx=10, pady=(10,0))
+    end_cal   = DateEntry(root, date_pattern="mm/dd/yyyy");   end_cal.pack(padx=10)
+
     def on_submit():
-        sel = lb.curselection()
-        if not sel:
-            messagebox.showerror("Error", "Please select at least one month-year.")
+        start = start_cal.get_date()
+        end   = end_cal.get_date()
+        if start > end:
+            messagebox.showerror("Error", "Start must be on or before End.")
             return
-        
-        sel_periods = { period_map[options[i]] for i in sel }
-        
-        try:
-            # Read & filter all sheets
-            all_sheets = pd.read_excel(src_file, sheet_name=None, engine="openpyxl", header=0)
-            filtered = {}
-            present = set()
-            for name, df in all_sheets.items():
-                if df.shape[1] < 5: continue
-                date_col, emp_col = df.columns[0], df.columns[4]
-                
-                df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-                periods = df[date_col].dt.to_period("M")
-                mask = periods.isin(sel_periods) & df[emp_col].isin(employees)
-                
-                df2 = df.loc[mask].copy()
-                if df2.empty: continue
-                
-                filtered[name] = df2
-                present.update(df2[emp_col].dropna().unique())
-            
-            if not filtered:
-                messagebox.showinfo("No Data", "No rows matched your criteria.")
-                return
-            
-            # Compute missing employees
-            missing = sorted(set(employees) - present)
-            
-            # Write & format
-            with pd.ExcelWriter(dst_file, engine="openpyxl") as writer:
-                for name, df2 in filtered.items():
-                    safe = name[:31]
-                    df2.to_excel(writer, sheet_name=safe, index=False)
-                for name, df2 in filtered.items():
-                    safe = name[:31]
-                    ws = writer.sheets[safe]
-                    # auto-fit columns
-                    for idx, col in enumerate(df2.columns, 1):
-                        col_letter = get_column_letter(idx)
-                        maxlen = max(len(str(col)), *(df2[col].astype(str).map(len)))
-                        ws.column_dimensions[col_letter].width = maxlen + 2
-                    # enforce date format on A
-                    date_letter = get_column_letter(1)
-                    for row in range(2, len(df2)+2):
-                        ws[f"{date_letter}{row}"].number_format = "M/D/YYYY"
-                writer.save()
-            
-            # Done popup with missing list
-            msg = f"Filtered {sum(len(df) for df in filtered.values())} row(s) " \
-                  f"across {len(filtered)} sheet(s).\n\nSaved to:\n{dst_file}\n\n"
-            if missing:
-                msg += "Employees with NO matching rows:\n• " + "\n• ".join(missing)
+
+        attachments = []
+        missing_info = {}
+
+        for sheet_name, lists in SHEET_MAP.items():
+            df_full = pd.read_excel(
+                SRC_FILE,
+                sheet_name=sheet_name,
+                header=0,
+                engine="openpyxl",
+                parse_dates=[0]
+            )
+            date_col = df_full.columns[0]
+            emp_col  = df_full.columns[4]
+
+            for list_name, emp_list in lists:
+                mask_in = (
+                    (df_full[date_col].dt.date >= start) &
+                    (df_full[date_col].dt.date <= end) &
+                    (df_full[emp_col].isin(emp_list))
+                )
+                present = set(df_full.loc[mask_in, emp_col].dropna().unique())
+                missing = sorted(set(emp_list) - present)
+
+                info = []
+                for emp in missing:
+                    df_emp = df_full[df_full[emp_col] == emp]
+                    if df_emp.empty:
+                        info.append({"employee": emp, "last_date":"N/A", "last_row":"No record"})
+                    else:
+                        last_dt = df_emp[date_col].max().date()
+                        idx0    = df_emp[df_emp[date_col].dt.date == last_dt].index[0]
+                        excel_row = idx0 + 2
+                        info.append({
+                            "employee": emp,
+                            "last_date": last_dt.strftime("%m/%d/%Y"),
+                            "last_row": excel_row
+                        })
+                missing_info[list_name] = info
+
+                # build filtered .xlsm preserving formatting
+                wb = load_workbook(SRC_FILE, keep_vba=True)
+                for s in wb.sheetnames:
+                    if s != sheet_name:
+                        wb.remove(wb[s])
+                ws = wb[sheet_name]
+
+                to_delete = []
+                for r in range(2, ws.max_row+1):
+                    cell = ws.cell(r,1).value
+                    try: dt = pd.to_datetime(cell).date()
+                    except: dt = None
+                    emp = ws.cell(r,5).value
+                    if dt is None or dt<start or dt>end or emp not in emp_list:
+                        to_delete.append(r)
+                for r in reversed(to_delete):
+                    ws.delete_rows(r)
+
+                out_name = f"{list_name}_{timestamp}.xlsm"
+                out_path = os.path.join(downloads, out_name)
+                wb.save(out_path)
+                attachments.append(out_path)
+
+        # build HTML email body
+        html = ['<html><body>','<h1>Missing Entries Report</h1>']
+        for list_name, rows in missing_info.items():
+            html.append(f"<h2>{list_name}</h2>")
+            if not rows:
+                html.append("<p>All employees had ≥1 entry in range.</p>")
             else:
-                msg += "All employees had at least one matching row."
-            messagebox.showinfo("Done", msg)
-        
+                html.append("<table border='1' cellpadding='4'>"
+                            "<tr><th>Employee</th><th>Last Update</th><th>Last Row #</th></tr>")
+                for r in rows:
+                    html.append(
+                        f"<tr><td>{r['employee']}</td>"
+                        f"<td>{r['last_date']}</td>"
+                        f"<td>{r['last_row']}</td></tr>"
+                    )
+                html.append("</table>")
+        html.append("</body></html>")
+        body = "\n".join(html)
+
+        try:
+            send_via_outlook(EMAIL_TO, EMAIL_CC, EMAIL_SUBJECT, body, attachments)
+            messagebox.showinfo(
+                "Done",
+                "Reports saved to Downloads and sent via Outlook."
+            )
         except Exception as e:
-            messagebox.showerror("Processing Error", str(e))
-    
+            messagebox.showerror("Email Error", str(e))
+
     tk.Button(
         root, text="Submit",
         command=on_submit,
         bg="#4CAF50", fg="white",
         font=("Segoe UI", 12, "bold")
     ).pack(pady=20, ipadx=10, ipady=5)
-    
+
     root.mainloop()
 
 if __name__ == "__main__":
