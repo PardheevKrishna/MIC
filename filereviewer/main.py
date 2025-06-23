@@ -7,7 +7,6 @@ import logging
 import pandas as pd
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from concurrent.futures import ThreadPoolExecutor
 
 # Requires: pandas, openpyxl, pywin32, tkcalendar
 try:
@@ -38,8 +37,7 @@ class FileReportApp:
         self.df_access = None
 
         width = 40
-        style = ttk.Style(master)
-        style.theme_use('clam')
+        ttk.Style(master).theme_use('clam')
 
         frm = ttk.Frame(master, padding=10)
         frm.pack(fill='both', expand=True)
@@ -53,7 +51,8 @@ class FileReportApp:
         # Person selector
         ttk.Label(frm, text='Select Person:').grid(row=1, column=0, pady=10, sticky='w')
         self.person_var = tk.StringVar()
-        self.person_cb = ttk.Combobox(frm, textvariable=self.person_var, state='readonly', width=width)
+        self.person_cb = ttk.Combobox(frm, textvariable=self.person_var,
+                                      state='readonly', width=width)
         self.person_cb.grid(row=1, column=1, columnspan=2, sticky='w')
         self.person_cb.bind('<<ComboboxSelected>>', self._person_selected)
         self.person_var.trace_add('write', lambda *a: self._person_selected())
@@ -73,8 +72,11 @@ class FileReportApp:
             year=datetime.datetime.now().year
         )
         self.date_entry.grid(row=4, column=1, sticky='w')
-        ttk.Label(frm, text='Includes all files created on or before this date',
-                  font=("TkDefaultFont", 8)).grid(row=5, column=1, columnspan=2, sticky='w', pady=(0,10))
+        ttk.Label(
+            frm,
+            text='(Includes all files created on or before this date)',
+            font=("TkDefaultFont", 8)
+        ).grid(row=5, column=1, columnspan=2, sticky='w', pady=(0,10))
 
         # Run button
         self.run_btn = ttk.Button(frm, text='Generate & Send', command=self._on_run)
@@ -90,6 +92,7 @@ class FileReportApp:
         self.status = ttk.Label(frm, text='', foreground='green', wraplength=600, justify='left')
         self.status.grid(row=9, column=0, columnspan=3, pady=(10, 0))
 
+        # Start polling queue
         self.master.after(100, self._process_queue)
 
     def _browse_excel(self):
@@ -102,7 +105,9 @@ class FileReportApp:
             df = pd.read_excel(path, sheet_name='Access Folder')
         except Exception as e:
             logger.exception("Failed to read 'Access Folder' sheet")
-            return messagebox.showerror('Error', f'Could not read "Access Folder":\n{e}')
+            messagebox.showerror('Error', f'Could not read "Access Folder":\n{e}')
+            return
+
         self.df_access = df
         owners = sorted(df['Entitlement Owner'].dropna().unique())
         logger.info("Owners found: %s", owners)
@@ -115,7 +120,7 @@ class FileReportApp:
         if self.df_access is None:
             return
         owner = self.person_var.get()
-        dfp = self.df_access[self.df_access['Entitlement Owner'] == owner]
+        dfp = self.df_access[self.df_access['Entitlement Owner']==owner]
         if dfp.empty:
             return
         row = dfp.iloc[0]
@@ -143,65 +148,60 @@ class FileReportApp:
         cutoff_ts= datetime.datetime.combine(cutoff_d, datetime.time.max).timestamp()
         now_ts   = time.time()
 
-        bases = self.df_access[self.df_access['Entitlement Owner'] == owner]['Full Path'].dropna().tolist()
-        rows = []
-        idx = 0
-        start = time.time()
-        total_size = 0
+        bases     = self.df_access[self.df_access['Entitlement Owner']==owner]['Full Path'].dropna().tolist()
+        rows      = []
+        idx       = 0
+        start     = time.time()
+        total_size= 0
 
-        # generator for all file paths
-        def all_files():
-            for base in bases:
-                for root, _, files in os.walk(base, followlinks=False):
-                    for f in files:
-                        yield os.path.join(root, f)
-
-        # worker to stat and filter
-        def process(fp):
+        def scan_dir(path):
             try:
-                st = os.stat(fp, follow_symlinks=False)
-                if st.st_ctime > cutoff_ts:
-                    return None
-                size = st.st_size
-                days = int((now_ts - st.st_ctime)//86400)
-                return {
-                    'fp': fp,
-                    'ctime': st.st_ctime,
-                    'mtime': st.st_mtime,
-                    'atime': st.st_atime,
-                    'size': size,
-                    'days': days
-                }
-            except:
-                return None
+                with os.scandir(path) as it:
+                    for ent in it:
+                        if ent.is_dir(follow_symlinks=False):
+                            yield from scan_dir(ent.path)
+                        elif ent.is_file(follow_symlinks=False):
+                            yield ent
+            except Exception as e:
+                logger.warning("Skipping %s: %s", path, e)
 
-        # use thread pool to parallelize stats
-        max_workers = min(32, (os.cpu_count() or 4) * 5)
-        with ThreadPoolExecutor(max_workers=max_workers) as exe:
-            for result in exe.map(process, all_files()):
+        for base in bases:
+            for ent in scan_dir(base):
                 idx += 1
-                if result:
-                    total_size += result['size']
+                try:
+                    st = ent.stat(follow_symlinks=False)
+                    if st.st_ctime > cutoff_ts:
+                        continue
+                    size = st.st_size
+                    total_size += size
+                    days = int((now_ts - st.st_ctime)//86400)
                     rows.append({
                         'Person':        owner,
-                        'File Name':     os.path.basename(result['fp']),
-                        'File Path':     result['fp'],
-                        'Created':       datetime.datetime.fromtimestamp(result['ctime']).strftime('%Y-%m-%d %H:%M:%S'),
-                        'Last Modified': datetime.datetime.fromtimestamp(result['mtime']).strftime('%Y-%m-%d %H:%M:%S'),
-                        'Last Accessed': datetime.datetime.fromtimestamp(result['atime']).strftime('%Y-%m-%d %H:%M:%S'),
-                        'Days Ago':      result['days'],
-                        'Size (MB)':     round(result['size'] / (1024*1024), 2)
+                        'File Name':     ent.name,
+                        'File Path':     ent.path,
+                        'Created':       datetime.datetime.fromtimestamp(st.st_ctime)
+                                               .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Last Modified': datetime.datetime.fromtimestamp(st.st_mtime)
+                                               .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Last Accessed': datetime.datetime.fromtimestamp(st.st_atime)
+                                               .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Days Ago':      days,
+                        'Size (MB)':     round(size / (1024*1024), 2)
                     })
+                except Exception as e:
+                    logger.error("Error on %s: %s", ent.path, e)
+
                 # real-time update
                 elapsed = time.time() - start
                 elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
                 self.queue.put(('update', idx, elapsed_str))
 
+        # finalize
         total_elapsed = time.time() - start
         total_elapsed_str = time.strftime('%H:%M:%S', time.gmtime(total_elapsed))
         total_files = len(rows)
 
-        # Save Excel
+        # save Excel
         df_out = pd.DataFrame(rows)
         stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         fn = f"{owner.replace(' ','_')}_report_{stamp}.xlsx"
@@ -213,7 +213,7 @@ class FileReportApp:
             ws.column_dimensions[col[0].column_letter].width = max_len + 2
         wb.save(fn)
 
-        # Email summary
+        # send email
         status = f"Report saved: {fn}"
         if win32:
             try:
@@ -242,18 +242,18 @@ class FileReportApp:
             except Exception as e:
                 logger.error("Email failed: %s", e)
                 status += " (email failed)"
+
         self.queue.put(('done', total_files, status, total_elapsed_str))
 
     def _process_queue(self):
         try:
             while True:
-                msg = self.queue.get_nowait()
-                typ = msg[0]
+                typ, *data = self.queue.get_nowait()
                 if typ == 'update':
-                    _, count, elapsed = msg
+                    count, elapsed = data
                     self.time_var.set(f"Processed: {count} files | Elapsed: {elapsed}")
                 elif typ == 'done':
-                    _, count, status, elapsed = msg
+                    count, status, elapsed = data
                     self.progress.stop()
                     self.status.config(text=status)
                     self.run_btn.config(state='normal')
@@ -262,6 +262,7 @@ class FileReportApp:
             pass
         finally:
             self.master.after(100, self._process_queue)
+
 
 if __name__ == '__main__':
     logger.info("Launching app")
