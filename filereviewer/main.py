@@ -7,6 +7,7 @@ import logging
 import pandas as pd
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from concurrent.futures import ThreadPoolExecutor
 
 # Requires: pandas, openpyxl, pywin32, tkcalendar
 try:
@@ -52,8 +53,7 @@ class FileReportApp:
         # Person selector
         ttk.Label(frm, text='Select Person:').grid(row=1, column=0, pady=10, sticky='w')
         self.person_var = tk.StringVar()
-        self.person_cb = ttk.Combobox(frm, textvariable=self.person_var,
-                                      state='readonly', width=width)
+        self.person_cb = ttk.Combobox(frm, textvariable=self.person_var, state='readonly', width=width)
         self.person_cb.grid(row=1, column=1, columnspan=2, sticky='w')
         self.person_cb.bind('<<ComboboxSelected>>', self._person_selected)
         self.person_var.trace_add('write', lambda *a: self._person_selected())
@@ -73,11 +73,8 @@ class FileReportApp:
             year=datetime.datetime.now().year
         )
         self.date_entry.grid(row=4, column=1, sticky='w')
-        ttk.Label(
-            frm,
-            text='Includes all files created on or before this date',
-            font=("TkDefaultFont", 8)
-        ).grid(row=5, column=1, columnspan=2, sticky='w', pady=(0,10))
+        ttk.Label(frm, text='Includes all files created on or before this date',
+                  font=("TkDefaultFont", 8)).grid(row=5, column=1, columnspan=2, sticky='w', pady=(0,10))
 
         # Run button
         self.run_btn = ttk.Button(frm, text='Generate & Send', command=self._on_run)
@@ -93,7 +90,6 @@ class FileReportApp:
         self.status = ttk.Label(frm, text='', foreground='green', wraplength=600, justify='left')
         self.status.grid(row=9, column=0, columnspan=3, pady=(10, 0))
 
-        # start queue polling
         self.master.after(100, self._process_queue)
 
     def _browse_excel(self):
@@ -107,7 +103,6 @@ class FileReportApp:
         except Exception as e:
             logger.exception("Failed to read 'Access Folder' sheet")
             return messagebox.showerror('Error', f'Could not read "Access Folder":\n{e}')
-
         self.df_access = df
         owners = sorted(df['Entitlement Owner'].dropna().unique())
         logger.info("Owners found: %s", owners)
@@ -124,8 +119,8 @@ class FileReportApp:
         if dfp.empty:
             return
         row = dfp.iloc[0]
-        self.email_var.set(row.get('Entitlement Owner Email', '') or '')
-        self.cc_var.set(row.get('Delegate Email', '') or '')
+        self.email_var.set(row.get('Entitlement Owner Email','') or '')
+        self.cc_var.set(row.get('Delegate Email','') or '')
 
     def _format_size(self, size_bytes):
         for unit in ['B','KB','MB','GB','TB']:
@@ -148,46 +143,59 @@ class FileReportApp:
         cutoff_ts= datetime.datetime.combine(cutoff_d, datetime.time.max).timestamp()
         now_ts   = time.time()
 
-        bases     = self.df_access[self.df_access['Entitlement Owner']==owner]['Full Path'].dropna().tolist()
-        rows      = []
-        idx       = 0
-        start     = time.time()
-        total_size_bytes = 0
+        bases = self.df_access[self.df_access['Entitlement Owner'] == owner]['Full Path'].dropna().tolist()
+        rows = []
+        idx = 0
+        start = time.time()
+        total_size = 0
 
-        # use os.walk for speed
-        for base in bases:
-            for root, _, files in os.walk(base, followlinks=False):
-                for fname in files:
-                    idx += 1
-                    fp = os.path.join(root, fname)
-                    try:
-                        st = os.stat(fp, follow_symlinks=False)
-                        if st.st_ctime > cutoff_ts:
-                            continue
-                        size_b = st.st_size
-                        total_size_bytes += size_b
-                        size_mb = size_b / (1024*1024)
-                        days = int((now_ts - st.st_ctime)//86400)
-                        rows.append({
-                            'Person':        owner,
-                            'File Name':     fname,
-                            'File Path':     fp,
-                            'Created':       datetime.datetime.fromtimestamp(st.st_ctime)
-                                                   .strftime('%Y-%m-%d %H:%M:%S'),
-                            'Last Modified': datetime.datetime.fromtimestamp(st.st_mtime)
-                                                   .strftime('%Y-%m-%d %H:%M:%S'),
-                            'Last Accessed': datetime.datetime.fromtimestamp(st.st_atime)
-                                                   .strftime('%Y-%m-%d %H:%M:%S'),
-                            'Days Ago':      days,
-                            'Size (MB)':     round(size_mb, 2)
-                        })
-                    except Exception as e:
-                        logger.error("Error on %s: %s", fp, e)
+        # generator for all file paths
+        def all_files():
+            for base in bases:
+                for root, _, files in os.walk(base, followlinks=False):
+                    for f in files:
+                        yield os.path.join(root, f)
 
-                    # real-time update every file
-                    elapsed = time.time() - start
-                    elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
-                    self.queue.put(('update', idx, elapsed_str))
+        # worker to stat and filter
+        def process(fp):
+            try:
+                st = os.stat(fp, follow_symlinks=False)
+                if st.st_ctime > cutoff_ts:
+                    return None
+                size = st.st_size
+                days = int((now_ts - st.st_ctime)//86400)
+                return {
+                    'fp': fp,
+                    'ctime': st.st_ctime,
+                    'mtime': st.st_mtime,
+                    'atime': st.st_atime,
+                    'size': size,
+                    'days': days
+                }
+            except:
+                return None
+
+        # use thread pool to parallelize stats
+        max_workers = min(32, (os.cpu_count() or 4) * 5)
+        with ThreadPoolExecutor(max_workers=max_workers) as exe:
+            for result in exe.map(process, all_files()):
+                idx += 1
+                if result:
+                    total_size += result['size']
+                    rows.append({
+                        'Person':        owner,
+                        'File Name':     os.path.basename(result['fp']),
+                        'File Path':     result['fp'],
+                        'Created':       datetime.datetime.fromtimestamp(result['ctime']).strftime('%Y-%m-%d %H:%M:%S'),
+                        'Last Modified': datetime.datetime.fromtimestamp(result['mtime']).strftime('%Y-%m-%d %H:%M:%S'),
+                        'Last Accessed': datetime.datetime.fromtimestamp(result['atime']).strftime('%Y-%m-%d %H:%M:%S'),
+                        'Days Ago':      result['days'],
+                        'Size (MB)':     round(result['size'] / (1024*1024), 2)
+                    })
+                # real-time update
+                elapsed = time.time() - start
+                elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
+                self.queue.put(('update', idx, elapsed_str))
 
         total_elapsed = time.time() - start
         total_elapsed_str = time.strftime('%H:%M:%S', time.gmtime(total_elapsed))
@@ -195,8 +203,8 @@ class FileReportApp:
 
         # Save Excel
         df_out = pd.DataFrame(rows)
-        stamp  = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        fn     = f"{owner.replace(' ','_')}_report_{stamp}.xlsx"
+        stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        fn = f"{owner.replace(' ','_')}_report_{stamp}.xlsx"
         df_out.to_excel(fn, index=False, engine='openpyxl')
         wb = load_workbook(fn)
         ws = wb.active
@@ -218,15 +226,13 @@ class FileReportApp:
                 summary = (
                     f"<p>Dear {owner},</p>"
                     "<p>Please find attached the detailed report.</p>"
-                    "<p>Summary:</p>"
-                    "<ul>"
+                    "<p>Summary:</p><ul>"
                     f"<li>Base folders searched: {', '.join(bases)}</li>"
                     f"<li>Number of files found: {total_files}</li>"
-                    f"<li>Total size: {self._format_size(total_size_bytes)}</li>"
+                    f"<li>Total size: {self._format_size(total_size)}</li>"
                     f"<li>Cutoff date: {cutoff_d}</li>"
                     f"<li>Scan duration: {total_elapsed_str}</li>"
-                    "</ul>"
-                    "<p>Regards,</p>"
+                    "</ul><p>Regards,</p>"
                 )
                 mail.HTMLBody = summary
                 mail.Attachments.Add(os.path.abspath(fn))
