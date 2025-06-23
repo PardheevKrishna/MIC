@@ -30,7 +30,7 @@ class FileReportApp:
         logger.info("Starting GUI")
         self.master = master
         master.title('Access Folder File Report')
-        master.geometry('650x480')
+        master.geometry('650x520')
         master.resizable(False, False)
 
         self.queue = queue.Queue()
@@ -52,8 +52,9 @@ class FileReportApp:
         # Person selector
         ttk.Label(frm, text='Select Person:').grid(row=1, column=0, pady=10, sticky='w')
         self.person_var = tk.StringVar()
-        self.person_cb = ttk.Combobox(frm, textvariable=self.person_var,
-                                      state='readonly', width=width)
+        self.person_cb = ttk.Combobox(
+            frm, textvariable=self.person_var, state='readonly', width=width
+        )
         self.person_cb.grid(row=1, column=1, columnspan=2, sticky='w')
         self.person_cb.bind('<<ComboboxSelected>>', self._person_selected)
         self.person_var.trace_add('write', lambda *a: self._person_selected())
@@ -73,20 +74,25 @@ class FileReportApp:
             year=datetime.datetime.now().year
         )
         self.date_entry.grid(row=4, column=1, sticky='w')
+        ttk.Label(
+            frm,
+            text='Includes all files created on or before this date',
+            font=("TkDefaultFont", 8)
+        ).grid(row=5, column=1, columnspan=2, sticky='w', pady=(0,10))
 
         # Run button
         self.run_btn = ttk.Button(frm, text='Generate & Send', command=self._on_run)
-        self.run_btn.grid(row=5, column=1, pady=20)
+        self.run_btn.grid(row=6, column=1, pady=10)
 
         # Progress spinner & ETA
         self.progress = ttk.Progressbar(frm, mode='indeterminate', length=500)
-        self.progress.grid(row=6, column=0, columnspan=3, pady=(10, 0))
+        self.progress.grid(row=7, column=0, columnspan=3, pady=(10, 0))
         self.time_var = tk.StringVar(value='Processed: 0 files | Elapsed: 00:00:00')
-        ttk.Label(frm, textvariable=self.time_var).grid(row=7, column=0, columnspan=3, sticky='w')
+        ttk.Label(frm, textvariable=self.time_var).grid(row=8, column=0, columnspan=3, sticky='w')
 
         # Status
         self.status = ttk.Label(frm, text='', foreground='green', wraplength=600, justify='left')
-        self.status.grid(row=8, column=0, columnspan=3, pady=(10, 0))
+        self.status.grid(row=9, column=0, columnspan=3, pady=(10, 0))
 
         # start queue polling
         self.master.after(100, self._process_queue)
@@ -101,7 +107,10 @@ class FileReportApp:
             df = pd.read_excel(path, sheet_name='Access Folder')
         except Exception as e:
             logger.exception("Failed to read 'Access Folder' sheet")
-            return messagebox.showerror('Error', f'Could not read "Access Folder":\n{e}')
+            return messagebox.showerror(
+                'Error',
+                f'Could not read "Access Folder":\n{e}'
+            )
 
         self.df_access = df
         owners = sorted(df['Entitlement Owner'].dropna().unique())
@@ -126,6 +135,13 @@ class FileReportApp:
         self.email_var.set(to)
         self.cc_var.set(cc)
 
+    def _format_size(self, size_bytes):
+        for unit in ['B','KB','MB','GB','TB','PB']:
+            if size_bytes < 1024:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.2f} PB"
+
     def _on_run(self):
         self.run_btn.config(state='disabled')
         self.status.config(text='')
@@ -135,31 +151,32 @@ class FileReportApp:
 
     def _scan_and_report(self):
         logger.info("Background scan begins")
-        owner   = self.person_var.get().strip()
-        to_mail = self.email_var.get().strip()
-        cc_mail = self.cc_var.get().strip()
-        cutoff_d= self.date_entry.get_date()
+        owner    = self.person_var.get().strip()
+        to_mail  = self.email_var.get().strip()
+        cc_mail  = self.cc_var.get().strip()
+        cutoff_d = self.date_entry.get_date()
         cutoff_ts = datetime.datetime.combine(cutoff_d, datetime.time.max).timestamp()
         now_ts    = time.time()
 
-        dfp = self.df_access[self.df_access['Entitlement Owner'] == owner]
-        bases = dfp['Full Path'].dropna().tolist()
+        dfp     = self.df_access[self.df_access['Entitlement Owner'] == owner]
+        bases   = dfp['Full Path'].dropna().tolist()
         logger.info("Paths to scan: %s", bases)
 
-        rows = []
-        idx = 0
-        start = time.time()
+        rows         = []
+        idx          = 0
+        start        = time.time()
+        total_size   = 0
 
-        def scan(p):
+        def scan(path):
             try:
-                with os.scandir(p) as it:
+                with os.scandir(path) as it:
                     for ent in it:
                         if ent.is_dir(follow_symlinks=False):
                             yield from scan(ent.path)
                         elif ent.is_file(follow_symlinks=False):
                             yield ent
             except Exception as e:
-                logger.warning("Skip dir %s: %s", p, e)
+                logger.warning("Skip dir %s: %s", path, e)
 
         for base in bases:
             for ent in scan(base):
@@ -168,36 +185,39 @@ class FileReportApp:
                     st = ent.stat(follow_symlinks=False)
                     if st.st_ctime > cutoff_ts:
                         continue
+                    size = st.st_size
+                    total_size += size
                     days = int((now_ts - st.st_ctime) // 86400)
                     rows.append({
                         'Person':        owner,
                         'File Name':     ent.name,
                         'File Path':     ent.path,
                         'Created':       datetime.datetime.fromtimestamp(st.st_ctime)
-                                           .strftime('%Y-%m-%d %H:%M:%S'),
+                                               .strftime('%Y-%m-%d %H:%M:%S'),
                         'Last Modified': datetime.datetime.fromtimestamp(st.st_mtime)
-                                           .strftime('%Y-%m-%d %H:%M:%S'),
+                                               .strftime('%Y-%m-%d %H:%M:%S'),
                         'Last Accessed': datetime.datetime.fromtimestamp(st.st_atime)
-                                           .strftime('%Y-%m-%d %H:%M:%S'),
-                        'Days Ago':      days
+                                               .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Days Ago':      days,
+                        'Size (bytes)':  size
                     })
                 except Exception as e:
                     logger.error("Error on %s: %s", ent.path, e)
 
-                # real-time update for each file
+                # real-time update
                 elapsed = time.time() - start
                 elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
                 self.queue.put(('update', idx, elapsed_str))
 
-        # final elapsed
         total_elapsed = time.time() - start
         total_elapsed_str = time.strftime('%H:%M:%S', time.gmtime(total_elapsed))
+        total_files = len(rows)
 
         # Save Excel
         df_out = pd.DataFrame(rows)
         stamp  = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         fn     = f"{owner.replace(' ','_')}_report_{stamp}.xlsx"
-        logger.info("Writing report %s (%d rows)", fn, len(rows))
+        logger.info("Writing report %s (%d rows)", fn, total_files)
         df_out.to_excel(fn, index=False, engine='openpyxl')
         wb = load_workbook(fn)
         ws = wb.active
@@ -206,33 +226,74 @@ class FileReportApp:
             ws.column_dimensions[col[0].column_letter].width = ml + 2
         wb.save(fn)
 
-        # Send Email
+        # Send Email with summary
         status = f"Report saved: {fn}"
         if win32:
             try:
-                logger.info("Emailing report to %s CC %s", to_mail, cc_mail)
-                ol = win32.Dispatch('Outlook.Application')
-                m  = ol.CreateItem(0)
-                m.To      = to_mail
-                m.CC      = cc_mail
-                m.Subject = f"File Report for {owner}"
-                m.HTMLBody= (
+                logger.info("Emailing report")
+                outlook = win32.Dispatch('Outlook.Application')
+                mail    = outlook.CreateItem(0)
+                # add To recipients individually, skip invalid
+                valid_to = []
+                for addr in to_mail.split(';'):
+                    addr = addr.strip()
+                    if not addr:
+                        continue
+                    try:
+                        r = mail.Recipients.Add(addr)
+                        if r.Resolve():
+                            valid_to.append(addr)
+                        else:
+                            logger.warning("Skipping invalid To address: %s", addr)
+                    except Exception as e:
+                        logger.error("Error adding To %s: %s", addr, e)
+                # add CC recipients
+                valid_cc = []
+                for addr in cc_mail.split(';'):
+                    addr = addr.strip()
+                    if not addr:
+                        continue
+                    try:
+                        r = mail.Recipients.Add(addr)
+                        r.Type = 2  # CC
+                        if r.Resolve():
+                            valid_cc.append(addr)
+                        else:
+                            logger.warning("Skipping invalid CC address: %s", addr)
+                    except Exception as e:
+                        logger.error("Error adding CC %s: %s", addr, e)
+                mail.Subject = f"File Report for {owner}"
+                summary_html = (
                     f"<p>Dear {owner},</p>"
-                    f"<p>Files created on or before {cutoff_d}:</p>"
-                    f"{df_out.to_html(index=False)}"
+                    f"<p>Please find attached the file report.</p>"
+                    "<p>Summary:</p>"
+                    "<ul>"
+                    f"<li>Base folders searched: {', '.join(bases)}</li>"
+                    f"<li>Number of files found: {total_files}</li>"
+                    f"<li>Total size of found files: {self._format_size(total_size)}</li>"
+                    f"<li>Cutoff date: {cutoff_d}</li>"
+                    f"<li>Scan duration: {total_elapsed_str}</li>"
+                    "</ul>"
                     "<p>Regards,</p>"
                 )
-                m.Attachments.Add(os.path.abspath(fn))
-                m.Send()
-                status += f" & emailed to {to_mail}"
+                mail.HTMLBody = summary_html
+                mail.Attachments.Add(os.path.abspath(fn))
+                mail.Recipients.ResolveAll()
+                mail.Send()
+                if valid_to:
+                    status += f" & emailed to {', '.join(valid_to)}"
+                if valid_cc:
+                    status += f" (CC: {', '.join(valid_cc)})"
                 logger.info("Email sent")
             except Exception as e:
-                logger.exception("Email failure")
-                status += f" (email failed: {e})"
+                logger.exception("Email send failed")
+                status += f" (Email failed: {e})"
+        else:
+            logger.warning("pywin32 unavailable: skipping email")
 
-        # signal done, include total elapsed
-        self.queue.put(('done', idx, status, total_elapsed_str))
-        logger.info("Scan complete, %d files matched", len(rows))
+        # signal done
+        self.queue.put(('done', total_files, status, total_elapsed_str))
+        logger.info("Scan complete, %d files matched", total_files)
 
     def _process_queue(self):
         try:
@@ -252,7 +313,6 @@ class FileReportApp:
             pass
         finally:
             self.master.after(100, self._process_queue)
-
 
 if __name__ == '__main__':
     logger.info("Launching app")
