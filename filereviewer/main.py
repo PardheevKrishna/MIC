@@ -67,7 +67,7 @@ class FileReportApp:
         self.cc_var = tk.StringVar()
         ttk.Entry(frm, textvariable=self.cc_var, width=width).grid(row=3, column=1, columnspan=2, sticky='w')
 
-        # Date picker
+        # Date picker + helper text
         ttk.Label(frm, text='Select Cutoff Date:').grid(row=4, column=0, sticky='w')
         self.date_entry = DateEntry(
             frm, width=12, background='darkblue', foreground='white', borderwidth=2,
@@ -107,10 +107,7 @@ class FileReportApp:
             df = pd.read_excel(path, sheet_name='Access Folder')
         except Exception as e:
             logger.exception("Failed to read 'Access Folder' sheet")
-            return messagebox.showerror(
-                'Error',
-                f'Could not read "Access Folder":\n{e}'
-            )
+            return messagebox.showerror('Error', f'Could not read "Access Folder":\n{e}')
 
         self.df_access = df
         owners = sorted(df['Entitlement Owner'].dropna().unique())
@@ -124,19 +121,16 @@ class FileReportApp:
         if self.df_access is None:
             return
         owner = self.person_var.get()
-        logger.info("Owner: %s", owner)
         dfp = self.df_access[self.df_access['Entitlement Owner'] == owner]
         if dfp.empty:
             return
         row = dfp.iloc[0]
-        to = row.get('Entitlement Owner Email', '') or ''
-        cc = row.get('Delegate Email', '') or ''
-        logger.debug("Setting To=%s, CC=%s", to, cc)
-        self.email_var.set(to)
-        self.cc_var.set(cc)
+        self.email_var.set(row.get('Entitlement Owner Email', '') or '')
+        self.cc_var.set(row.get('Delegate Email', '') or '')
 
     def _format_size(self, size_bytes):
-        for unit in ['B','KB','MB','GB','TB','PB']:
+        # human-readable for summary
+        for unit in ['B','KB','MB','GB','TB']:
             if size_bytes < 1024:
                 return f"{size_bytes:.2f} {unit}"
             size_bytes /= 1024
@@ -145,27 +139,23 @@ class FileReportApp:
     def _on_run(self):
         self.run_btn.config(state='disabled')
         self.status.config(text='')
-        self.progress.start(10)  # 10ms step
+        self.progress.start(10)
         logger.info("Starting scan thread")
         threading.Thread(target=self._scan_and_report, daemon=True).start()
 
     def _scan_and_report(self):
-        logger.info("Background scan begins")
         owner    = self.person_var.get().strip()
         to_mail  = self.email_var.get().strip()
         cc_mail  = self.cc_var.get().strip()
         cutoff_d = self.date_entry.get_date()
-        cutoff_ts = datetime.datetime.combine(cutoff_d, datetime.time.max).timestamp()
-        now_ts    = time.time()
+        cutoff_ts= datetime.datetime.combine(cutoff_d, datetime.time.max).timestamp()
+        now_ts   = time.time()
 
-        dfp     = self.df_access[self.df_access['Entitlement Owner'] == owner]
-        bases   = dfp['Full Path'].dropna().tolist()
-        logger.info("Paths to scan: %s", bases)
-
-        rows         = []
-        idx          = 0
-        start        = time.time()
-        total_size   = 0
+        bases     = self.df_access[self.df_access['Entitlement Owner']==owner]['Full Path'].dropna().tolist()
+        rows      = []
+        idx       = 0
+        start     = time.time()
+        total_size_bytes = 0
 
         def scan(path):
             try:
@@ -175,8 +165,8 @@ class FileReportApp:
                             yield from scan(ent.path)
                         elif ent.is_file(follow_symlinks=False):
                             yield ent
-            except Exception as e:
-                logger.warning("Skip dir %s: %s", path, e)
+            except Exception:
+                return
 
         for base in bases:
             for ent in scan(base):
@@ -185,9 +175,10 @@ class FileReportApp:
                     st = ent.stat(follow_symlinks=False)
                     if st.st_ctime > cutoff_ts:
                         continue
-                    size = st.st_size
-                    total_size += size
-                    days = int((now_ts - st.st_ctime) // 86400)
+                    size_b = st.st_size
+                    total_size_bytes += size_b
+                    size_mb = size_b / (1024*1024)
+                    days = int((now_ts - st.st_ctime)//86400)
                     rows.append({
                         'Person':        owner,
                         'File Name':     ent.name,
@@ -199,7 +190,7 @@ class FileReportApp:
                         'Last Accessed': datetime.datetime.fromtimestamp(st.st_atime)
                                                .strftime('%Y-%m-%d %H:%M:%S'),
                         'Days Ago':      days,
-                        'Size (bytes)':  size
+                        'Size (MB)':     round(size_mb, 2)
                     })
                 except Exception as e:
                     logger.error("Error on %s: %s", ent.path, e)
@@ -217,94 +208,62 @@ class FileReportApp:
         df_out = pd.DataFrame(rows)
         stamp  = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         fn     = f"{owner.replace(' ','_')}_report_{stamp}.xlsx"
-        logger.info("Writing report %s (%d rows)", fn, total_files)
         df_out.to_excel(fn, index=False, engine='openpyxl')
         wb = load_workbook(fn)
         ws = wb.active
         for col in ws.columns:
-            ml = max((len(str(c.value)) for c in col if c.value), default=0)
-            ws.column_dimensions[col[0].column_letter].width = ml + 2
+            max_len = max((len(str(c.value)) for c in col if c.value), default=0)
+            ws.column_dimensions[col[0].column_letter].width = max_len + 2
         wb.save(fn)
 
-        # Send Email with summary
+        # Email summary
         status = f"Report saved: {fn}"
         if win32:
             try:
-                logger.info("Emailing report")
-                outlook = win32.Dispatch('Outlook.Application')
-                mail    = outlook.CreateItem(0)
-                # add To recipients individually, skip invalid
-                valid_to = []
+                mail = win32.Dispatch('Outlook.Application').CreateItem(0)
+                # add To recipients
                 for addr in to_mail.split(';'):
-                    addr = addr.strip()
-                    if not addr:
-                        continue
-                    try:
-                        r = mail.Recipients.Add(addr)
-                        if r.Resolve():
-                            valid_to.append(addr)
-                        else:
-                            logger.warning("Skipping invalid To address: %s", addr)
-                    except Exception as e:
-                        logger.error("Error adding To %s: %s", addr, e)
+                    r = mail.Recipients.Add(addr.strip())
+                    r.Type = 1  # To
+                    r.Resolve()
                 # add CC recipients
-                valid_cc = []
                 for addr in cc_mail.split(';'):
-                    addr = addr.strip()
-                    if not addr:
-                        continue
-                    try:
-                        r = mail.Recipients.Add(addr)
-                        r.Type = 2  # CC
-                        if r.Resolve():
-                            valid_cc.append(addr)
-                        else:
-                            logger.warning("Skipping invalid CC address: %s", addr)
-                    except Exception as e:
-                        logger.error("Error adding CC %s: %s", addr, e)
+                    r = mail.Recipients.Add(addr.strip())
+                    r.Type = 2  # CC
+                    r.Resolve()
                 mail.Subject = f"File Report for {owner}"
-                summary_html = (
+                summary = (
                     f"<p>Dear {owner},</p>"
-                    f"<p>Please find attached the file report.</p>"
+                    "<p>Please find attached the detailed report.</p>"
                     "<p>Summary:</p>"
                     "<ul>"
                     f"<li>Base folders searched: {', '.join(bases)}</li>"
                     f"<li>Number of files found: {total_files}</li>"
-                    f"<li>Total size of found files: {self._format_size(total_size)}</li>"
+                    f"<li>Total size: {self._format_size(total_size_bytes)}</li>"
                     f"<li>Cutoff date: {cutoff_d}</li>"
                     f"<li>Scan duration: {total_elapsed_str}</li>"
                     "</ul>"
                     "<p>Regards,</p>"
                 )
-                mail.HTMLBody = summary_html
+                mail.HTMLBody = summary
                 mail.Attachments.Add(os.path.abspath(fn))
                 mail.Recipients.ResolveAll()
                 mail.Send()
-                if valid_to:
-                    status += f" & emailed to {', '.join(valid_to)}"
-                if valid_cc:
-                    status += f" (CC: {', '.join(valid_cc)})"
-                logger.info("Email sent")
+                status += f" & emailed"
             except Exception as e:
-                logger.exception("Email send failed")
-                status += f" (Email failed: {e})"
-        else:
-            logger.warning("pywin32 unavailable: skipping email")
-
-        # signal done
+                logger.error("Email send failed: %s", e)
+                status += f" (email failed)"
         self.queue.put(('done', total_files, status, total_elapsed_str))
-        logger.info("Scan complete, %d files matched", total_files)
 
     def _process_queue(self):
         try:
             while True:
-                msg = self.queue.get_nowait()
-                typ = msg[0]
+                typ, a, b = self.queue.get_nowait()
                 if typ == 'update':
-                    _, count, elapsed = msg
+                    count, elapsed = a, b
                     self.time_var.set(f"Processed: {count} files | Elapsed: {elapsed}")
                 elif typ == 'done':
-                    _, count, status, elapsed = msg
+                    count, status, elapsed = a, b, self.queue.get_nowait()[3]
                     self.progress.stop()
                     self.status.config(text=status)
                     self.run_btn.config(state='normal')
