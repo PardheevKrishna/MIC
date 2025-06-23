@@ -52,9 +52,8 @@ class FileReportApp:
         # Person selector
         ttk.Label(frm, text='Select Person:').grid(row=1, column=0, pady=10, sticky='w')
         self.person_var = tk.StringVar()
-        self.person_cb = ttk.Combobox(
-            frm, textvariable=self.person_var, state='readonly', width=width
-        )
+        self.person_cb = ttk.Combobox(frm, textvariable=self.person_var,
+                                      state='readonly', width=width)
         self.person_cb.grid(row=1, column=1, columnspan=2, sticky='w')
         self.person_cb.bind('<<ComboboxSelected>>', self._person_selected)
         self.person_var.trace_add('write', lambda *a: self._person_selected())
@@ -129,7 +128,6 @@ class FileReportApp:
         self.cc_var.set(row.get('Delegate Email', '') or '')
 
     def _format_size(self, size_bytes):
-        # human-readable for summary
         for unit in ['B','KB','MB','GB','TB']:
             if size_bytes < 1024:
                 return f"{size_bytes:.2f} {unit}"
@@ -140,7 +138,6 @@ class FileReportApp:
         self.run_btn.config(state='disabled')
         self.status.config(text='')
         self.progress.start(10)
-        logger.info("Starting scan thread")
         threading.Thread(target=self._scan_and_report, daemon=True).start()
 
     def _scan_and_report(self):
@@ -157,48 +154,40 @@ class FileReportApp:
         start     = time.time()
         total_size_bytes = 0
 
-        def scan(path):
-            try:
-                with os.scandir(path) as it:
-                    for ent in it:
-                        if ent.is_dir(follow_symlinks=False):
-                            yield from scan(ent.path)
-                        elif ent.is_file(follow_symlinks=False):
-                            yield ent
-            except Exception:
-                return
-
+        # use os.walk for speed
         for base in bases:
-            for ent in scan(base):
-                idx += 1
-                try:
-                    st = ent.stat(follow_symlinks=False)
-                    if st.st_ctime > cutoff_ts:
-                        continue
-                    size_b = st.st_size
-                    total_size_bytes += size_b
-                    size_mb = size_b / (1024*1024)
-                    days = int((now_ts - st.st_ctime)//86400)
-                    rows.append({
-                        'Person':        owner,
-                        'File Name':     ent.name,
-                        'File Path':     ent.path,
-                        'Created':       datetime.datetime.fromtimestamp(st.st_ctime)
-                                               .strftime('%Y-%m-%d %H:%M:%S'),
-                        'Last Modified': datetime.datetime.fromtimestamp(st.st_mtime)
-                                               .strftime('%Y-%m-%d %H:%M:%S'),
-                        'Last Accessed': datetime.datetime.fromtimestamp(st.st_atime)
-                                               .strftime('%Y-%m-%d %H:%M:%S'),
-                        'Days Ago':      days,
-                        'Size (MB)':     round(size_mb, 2)
-                    })
-                except Exception as e:
-                    logger.error("Error on %s: %s", ent.path, e)
+            for root, _, files in os.walk(base, followlinks=False):
+                for fname in files:
+                    idx += 1
+                    fp = os.path.join(root, fname)
+                    try:
+                        st = os.stat(fp, follow_symlinks=False)
+                        if st.st_ctime > cutoff_ts:
+                            continue
+                        size_b = st.st_size
+                        total_size_bytes += size_b
+                        size_mb = size_b / (1024*1024)
+                        days = int((now_ts - st.st_ctime)//86400)
+                        rows.append({
+                            'Person':        owner,
+                            'File Name':     fname,
+                            'File Path':     fp,
+                            'Created':       datetime.datetime.fromtimestamp(st.st_ctime)
+                                                   .strftime('%Y-%m-%d %H:%M:%S'),
+                            'Last Modified': datetime.datetime.fromtimestamp(st.st_mtime)
+                                                   .strftime('%Y-%m-%d %H:%M:%S'),
+                            'Last Accessed': datetime.datetime.fromtimestamp(st.st_atime)
+                                                   .strftime('%Y-%m-%d %H:%M:%S'),
+                            'Days Ago':      days,
+                            'Size (MB)':     round(size_mb, 2)
+                        })
+                    except Exception as e:
+                        logger.error("Error on %s: %s", fp, e)
 
-                # real-time update
-                elapsed = time.time() - start
-                elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
-                self.queue.put(('update', idx, elapsed_str))
+                    # real-time update every file
+                    elapsed = time.time() - start
+                    elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
+                    self.queue.put(('update', idx, elapsed_str))
 
         total_elapsed = time.time() - start
         total_elapsed_str = time.strftime('%H:%M:%S', time.gmtime(total_elapsed))
@@ -221,16 +210,10 @@ class FileReportApp:
         if win32:
             try:
                 mail = win32.Dispatch('Outlook.Application').CreateItem(0)
-                # add To recipients
                 for addr in to_mail.split(';'):
-                    r = mail.Recipients.Add(addr.strip())
-                    r.Type = 1  # To
-                    r.Resolve()
-                # add CC recipients
+                    r = mail.Recipients.Add(addr.strip()); r.Type = 1; r.Resolve()
                 for addr in cc_mail.split(';'):
-                    r = mail.Recipients.Add(addr.strip())
-                    r.Type = 2  # CC
-                    r.Resolve()
+                    r = mail.Recipients.Add(addr.strip()); r.Type = 2; r.Resolve()
                 mail.Subject = f"File Report for {owner}"
                 summary = (
                     f"<p>Dear {owner},</p>"
@@ -249,21 +232,22 @@ class FileReportApp:
                 mail.Attachments.Add(os.path.abspath(fn))
                 mail.Recipients.ResolveAll()
                 mail.Send()
-                status += f" & emailed"
+                status += " & emailed"
             except Exception as e:
-                logger.error("Email send failed: %s", e)
-                status += f" (email failed)"
+                logger.error("Email failed: %s", e)
+                status += " (email failed)"
         self.queue.put(('done', total_files, status, total_elapsed_str))
 
     def _process_queue(self):
         try:
             while True:
-                typ, a, b = self.queue.get_nowait()
+                msg = self.queue.get_nowait()
+                typ = msg[0]
                 if typ == 'update':
-                    count, elapsed = a, b
+                    _, count, elapsed = msg
                     self.time_var.set(f"Processed: {count} files | Elapsed: {elapsed}")
                 elif typ == 'done':
-                    count, status, elapsed = a, b, self.queue.get_nowait()[3]
+                    _, count, status, elapsed = msg
                     self.progress.stop()
                     self.status.config(text=status)
                     self.run_btn.config(state='normal')
