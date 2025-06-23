@@ -30,7 +30,7 @@ class FileReportApp:
         logger.info("Starting GUI")
         self.master = master
         master.title('Access Folder File Report')
-        master.geometry('650x520')
+        master.geometry('650x540')
         master.resizable(False, False)
 
         self.queue = queue.Queue()
@@ -92,7 +92,6 @@ class FileReportApp:
         self.status = ttk.Label(frm, text='', foreground='green', wraplength=600, justify='left')
         self.status.grid(row=9, column=0, columnspan=3, pady=(10, 0))
 
-        # Start polling queue
         self.master.after(100, self._process_queue)
 
     def _browse_excel(self):
@@ -120,7 +119,7 @@ class FileReportApp:
         if self.df_access is None:
             return
         owner = self.person_var.get()
-        dfp = self.df_access[self.df_access['Entitlement Owner']==owner]
+        dfp = self.df_access[self.df_access['Entitlement Owner'] == owner]
         if dfp.empty:
             return
         row = dfp.iloc[0]
@@ -141,18 +140,19 @@ class FileReportApp:
         threading.Thread(target=self._scan_and_report, daemon=True).start()
 
     def _scan_and_report(self):
-        owner    = self.person_var.get().strip()
-        to_mail  = self.email_var.get().strip()
-        cc_mail  = self.cc_var.get().strip()
-        cutoff_d = self.date_entry.get_date()
-        cutoff_ts= datetime.datetime.combine(cutoff_d, datetime.time.max).timestamp()
-        now_ts   = time.time()
+        owner     = self.person_var.get().strip()
+        to_mail   = self.email_var.get().strip()
+        cc_mail   = self.cc_var.get().strip()
+        cutoff_d  = self.date_entry.get_date()
+        cutoff_ts = datetime.datetime.combine(cutoff_d, datetime.time.max).timestamp()
+        now_ts    = time.time()
 
-        bases     = self.df_access[self.df_access['Entitlement Owner']==owner]['Full Path'].dropna().tolist()
-        rows      = []
-        idx       = 0
-        start     = time.time()
-        total_size= 0
+        bases      = self.df_access[self.df_access['Entitlement Owner']==owner]['Full Path'].dropna().tolist()
+        rows       = []
+        errors     = []
+        idx        = 0
+        start_time = time.time()
+        total_size = 0
 
         def scan_dir(path):
             try:
@@ -163,7 +163,11 @@ class FileReportApp:
                         elif ent.is_file(follow_symlinks=False):
                             yield ent
             except Exception as e:
-                logger.warning("Skipping %s: %s", path, e)
+                errors.append({
+                    'Entitlement Owner': owner,
+                    'File Path': path,
+                    'Error Message': str(e)
+                })
 
         for base in bases:
             for ent in scan_dir(base):
@@ -176,44 +180,55 @@ class FileReportApp:
                     total_size += size
                     days = int((now_ts - st.st_ctime)//86400)
                     rows.append({
-                        'Person':        owner,
-                        'File Name':     ent.name,
-                        'File Path':     ent.path,
-                        'Created':       datetime.datetime.fromtimestamp(st.st_ctime)
-                                               .strftime('%Y-%m-%d %H:%M:%S'),
-                        'Last Modified': datetime.datetime.fromtimestamp(st.st_mtime)
-                                               .strftime('%Y-%m-%d %H:%M:%S'),
-                        'Last Accessed': datetime.datetime.fromtimestamp(st.st_atime)
-                                               .strftime('%Y-%m-%d %H:%M:%S'),
-                        'Days Ago':      days,
-                        'Size (MB)':     round(size / (1024*1024), 2)
+                        'Entitlement Owner': owner,
+                        'File Name':         ent.name,
+                        'File Path':         ent.path,
+                        'Created':           datetime.datetime.fromtimestamp(st.st_ctime)
+                                                  .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Last Modified':     datetime.datetime.fromtimestamp(st.st_mtime)
+                                                  .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Last Accessed':     datetime.datetime.fromtimestamp(st.st_atime)
+                                                  .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Days Ago':          days,
+                        'Size (MB)':         round(size / (1024*1024), 2)
                     })
                 except Exception as e:
-                    logger.error("Error on %s: %s", ent.path, e)
+                    errors.append({
+                        'Entitlement Owner': owner,
+                        'File Path': ent.path,
+                        'Error Message': str(e)
+                    })
 
                 # real-time update
-                elapsed = time.time() - start
+                elapsed = time.time() - start_time
                 elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
                 self.queue.put(('update', idx, elapsed_str))
 
-        # finalize
-        total_elapsed = time.time() - start
-        total_elapsed_str = time.strftime('%H:%M:%S', time.gmtime(total_elapsed))
-        total_files = len(rows)
+        total_elapsed = time.time() - start_time
+        elapsed_str   = time.strftime('%H:%M:%S', time.gmtime(total_elapsed))
+        total_files   = len(rows)
 
-        # save Excel
-        df_out = pd.DataFrame(rows)
-        stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        fn = f"{owner.replace(' ','_')}_report_{stamp}.xlsx"
-        df_out.to_excel(fn, index=False, engine='openpyxl')
+        # Write Excel with two sheets
+        df_main = pd.DataFrame(rows)
+        df_err  = pd.DataFrame(errors)
+        stamp   = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        fn      = f"{owner.replace(' ','_')}_report_{stamp}.xlsx"
+
+        with pd.ExcelWriter(fn, engine='openpyxl') as writer:
+            df_main.to_excel(writer, sheet_name='Entitlement Files', index=False)
+            if not df_err.empty:
+                df_err.to_excel(writer, sheet_name='Access Errors', index=False)
+
+        # auto-fit columns on both sheets
         wb = load_workbook(fn)
-        ws = wb.active
-        for col in ws.columns:
-            max_len = max((len(str(c.value)) for c in col if c.value), default=0)
-            ws.column_dimensions[col[0].column_letter].width = max_len + 2
+        for sheet in wb.sheetnames:
+            ws = wb[sheet]
+            for col in ws.columns:
+                max_len = max((len(str(c.value)) for c in col if c.value), default=0)
+                ws.column_dimensions[col[0].column_letter].width = max_len + 2
         wb.save(fn)
 
-        # send email
+        # Email summary
         status = f"Report saved: {fn}"
         if win32:
             try:
@@ -231,7 +246,7 @@ class FileReportApp:
                     f"<li>Number of files found: {total_files}</li>"
                     f"<li>Total size: {self._format_size(total_size)}</li>"
                     f"<li>Cutoff date: {cutoff_d}</li>"
-                    f"<li>Scan duration: {total_elapsed_str}</li>"
+                    f"<li>Scan duration: {elapsed_str}</li>"
                     "</ul><p>Regards,</p>"
                 )
                 mail.HTMLBody = summary
@@ -243,7 +258,7 @@ class FileReportApp:
                 logger.error("Email failed: %s", e)
                 status += " (email failed)"
 
-        self.queue.put(('done', total_files, status, total_elapsed_str))
+        self.queue.put(('done', total_files, status, elapsed_str))
 
     def _process_queue(self):
         try:
@@ -262,7 +277,6 @@ class FileReportApp:
             pass
         finally:
             self.master.after(100, self._process_queue)
-
 
 if __name__ == '__main__':
     logger.info("Launching app")
