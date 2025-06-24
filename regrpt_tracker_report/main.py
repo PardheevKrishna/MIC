@@ -58,38 +58,35 @@ def send_via_outlook(to, cc, subject, html_body, attachments):
 
 def worker(start_date, end_date, q):
     try:
-        # 1) Build task list
+        # 1) build list of tasks
         tasks = [
             (sheet, list_name, emp_list)
             for sheet, groups in SHEET_MAP.items()
             for list_name, emp_list in groups
         ]
         q.put(('init', len(tasks)))
+        logger.info(f"{len(tasks)} tasks queued.")
 
-        # 2) Normalize start/end to datetimes
+        # normalize start/end as full datetimes
         start_dt = pd.to_datetime(start_date)
         end_dt   = pd.to_datetime(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
 
         ts        = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         downloads = os.path.join(os.path.expanduser("~"), "Downloads")
 
-        # 3) Preload all sheets, read first column as datetime
+        # 2) preload all sheets, parse col A
         logger.info("Loading sheets into pandas...")
-        sheet_dfs = {}
-        for sheet in SHEET_MAP:
-            df = pd.read_excel(
+        sheet_dfs = {
+            sheet: pd.read_excel(
                 SRC_FILE,
                 sheet_name=sheet,
                 engine="openpyxl",
                 header=0,
-                parse_dates=[0],  # parse col A
-                dtype=str         # read others as string
+                parse_dates=[0]
             )
-            # Ensure col A is datetime
-            date_col = df.columns[0]
-            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-            sheet_dfs[sheet] = df
-        logger.info("Sheets loaded and date column parsed.")
+            for sheet in SHEET_MAP
+        }
+        logger.info("Sheets loaded.")
 
         attachments = []
         missing_map = {}
@@ -107,46 +104,43 @@ def worker(start_date, end_date, q):
             total_rows = len(df)
             q.put(('sheet_info', total_rows))
 
-            # 4) Normalize and filter
-            df['_dt'] = df[date_col].dt.normalize()
-            mask      = (
-                (df['_dt'] >= start_dt) &
-                (df['_dt'] <= end_dt) &
-                (df[emp_col].isin(emp_list))
-            )
-            df_f = df.loc[mask].copy()
-            filtered = len(df_f)
-            q.put(('filtered_info', filtered))
-            logger.info(f"  → {filtered}/{total_rows} rows in range")
+            # 3) enforce datetime dtype in case parse_dates missed something
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
 
-            # 5) Missing employees + last update before start
+            # 4) normalize via DatetimeIndex
+            df['_dt'] = pd.DatetimeIndex(df[date_col]).normalize()
+
+            # 5) filter by that normalized timestamp and employee list
+            mask = (df['_dt'] >= start_dt) & (df['_dt'] <= end_dt) & df[emp_col].isin(emp_list)
+            df_f = df.loc[mask].copy()
+            q.put(('filtered_info', len(df_f)))
+            logger.info(f"  → {len(df_f)} rows in range")
+
+            # 6) missing employees + last-before
             present = set(df_f[emp_col].dropna())
             missing = sorted(set(emp_list) - present)
             df_before = df[df['_dt'] < start_dt]
-            last_before = {}
+
+            missing_map[list_name] = []
             for emp in missing:
                 df_e = df_before[df_before[emp_col] == emp]
                 if df_e.empty:
-                    last_before[emp] = "N/A"
+                    lastb = "N/A"
                 else:
                     d = df_e[date_col].max().date()
-                    last_before[emp] = d.strftime("%m/%d/%Y")
-            missing_map[list_name] = [
-                {"employee": emp, "last_before": last_before[emp]}
-                for emp in missing
-            ]
+                    lastb = d.strftime("%m/%d/%Y")
+                missing_map[list_name].append({"employee": emp, "last_before": lastb})
             q.put(('missing_info', missing))
 
-            # 6) Strip time from all datetime cols
+            # 7) strip time from ALL datetime cols in df_f
             for c in df_f.select_dtypes(include='datetime64'):
                 df_f[c] = df_f[c].dt.date
 
-            # 7) Write out to .xlsx (guarantee at least headers)
+            # 8) write out .xlsx (always at least headers)
             out_name = f"{list_name}_{ts}.xlsx"
             out_path = os.path.join(downloads, out_name)
             with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
                 if df_f.empty:
-                    # headers-only
                     pd.DataFrame(columns=df.columns).to_excel(
                         writer, sheet_name=list_name[:31], index=False
                     )
@@ -155,12 +149,12 @@ def worker(start_date, end_date, q):
                         writer, sheet_name=list_name[:31], index=False
                     )
             attachments.append(out_path)
-            logger.info(f"  → Saved {out_name}")
+            logger.info(f"Saved {out_name}")
 
             done += 1
             q.put(('progress', done))
 
-        # 8) Build HTML email
+        # 9) build HTML email with last-before column
         html = ['<html><body><h1>Missing Entries</h1>']
         for ln, items in missing_map.items():
             html.append(f"<h2>{ln}</h2>")
@@ -180,7 +174,7 @@ def worker(start_date, end_date, q):
         html.append("</body></html>")
         body = "\n".join(html)
 
-        # 9) Send via Outlook
+        # 10) send via Outlook
         send_via_outlook(EMAIL_TO, EMAIL_CC, EMAIL_SUBJECT, body, attachments)
         q.put(('done', attachments, missing_map))
         logger.info("Worker finished successfully.")
@@ -190,7 +184,7 @@ def worker(start_date, end_date, q):
         q.put(('error', str(e)))
 
 def start_process():
-    s = start_cal.get_date();  e = end_cal.get_date()
+    s = start_cal.get_date(); e = end_cal.get_date()
     if s > e:
         return messagebox.showerror("Error", "Start must be on or before End.")
     btn_submit.config(state='disabled')
@@ -235,8 +229,8 @@ root.geometry("480x340")
 root.resizable(False, False)
 
 q = queue.Queue()
-
 padx, wrap = 10, 460
+
 tk.Label(root, text="Start Date:").pack(anchor="w", padx=padx, pady=(10,0))
 start_cal = DateEntry(root, date_pattern="mm/dd/yyyy"); start_cal.pack(padx=padx)
 tk.Label(root, text="End Date:").pack(anchor="w", padx=padx, pady=(10,0))
