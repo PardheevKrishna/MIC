@@ -36,7 +36,7 @@ EMAIL_CC      = ["cc1@example.com"]
 EMAIL_SUBJECT = "CRIT Automated Summary"
 # ─── END CONFIG ───────────────────────────────────────────────────────────────
 
-# ─── set up logging ────────────────────────────────────────────────────────────
+# ─── logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -58,66 +58,70 @@ def send_via_outlook(to, cc, subject, html_body, attachments):
 
 def worker(start_date, end_date, q):
     try:
-        # Build flat list of tasks
+        # 1) Build task list
         tasks = [
             (sheet, list_name, emp_list)
             for sheet, groups in SHEET_MAP.items()
             for list_name, emp_list in groups
         ]
         q.put(('init', len(tasks)))
-        logger.info(f"{len(tasks)} tasks queued.")
 
-        # Normalize start/end as datetimes at midnight
+        # 2) Normalize start/end to datetimes
         start_dt = pd.to_datetime(start_date)
         end_dt   = pd.to_datetime(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
 
         ts        = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         downloads = os.path.join(os.path.expanduser("~"), "Downloads")
 
-        # Pre‐load all sheets
+        # 3) Preload all sheets, read first column as datetime
         logger.info("Loading sheets into pandas...")
-        sheet_dfs = {
-            sheet: pd.read_excel(
+        sheet_dfs = {}
+        for sheet in SHEET_MAP:
+            df = pd.read_excel(
                 SRC_FILE,
                 sheet_name=sheet,
                 engine="openpyxl",
-                parse_dates=[0],
-                dtype=str  # read everything as string first
+                header=0,
+                parse_dates=[0],  # parse col A
+                dtype=str         # read others as string
             )
-            for sheet in SHEET_MAP
-        }
-        # Coerce first column to datetime
-        for df in sheet_dfs.values():
-            df.iloc[:,0] = pd.to_datetime(df.iloc[:,0], errors='coerce')
-        logger.info("Sheets loaded and date‐parsed.")
+            # Ensure col A is datetime
+            date_col = df.columns[0]
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+            sheet_dfs[sheet] = df
+        logger.info("Sheets loaded and date column parsed.")
 
-        attachments  = []
-        missing_map  = {}
-        tasks_done   = 0
+        attachments = []
+        missing_map = {}
+        done = 0
 
         for sheet, list_name, emp_list in tasks:
             desc = f"{sheet} → {list_name}"
             q.put(('task', desc))
-            logger.info(f"Starting {desc}")
+            logger.info("Starting " + desc)
 
             df = sheet_dfs[sheet]
             date_col = df.columns[0]
             emp_col  = df.columns[4]
 
-            total_rows = len(df);  q.put(('sheet_info', total_rows))
+            total_rows = len(df)
+            q.put(('sheet_info', total_rows))
 
-            # NEW: normalize and mask
+            # 4) Normalize and filter
             df['_dt'] = df[date_col].dt.normalize()
-            mask      = (df['_dt'] >= start_dt) & (df['_dt'] <= end_dt) & (df[emp_col].isin(emp_list))
-            df_f      = df.loc[mask].copy()
-            logger.info(f"  → Found {len(df_f)} rows between {start_date} and {end_date}")
-            q.put(('filtered_info', len(df_f)))
+            mask      = (
+                (df['_dt'] >= start_dt) &
+                (df['_dt'] <= end_dt) &
+                (df[emp_col].isin(emp_list))
+            )
+            df_f = df.loc[mask].copy()
+            filtered = len(df_f)
+            q.put(('filtered_info', filtered))
+            logger.info(f"  → {filtered}/{total_rows} rows in range")
 
-            # find missing employees
+            # 5) Missing employees + last update before start
             present = set(df_f[emp_col].dropna())
             missing = sorted(set(emp_list) - present)
-
-            # for each missing, get last update before start_date
             df_before = df[df['_dt'] < start_dt]
             last_before = {}
             for emp in missing:
@@ -133,61 +137,62 @@ def worker(start_date, end_date, q):
             ]
             q.put(('missing_info', missing))
 
-            # strip time from ANY datetime cols
+            # 6) Strip time from all datetime cols
             for c in df_f.select_dtypes(include='datetime64'):
                 df_f[c] = df_f[c].dt.date
 
-            # write out .xlsx (always at least headers)
+            # 7) Write out to .xlsx (guarantee at least headers)
             out_name = f"{list_name}_{ts}.xlsx"
             out_path = os.path.join(downloads, out_name)
-            with pd.ExcelWriter(out_path, engine="openpyxl") as w:
+            with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
                 if df_f.empty:
+                    # headers-only
                     pd.DataFrame(columns=df.columns).to_excel(
-                        w, sheet_name=list_name[:31], index=False
+                        writer, sheet_name=list_name[:31], index=False
                     )
                 else:
                     df_f.drop(columns=['_dt']).to_excel(
-                        w, sheet_name=list_name[:31], index=False
+                        writer, sheet_name=list_name[:31], index=False
                     )
             attachments.append(out_path)
             logger.info(f"  → Saved {out_name}")
 
-            tasks_done += 1
-            q.put(('progress', tasks_done))
+            done += 1
+            q.put(('progress', done))
 
-        # Compose HTML e-mail
+        # 8) Build HTML email
         html = ['<html><body><h1>Missing Entries</h1>']
-        for ln, rows in missing_map.items():
+        for ln, items in missing_map.items():
             html.append(f"<h2>{ln}</h2>")
-            if not rows:
+            if not items:
                 html.append("<p>All employees reported in range.</p>")
             else:
                 html.append(
                     "<table border='1' cellpadding='4'>"
                     "<tr><th>Employee</th><th>Last Update Before Start</th></tr>"
                 )
-                for r in rows:
+                for it in items:
                     html.append(
-                        f"<tr><td>{r['employee']}</td>"
-                        f"<td>{r['last_before']}</td></tr>"
+                        f"<tr><td>{it['employee']}</td>"
+                        f"<td>{it['last_before']}</td></tr>"
                     )
                 html.append("</table>")
         html.append("</body></html>")
         body = "\n".join(html)
 
-        # send
+        # 9) Send via Outlook
         send_via_outlook(EMAIL_TO, EMAIL_CC, EMAIL_SUBJECT, body, attachments)
         q.put(('done', attachments, missing_map))
-        logger.info("All done.")
+        logger.info("Worker finished successfully.")
 
     except Exception as e:
-        logger.exception("Worker error")
+        logger.exception("Error in worker")
         q.put(('error', str(e)))
 
 def start_process():
     s = start_cal.get_date();  e = end_cal.get_date()
     if s > e:
-        return messagebox.showerror("Error", "Start must be ≤ End.")
+        return messagebox.showerror("Error", "Start must be on or before End.")
     btn_submit.config(state='disabled')
     threading.Thread(target=worker, args=(s, e, q), daemon=True).start()
     root.after(100, poll_queue)
@@ -225,22 +230,20 @@ def poll_queue():
 
 # ─── BUILD UI ─────────────────────────────────────────────────────────────────
 root = tk.Tk()
-root.title("CRIT Filter & Emailer (fixed)")
+root.title("CRIT Filter & Emailer")
 root.geometry("480x340")
 root.resizable(False, False)
 
 q = queue.Queue()
-padx, wrap = 10, 460
 
+padx, wrap = 10, 460
 tk.Label(root, text="Start Date:").pack(anchor="w", padx=padx, pady=(10,0))
 start_cal = DateEntry(root, date_pattern="mm/dd/yyyy"); start_cal.pack(padx=padx)
-
 tk.Label(root, text="End Date:").pack(anchor="w", padx=padx, pady=(10,0))
-end_cal   = DateEntry(root, date_pattern="mm/dd/yyyy"); end_cal.pack(padx=padx)
+end_cal = DateEntry(root, date_pattern="mm/dd/yyyy"); end_cal.pack(padx=padx)
 
 btn_submit = tk.Button(root, text="Submit", command=start_process,
-                       bg="#4CAF50", fg="white",
-                       font=("Segoe UI", 12, "bold"))
+                       bg="#4CAF50", fg="white", font=("Segoe UI", 12, "bold"))
 btn_submit.pack(pady=15, ipadx=10, ipady=5)
 
 progress_var = tk.StringVar(value="Idle")
@@ -250,13 +253,10 @@ prog_bar.pack(pady=(2,10))
 
 task_var = tk.StringVar()
 tk.Label(root, textvariable=task_var, wraplength=wrap, fg="blue").pack()
-
 sheet_var = tk.StringVar()
 tk.Label(root, textvariable=sheet_var, wraplength=wrap).pack()
-
 filt_var = tk.StringVar()
 tk.Label(root, textvariable=filt_var, wraplength=wrap).pack()
-
 miss_var = tk.StringVar()
 tk.Label(root, textvariable=miss_var, wraplength=wrap).pack()
 
