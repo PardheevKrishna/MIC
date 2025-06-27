@@ -1,173 +1,208 @@
+import os, glob, time, queue, threading, logging
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-import threading
-import queue
-import time
-import os
-import glob
 import pandas as pd
 
-def format_time(seconds):
-    mins, secs = divmod(int(seconds), 60)
-    hours, mins = divmod(mins, 60)
-    return f"{hours:02d}:{mins:02d}:{secs:02d}"
+# ─── CONFIGURE LOGGING ─────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger(__name__)
 
-def process_files(folder, queue):
+# ─── TIME FORMATTING ───────────────────────────────────────────────────────────
+def format_time(elapsed):
+    hrs, rem = divmod(elapsed, 3600)
+    mins, secs = divmod(rem, 60)
+    return f"{int(hrs):02d}:{int(mins):02d}:{secs:05.2f}"
+
+# ─── WORKER ───────────────────────────────────────────────────────────────────
+def process_files(folder, gui_queue):
     start_time = time.time()
-    combined_fp = []
-    combined_pol = []
-    env_map = {'DEV': '1-DEV', 'UAT': '2-UAT', 'PROD': '3-PROD'}
+    env_map     = {'DEV': '1-DEV', 'UAT': '2-UAT', 'PROD': '3-PROD'}
+    chunksize   = 200_000
 
-    for env_key in ['DEV', 'UAT', 'PROD']:
-        # find matching CSV
+    all_fp_chunks = []
+    all_pol_rows  = []
+
+    for env_key in ('DEV','UAT','PROD'):
         pattern = os.path.join(folder, f'*_{env_key}.csv')
-        files = glob.glob(pattern)
+        files   = glob.glob(pattern)
         if not files:
+            logger.warning("No %s file found, skipping", env_key)
             continue
         csv_file = files[0]
-        env = env_map[env_key]
+        env_tag  = env_map[env_key]
+        logger.info("=== Processing %s → %s ===", csv_file, env_tag)
 
-        # --- Folders-Permissions section ---
-        df = pd.read_csv(csv_file, skiprows=13, header=0, dtype=str).fillna('')
-        for _, row in df.iterrows():
-            a = str(row.iat[0]).strip()
-            if a == 'Policies':
-                break  # stop when we hit the policies section
-            b = str(row.iat[1]).strip()
-            q = str(row.iat[16]).strip()  # Column Q
+        # ── PART 1: Folders-Permissions (chunked) ──────────────────────
+        reader = pd.read_csv(
+            csv_file,
+            skiprows=13,
+            header=0,
+            dtype=str,
+            chunksize=chunksize
+        )
+        processed_rows = 0
+        hit_policies  = False
 
-            # derive path segments
-            segments = b.split('/')
-            loc_path = '/'.join(segments[1:]) if len(segments) > 1 else ''
-            top = segments[1] if len(segments) > 1 else ''
-            second = '/'.join(segments[2:]) if len(segments) > 2 else ''
+        for chunk in reader:
+            chunk = chunk.fillna('')
+            # stop at the 'Policies' sentinel in col A
+            mask_p = chunk.iloc[:,0].eq('Policies')
+            if mask_p.any():
+                idx = mask_p.idxmax()
+                chunk = chunk.loc[:idx-1]
+                hit_policies = True
 
-            # parse Cognos Group/Role and policies
-            ppp = qqq = policies_str = ''
-            if ' - ' in q:
-                left, rest = q.split(' - ', 1)
-                ppp = left.strip()
-                if ':' in rest:
-                    qqq, policies_str = rest.split(':', 1)
-                    qqq = qqq.strip()
-                    policies_str = policies_str.strip()
-                else:
-                    qqq = rest.strip()
-            else:
-                if ':' in q:
-                    policies_str = q.split(':', 1)[1].strip()
+            n_chunk = len(chunk)
+            if n_chunk == 0 and hit_policies:
+                break
 
-            parts = policies_str.split('-') if policies_str else []
-            flags = {letter.upper(): (1 if letter in parts else 0) for letter in ['x','r','p','w','t']}
+            # vectorized derivations
+            default = chunk.iloc[:,0].str.strip()
+            loc     = chunk.iloc[:,1].str.strip()
 
-            combined_fp.append({
-                'Default Name': a,
-                'Location': b,
-                'Location / Path': loc_path,
+            parts1 = loc.str.split('/', n=1, expand=True)
+            path   = parts1[1].fillna('')   # drop xxx/
+            parts2 = loc.str.split('/', n=2, expand=True)
+            top    = parts2[1].fillna('')
+            second = parts2[2].fillna('')
+
+            # ── FIXED PARSING FOR COLUMN Q ─────────────────────────────
+            qcol         = chunk.iloc[:,16].str.strip().fillna('')
+            # 1) split on colon
+            split_colon  = qcol.str.split(':', n=1, expand=True)
+            left_part    = split_colon[0].str.strip()
+            pols         = split_colon[1].fillna('').str.strip()
+            # 2) split left_part on ' - ' only when present
+            lr           = left_part.str.split(' - ', n=1, expand=True)
+            ppp          = lr[0].fillna('').str.strip()  # Cognos Group/Role
+            qqq          = lr[1].fillna('').str.strip()  # Security Group or ''
+
+            dfc = pd.DataFrame({
+                'Default Name': default,
+                'Location': loc,
+                'Location / Path': path,
                 'Top Level Folder': top,
                 'Second Level Folder': second,
                 'Cognos Group/Role': ppp,
                 'Security Group': qqq,
-                'Policies[x=Execute, r=Read, p=Set Policies, w=Write, t=Traverse]': policies_str,
-                'X': flags['X'], 'R': flags['R'], 'P': flags['P'],
-                'W': flags['W'], 'T': flags['T'],
-                'Environment': env
+                'Policies[x=Execute, r=Read, p=Set Policies, w=Write, t=Traverse]': pols,
             })
 
-            # update progress
-            processed = len(combined_fp)
+            # flags for each policy letter
+            for letter in ('x','r','p','w','t'):
+                pattern = fr'(^|-){letter}($|-)'
+                dfc[letter.upper()] = pols.str.contains(pattern).astype(int)
+
+            dfc['Environment'] = env_tag
+
+            all_fp_chunks.append(dfc)
+            processed_rows += n_chunk
+
             elapsed = time.time() - start_time
-            queue.put(('progress_fp', processed, elapsed))
+            gui_queue.put(('progress_fp', processed_rows, elapsed))
+            logger.info("Processed %7d FP rows (chunk %d)", processed_rows, n_chunk)
 
-        # --- Policies section (raw file parse) ---
-        with open(csv_file, 'r', encoding='utf-8', errors='ignore') as f:
-            lines = f.readlines()
-
-        header_idx = None
-        for i, ln in enumerate(lines):
-            if ln.strip().startswith('Policies'):
-                header_idx = i + 1
+            if hit_policies:
                 break
 
-        if header_idx is not None and header_idx < len(lines):
-            for ln in lines[header_idx+1:]:
+        logger.info("Finished FP for %s: %d rows", env_key, processed_rows)
+
+        # ── PART 2: Policies section ────────────────────────────────────
+        logger.info("Parsing Policies section in %s", csv_file)
+        with open(csv_file, 'r', encoding='utf-8', errors='ignore') as f:
+            lines = f.readlines()
+        hdr_idx = None
+        for i, ln in enumerate(lines):
+            if ln.strip().startswith('Policies'):
+                hdr_idx = i + 1
+                break
+        if hdr_idx is not None:
+            for ln in lines[hdr_idx+1:]:
                 if not ln.strip():
                     break
-                cells = ln.strip().split(',')
+                cells = ln.rstrip('\n').split(',')
                 if len(cells) < 2:
                     continue
-                combined_pol.append({
+                all_pol_rows.append({
                     'Owner Default Name': cells[0].strip(),
                     'Object Default Name': cells[1].strip(),
-                    'Environment': env
+                    'Environment': env_tag
                 })
-                queue.put(('progress_pol', len(combined_pol), time.time() - start_time))
+            gui_queue.put(('progress_pol', len(all_pol_rows), time.time() - start_time))
+            logger.info("Finished Policies for %s: %d rows", env_key, len(all_pol_rows))
+        else:
+            logger.warning("No Policies section found in %s", csv_file)
 
-    # Build DataFrames
-    df_fp = pd.DataFrame(combined_fp)
-    df_pol = pd.DataFrame(combined_pol)
-
-    # Write to Excel with formatting & autofit
-    out_file = os.path.join(folder, 'output.xlsx')
-    with pd.ExcelWriter(out_file, engine='xlsxwriter') as writer:
-        # Folders-Permissions sheet
+    # ── WRITE EXCEL ────────────────────────────────────────────────────────
+    logger.info("Writing output.xlsx…")
+    df_fp  = pd.concat(all_fp_chunks, ignore_index=True)
+    df_pol = pd.DataFrame(all_pol_rows)
+    out_path = os.path.join(folder, 'output.xlsx')
+    with pd.ExcelWriter(out_path, engine='xlsxwriter') as writer:
         df_fp.to_excel(writer, sheet_name='Folders-Permissions', index=False)
-        fp_ws = writer.sheets['Folders-Permissions']
+        ws_fp = writer.sheets['Folders-Permissions']
 
-        # Policies sheet (with "Policies" in A1)
-        df_pol.to_excel(writer, sheet_name='Policies', startrow=1, index=False, header=False)
-        pol_ws = writer.sheets['Policies']
-        pol_ws.write('A1', 'Policies')
-        for col_num, value in enumerate(df_pol.columns):
-            pol_ws.write(1, col_num, value)
+        df_pol.to_excel(writer, sheet_name='Policies',
+                        startrow=1, index=False, header=False)
+        ws_pol = writer.sheets['Policies']
+        ws_pol.write('A1', 'Policies')
+        for c, col in enumerate(df_pol.columns):
+            ws_pol.write(1, c, col)
 
-        # Autofit columns on both sheets
-        for ws, df in [(fp_ws, df_fp), (pol_ws, df_pol)]:
+        # autofit columns
+        for ws, df in ((ws_fp, df_fp), (ws_pol, df_pol)):
             for idx, col in enumerate(df.columns):
                 max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
                 ws.set_column(idx, idx, max_len)
 
-    queue.put(('done', out_file))
+    gui_queue.put(('done', out_path))
+    logger.info("All done! Excel saved to %s", out_path)
 
+# ─── GUI APP ─────────────────────────────────────────────────────────────────
 class App:
     def __init__(self, root):
+        root.title("CSV → Excel Fast Processor")
+        root.geometry("520x160")
+        self.q = queue.Queue()
+
+        self.btn = ttk.Button(root, text="Select Folder", command=self.choose)
+        self.btn.pack(pady=15)
+
+        self.status = tk.StringVar(value="Waiting for folder selection…")
+        ttk.Label(root, textvariable=self.status).pack(pady=5)
+
         self.root = root
-        root.title("CSV → Excel Processor")
-        root.geometry("500x150")
-        self.queue = queue.Queue()
 
-        self.btn_select = ttk.Button(root, text="Select Folder", command=self.select_folder)
-        self.btn_select.pack(pady=20)
-
-        self.status_var = tk.StringVar("Waiting for folder selection…")
-        ttk.Label(root, textvariable=self.status_var).pack()
-
-    def select_folder(self):
-        folder = filedialog.askdirectory(title="Select folder with your CSVs")
+    def choose(self):
+        folder = filedialog.askdirectory(title="Select folder with CSVs")
         if not folder:
             return
-        self.btn_select.config(state=tk.DISABLED)
-        self.status_var.set("Initializing…")
-        threading.Thread(target=process_files, args=(folder, self.queue), daemon=True).start()
-        self.root.after(100, self.update_gui)
+        self.btn.config(state=tk.DISABLED)
+        self.status.set("Starting…")
+        threading.Thread(target=process_files,
+                         args=(folder, self.q),
+                         daemon=True).start()
+        self.root.after(100, self._poll)
 
-    def update_gui(self):
+    def _poll(self):
         try:
-            msg = self.queue.get_nowait()
-            key, count, elapsed = msg[0], msg[1], msg[2]
+            key, a, b = self.q.get_nowait()
             if key == 'progress_fp':
-                self.status_var.set(f"Folders-Permissions rows: {count} | Elapsed: {format_time(elapsed)}")
+                self.status.set(f"FP rows: {a:,} | {format_time(b)}")
             elif key == 'progress_pol':
-                self.status_var.set(f"Policies rows: {count} | Elapsed: {format_time(elapsed)}")
+                self.status.set(f"Policies rows: {a:,} | {format_time(b)}")
             elif key == 'done':
-                out_file = msg[1]
-                self.status_var.set(f"Done! Saved to {out_file}")
-                messagebox.showinfo("Completed", f"Excel generated at:\n{out_file}")
-                self.btn_select.config(state=tk.NORMAL)
+                self.status.set(f"Done! → {a}")
+                messagebox.showinfo("Completed", f"Excel ready:\n{a}")
+                self.btn.config(state=tk.NORMAL)
                 return
         except queue.Empty:
             pass
-        self.root.after(100, self.update_gui)
+        self.root.after(100, self._poll)
 
 if __name__ == "__main__":
     root = tk.Tk()
