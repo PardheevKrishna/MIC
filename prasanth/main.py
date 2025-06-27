@@ -37,10 +37,10 @@ def process_files(folder, gui_queue):
         env_tag  = env_map[env_key]
         logger.info("Processing %s [%s]", path_csv, env_tag)
 
-        # load raw lines for Policies parsing
+        # read raw lines once
         with open(path_csv, 'r', encoding='utf-8', errors='ignore') as f:
             raw_lines = f.readlines()
-        # locate the "Policies" sentinel
+        # find the "Policies" line
         sentinel_idx = next(
             (i for i, ln in enumerate(raw_lines) if ln.strip().startswith('Policies')),
             None
@@ -48,10 +48,10 @@ def process_files(folder, gui_queue):
         if sentinel_idx is None:
             sentinel_idx = len(raw_lines)
 
-        # ── FOLDERS-PERMISSIONS ──────────────────────────────────────
+        # ── 1) FOLDERS-PERMISSIONS ───────────────────────────────────
         reader = pd.read_csv(
             path_csv,
-            skiprows=12,    # row 13 becomes header
+            skiprows=12,   # row 13 = header
             header=0,
             dtype=str,
             chunksize=chunksize
@@ -60,7 +60,6 @@ def process_files(folder, gui_queue):
 
         for chunk in reader:
             chunk = chunk.fillna('')
-            # stop at "Policies" in column A
             mpol = chunk.iloc[:,0].eq('Policies')
             if mpol.any():
                 idx = mpol.idxmax()
@@ -72,8 +71,8 @@ def process_files(folder, gui_queue):
                 break
 
             # derive columns
-            df0 = chunk.iloc[:,0].str.strip().rename('Default Name')
-            loc = chunk.iloc[:,1].str.strip()
+            df0  = chunk.iloc[:,0].str.strip().rename('Default Name')
+            loc  = chunk.iloc[:,1].str.strip()
 
             parts1 = loc.str.split(pat='/', n=1, expand=True)
             pathp  = parts1[1].fillna('').rename('Location / Path')
@@ -116,11 +115,12 @@ def process_files(folder, gui_queue):
             if hit_pol:
                 break
 
-        # ── POLICIES SECTION ────────────────────────────────────────
+        # ── 2) POLICIES SECTION ─────────────────────────────────────
         logger.info("Parsing Policies section")
-        for ln in raw_lines[sentinel_idx+1:]:
+        # start at raw_lines[sentinel_idx+2] to skip the CSV header row
+        for ln in raw_lines[sentinel_idx+2:]:
             if not ln.strip():
-                continue
+                break  # stop at first blank after data
             cells = ln.rstrip('\n').split(',')
             if len(cells) < 2:
                 skipped_raw.append({
@@ -139,23 +139,23 @@ def process_files(folder, gui_queue):
         gui_queue.put(('progress_pol', len(all_policies), time.time()-start_time))
         logger.info(" Policies rows: %d", len(all_policies))
 
-    # ── WRITE OUTPUT EXCEL ──────────────────────────────────────────
+    # ── WRITE EXCEL ─────────────────────────────────────────────────────
     df_fp  = pd.concat(all_fp, ignore_index=True)
     df_pol = pd.DataFrame(all_policies)
     df_sk  = pd.DataFrame(skipped_raw)
 
-    date_str = date.today().isoformat()  # YYYY-MM-DD
-    filename = f"ALL CA Folder Permissions as of {date_str}.xlsx"
+    # filename per spec
+    date_str = date.today().isoformat()   # e.g. "2025-06-27"
+    filename = f"All CA Folder Permissions as of {date_str}.xlsx"
     out_xl   = os.path.join(folder, filename)
     logger.info("Writing %s", filename)
 
     with pd.ExcelWriter(out_xl, engine='xlsxwriter') as writer:
-        # Folders-Permissions sheet
+        # Folders-Permissions
         df_fp.to_excel(writer, sheet_name='Folders-Permissions', index=False)
         ws1 = writer.sheets['Folders-Permissions']
 
-        # Policies sheet: 
-        #  A1="Policies", row2=header, row3+ data
+        # Policies: A1="Policies", row2=header, row3+ data
         df_pol.to_excel(
             writer,
             sheet_name='Policies',
@@ -176,20 +176,20 @@ def process_files(folder, gui_queue):
                 width = max(df_sk[col].astype(str).map(len).max(), len(col)) + 2
                 ws3.set_column(idx, idx, width)
 
-        # Autofit columns
-        for ws, df in ((ws1, df_fp), (ws2, df_pol)):
+        # autofit for sheet1 & sheet2
+        for ws, df in ((ws1,df_fp),(ws2,df_pol)):
             for idx, col in enumerate(df.columns):
                 w = max(df[col].astype(str).map(len).max(), len(col)) + 2
                 ws.set_column(idx, idx, w)
 
     gui_queue.put(('done', out_xl))
-    logger.info("Done! File saved to %s", out_xl)
+    logger.info("All done! File saved to %s", out_xl)
 
 
 # ─── GUI ────────────────────────────────────────────────────────────────
 class App:
     def __init__(self, root):
-        root.title("CSV → Excel Fast (debug)")
+        root.title("CSV → Excel Processor")
         root.geometry("540x180")
         self.q = queue.Queue()
 
