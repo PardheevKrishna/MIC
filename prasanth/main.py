@@ -1,6 +1,7 @@
 import os, glob, time, queue, threading, logging
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from datetime import date
 import pandas as pd
 
 # ─── LOGGING ──────────────────────────────────────────────────────────────
@@ -22,10 +23,9 @@ def process_files(folder, gui_queue):
     start_time   = time.time()
     env_map      = {'DEV':'1-DEV','UAT':'2-UAT','PROD':'3-PROD'}
     chunksize    = 200_000
-
     all_fp       = []
     all_policies = []
-    skipped_raw  = []   # collect malformed policy lines
+    skipped_raw  = []
 
     for env_key in ('DEV','UAT','PROD'):
         pattern  = os.path.join(folder, f'*_{env_key}.csv')
@@ -35,26 +35,23 @@ def process_files(folder, gui_queue):
             continue
         path_csv = files[0]
         env_tag  = env_map[env_key]
-        logger.info("→ %s [%s]", path_csv, env_tag)
+        logger.info("Processing %s [%s]", path_csv, env_tag)
 
-        # read raw lines once for policies parsing
+        # load raw lines for Policies parsing
         with open(path_csv, 'r', encoding='utf-8', errors='ignore') as f:
             raw_lines = f.readlines()
-
-        # find where "Policies" appears (0-based)
-        header_idx    = 12   # row 13 = index12
-        sentinel_idx  = None
-        for i, ln in enumerate(raw_lines):
-            if ln.strip().startswith('Policies'):
-                sentinel_idx = i
-                break
+        # locate the "Policies" sentinel
+        sentinel_idx = next(
+            (i for i, ln in enumerate(raw_lines) if ln.strip().startswith('Policies')),
+            None
+        )
         if sentinel_idx is None:
             sentinel_idx = len(raw_lines)
 
-        # ── 1) Folders-Permissions ──────────────────────────────────
+        # ── FOLDERS-PERMISSIONS ──────────────────────────────────────
         reader = pd.read_csv(
             path_csv,
-            skiprows=header_idx,
+            skiprows=12,    # row 13 becomes header
             header=0,
             dtype=str,
             chunksize=chunksize
@@ -63,7 +60,7 @@ def process_files(folder, gui_queue):
 
         for chunk in reader:
             chunk = chunk.fillna('')
-            # stop at "Policies" in first column
+            # stop at "Policies" in column A
             mpol = chunk.iloc[:,0].eq('Policies')
             if mpol.any():
                 idx = mpol.idxmax()
@@ -74,25 +71,25 @@ def process_files(folder, gui_queue):
             if n == 0 and hit_pol:
                 break
 
-            # vectorized transforms
-            df0     = chunk.iloc[:,0].str.strip().rename('Default Name')
-            loc     = chunk.iloc[:,1].str.strip()
+            # derive columns
+            df0 = chunk.iloc[:,0].str.strip().rename('Default Name')
+            loc = chunk.iloc[:,1].str.strip()
 
-            parts1  = loc.str.split(pat='/', n=1, expand=True)
-            pathp   = parts1[1].fillna('').rename('Location / Path')
+            parts1 = loc.str.split(pat='/', n=1, expand=True)
+            pathp  = parts1[1].fillna('').rename('Location / Path')
 
-            parts2  = loc.str.split(pat='/', n=2, expand=True)
-            top     = parts2[1].fillna('').rename('Top Level Folder')
-            second  = parts2[2].fillna('').rename('Second Level Folder')
+            parts2 = loc.str.split(pat='/', n=2, expand=True)
+            top    = parts2[1].fillna('').rename('Top Level Folder')
+            second = parts2[2].fillna('').rename('Second Level Folder')
 
-            # parse Q-column
+            # parse Column Q
             qcol         = chunk.iloc[:,16].str.strip().fillna('')
             sc           = qcol.str.split(pat=':', n=1, expand=True)
             left_part    = sc[0].str.strip()
             policies_str = sc[1].fillna('').str.strip()
             lr           = left_part.str.split(pat=' - ', n=1, expand=True)
-            ppp          = lr[0].fillna('').str.strip().rename('Cognos Group/Role')
-            qqq          = lr[1].fillna('').str.strip().rename('Security Group')
+            ppp          = lr[0].fillna('').rename('Cognos Group/Role')
+            qqq          = lr[1].fillna('').rename('Security Group')
 
             dfc = pd.concat([
                 df0,
@@ -119,12 +116,10 @@ def process_files(folder, gui_queue):
             if hit_pol:
                 break
 
-        # ── 2) Policies section ───────────────────────────────────
-        logger.info(" Parsing Policies in %s", path_csv)
-        # header row = raw_lines[sentinel_idx], data starts at sentinel_idx+1
+        # ── POLICIES SECTION ────────────────────────────────────────
+        logger.info("Parsing Policies section")
         for ln in raw_lines[sentinel_idx+1:]:
             if not ln.strip():
-                # once we hit a blank, everything below is "skipped"
                 continue
             cells = ln.rstrip('\n').split(',')
             if len(cells) < 2:
@@ -144,59 +139,57 @@ def process_files(folder, gui_queue):
         gui_queue.put(('progress_pol', len(all_policies), time.time()-start_time))
         logger.info(" Policies rows: %d", len(all_policies))
 
-    # ── WRITE EXCEL ───────────────────────────────────────────────────
-    logger.info(" Writing output.xlsx…")
+    # ── WRITE OUTPUT EXCEL ──────────────────────────────────────────
     df_fp  = pd.concat(all_fp, ignore_index=True)
     df_pol = pd.DataFrame(all_policies)
     df_sk  = pd.DataFrame(skipped_raw)
-    out_xl = os.path.join(folder, 'output.xlsx')
+
+    date_str = date.today().isoformat()  # YYYY-MM-DD
+    filename = f"ALL CA Folder Permissions as of {date_str}.xlsx"
+    out_xl   = os.path.join(folder, filename)
+    logger.info("Writing %s", filename)
 
     with pd.ExcelWriter(out_xl, engine='xlsxwriter') as writer:
-        # Folders-Permissions
-        df_fp.to_excel(
-          writer,
-          sheet_name='Folders-Permissions',
-          index=False
-        )
+        # Folders-Permissions sheet
+        df_fp.to_excel(writer, sheet_name='Folders-Permissions', index=False)
         ws1 = writer.sheets['Folders-Permissions']
 
-        # Policies (A1="Policies", row2=header, row3+ data)
+        # Policies sheet: 
+        #  A1="Policies", row2=header, row3+ data
         df_pol.to_excel(
-          writer,
-          sheet_name='Policies',
-          startrow=2, index=False, header=False
+            writer,
+            sheet_name='Policies',
+            startrow=2,
+            index=False,
+            header=False
         )
         ws2 = writer.sheets['Policies']
         ws2.write('A1', 'Policies')
         for c, col in enumerate(df_pol.columns):
             ws2.write(1, c, col)
 
-        # Skipped-Raw
+        # Skipped-Raw (if any)
         if not df_sk.empty:
-            df_sk.to_excel(
-              writer,
-              sheet_name='Skipped-Raw',
-              index=False
-            )
+            df_sk.to_excel(writer, sheet_name='Skipped-Raw', index=False)
             ws3 = writer.sheets['Skipped-Raw']
             for idx, col in enumerate(df_sk.columns):
                 width = max(df_sk[col].astype(str).map(len).max(), len(col)) + 2
                 ws3.set_column(idx, idx, width)
 
-        # autofit for sheet1 & sheet2
-        for ws, df in ((ws1,df_fp),(ws2,df_pol)):
+        # Autofit columns
+        for ws, df in ((ws1, df_fp), (ws2, df_pol)):
             for idx, col in enumerate(df.columns):
                 w = max(df[col].astype(str).map(len).max(), len(col)) + 2
                 ws.set_column(idx, idx, w)
 
     gui_queue.put(('done', out_xl))
-    logger.info(" All done! %s", out_xl)
+    logger.info("Done! File saved to %s", out_xl)
 
 
 # ─── GUI ────────────────────────────────────────────────────────────────
 class App:
     def __init__(self, root):
-        root.title("CSV → Excel Fast (with debug)")
+        root.title("CSV → Excel Fast (debug)")
         root.geometry("540x180")
         self.q = queue.Queue()
 
@@ -211,9 +204,9 @@ class App:
             return
         self.status.set("Starting…")
         threading.Thread(
-          target=process_files,
-          args=(folder, self.q),
-          daemon=True
+            target=process_files,
+            args=(folder, self.q),
+            daemon=True
         ).start()
         self.root.after(100, self._poll)
 
