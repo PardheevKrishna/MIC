@@ -1,3 +1,9 @@
+import sys
+if sys.platform == "win32":
+    # hide the console window on Windows
+    import ctypes
+    ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+
 import os
 import time
 import datetime
@@ -8,7 +14,6 @@ import pandas as pd
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-# Requires: pandas, openpyxl, pywin32, tkcalendar
 try:
     import win32com.client as win32
 except ImportError:
@@ -48,11 +53,10 @@ class FileReportApp:
         ttk.Entry(frm, textvariable=self.excel_path, width=width).grid(row=0, column=1, sticky='w')
         ttk.Button(frm, text='Browse…', command=self._browse_excel).grid(row=0, column=2, padx=5)
 
-        # Person selector
-        ttk.Label(frm, text='Select Person:').grid(row=1, column=0, pady=10, sticky='w')
+        # Entitlement Owner selector
+        ttk.Label(frm, text='Select Entitlement Owner:').grid(row=1, column=0, pady=10, sticky='w')
         self.person_var = tk.StringVar()
-        self.person_cb = ttk.Combobox(frm, textvariable=self.person_var,
-                                      state='readonly', width=width)
+        self.person_cb = ttk.Combobox(frm, textvariable=self.person_var, state='readonly', width=width)
         self.person_cb.grid(row=1, column=1, columnspan=2, sticky='w')
         self.person_cb.bind('<<ComboboxSelected>>', self._person_selected)
         self.person_var.trace_add('write', lambda *a: self._person_selected())
@@ -109,7 +113,7 @@ class FileReportApp:
 
         self.df_access = df
         owners = sorted(df['Entitlement Owner'].dropna().unique())
-        logger.info("Owners found: %s", owners)
+        logger.info("Entitlement Owners found: %s", owners)
         self.person_cb['values'] = owners
         if owners:
             self.person_var.set(owners[0])
@@ -172,37 +176,38 @@ class FileReportApp:
         for base in bases:
             for ent in scan_dir(base):
                 idx += 1
+                # real-time update
+                elapsed = time.time() - start_time
+                elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
+                self.queue.put(('update', idx, elapsed_str))
+
                 try:
                     st = ent.stat(follow_symlinks=False)
                     if st.st_ctime > cutoff_ts:
                         continue
-                    size = st.st_size
-                    total_size += size
+                    size_b = st.st_size
+                    total_size += size_b
                     days = int((now_ts - st.st_ctime)//86400)
                     rows.append({
                         'Entitlement Owner': owner,
                         'File Name':         ent.name,
                         'File Path':         ent.path,
                         'Created':           datetime.datetime.fromtimestamp(st.st_ctime)
-                                                  .strftime('%Y-%m-%d %H:%M:%S'),
+                                                   .strftime('%Y-%m-%d %H:%M:%S'),
                         'Last Modified':     datetime.datetime.fromtimestamp(st.st_mtime)
-                                                  .strftime('%Y-%m-%d %H:%M:%S'),
+                                                   .strftime('%Y-%m-%d %H:%M:%S'),
                         'Last Accessed':     datetime.datetime.fromtimestamp(st.st_atime)
-                                                  .strftime('%Y-%m-%d %H:%M:%S'),
+                                                   .strftime('%Y-%m-%d %H:%M:%S'),
                         'Days Ago':          days,
-                        'Size (MB)':         round(size / (1024*1024), 2)
+                        'Size (MB)':         round(size_b/(1024*1024), 2)
                     })
                 except Exception as e:
                     errors.append({
                         'Entitlement Owner': owner,
-                        'File Path': ent.path,
-                        'Error Message': str(e)
+                        'File Name':         getattr(ent, 'name', None),
+                        'File Path':         ent.path if hasattr(ent, 'path') else base,
+                        'Error Message':     str(e)
                     })
-
-                # real-time update
-                elapsed = time.time() - start_time
-                elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
-                self.queue.put(('update', idx, elapsed_str))
 
         total_elapsed = time.time() - start_time
         elapsed_str   = time.strftime('%H:%M:%S', time.gmtime(total_elapsed))
@@ -219,16 +224,15 @@ class FileReportApp:
             if not df_err.empty:
                 df_err.to_excel(writer, sheet_name='Access Errors', index=False)
 
-        # auto-fit columns on both sheets
+        # auto-fit all sheets
         wb = load_workbook(fn)
-        for sheet in wb.sheetnames:
-            ws = wb[sheet]
+        for ws in wb.worksheets:
             for col in ws.columns:
                 max_len = max((len(str(c.value)) for c in col if c.value), default=0)
                 ws.column_dimensions[col[0].column_letter].width = max_len + 2
         wb.save(fn)
 
-        # Email summary
+        # Send email summary
         status = f"Report saved: {fn}"
         if win32:
             try:
@@ -259,6 +263,7 @@ class FileReportApp:
                 status += " (email failed)"
 
         self.queue.put(('done', total_files, status, elapsed_str))
+        logger.info("Scan complete")
 
     def _process_queue(self):
         try:
