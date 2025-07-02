@@ -3,6 +3,7 @@ import re
 import datetime as dt
 import pandas as pd
 import numpy as np
+import saspy
 
 from dash import Dash, dcc, html, dash_table
 from dash.dependencies import Input, Output, State
@@ -11,7 +12,7 @@ import dash  # for callback_context
 # ────────────────────────────────────────────────────────────────
 # 0. Sample lists for initial selections
 # ────────────────────────────────────────────────────────────────
-PORTFOLIOS = ["Portfolio A", "Portfolio B", "Portfolio C"]
+PORTFOLIOS    = ["Portfolio A", "Portfolio B", "Portfolio C"]
 EXCEL_REPORTS = ["FieldAnalysis_v1.xlsx", "FieldAnalysis_v2.xlsx"]
 
 # ────────────────────────────────────────────────────────────────
@@ -31,7 +32,7 @@ MONTH_OPTIONS = [fmt(m) for m in MONTHS]
 prev_month = MONTHS[1]
 
 # ────────────────────────────────────────────────────────────────
-# 3. Helper for pop-comparison phrases
+# 3. Helper for pop-comp phrases
 # ────────────────────────────────────────────────────────────────
 _PHRASES = [
     r"1\)\s*CF Loan - Both Pop, Diff Values",
@@ -112,7 +113,10 @@ def wide(df_src):
     return base
 
 vd_wide = wide(df_data[df_data.analysis_type=="value_dist"])
-pc_wide = wide(df_data[(df_data.analysis_type=="pop_comp") & (df_data.value_label.apply(_contains))])
+pc_wide = wide(df_data[
+    (df_data.analysis_type=="pop_comp") &
+    (df_data.value_label.apply(_contains))
+])
 
 def add_total_row(df):
     total = {"field_name":"Total","value_label":"Sum"}
@@ -123,8 +127,8 @@ def add_total_row(df):
 
 def sql_for(fld, analysis):
     sub = df_data[
-        (df_data.analysis_type==analysis)&
-        (df_data.field_name==fld)&
+        (df_data.analysis_type==analysis) &
+        (df_data.field_name==fld) &
         (df_data.value_sql_logic.notna())
     ]
     if not sub.empty:
@@ -172,26 +176,25 @@ style_cell_conditional_prev = [
 ]
 
 # ────────────────────────────────────────────────────────────────
-# 7. Simulated SAS history & data for visualization
+# 7. Simulated SAS history & percentage output
 # ────────────────────────────────────────────────────────────────
-sas_scripts = [
-    {
-        "filename": "bref_14M_final.sas",
-        "code": "/* Standard field analysis logic */\nproc sql; select field_name, sum(value) as pct from analysis group by field_name; quit;"
-    }
-]
-# create percentage outputs per field
-data_rows = []
-for fld in FIELD_NAMES:
-    data_rows.append({
-        "filename": "bref_14M_final.sas",
-        "field_name": fld,
-        "pct": np.random.uniform(0, 100)  # percentage
-    })
-sas_history_df = pd.DataFrame(data_rows)
+sas_scripts = [{
+    "filename":"bref_14M_final.sas",
+    "code":"/* field-level percentage check */\nproc sql;\n  select field_name, sum(value)/sum(_tot)*100 as pct\n  from analysis group by field_name;\nquit;"
+}]
+sas_history_df = pd.DataFrame({
+    "filename": "bref_14M_final.sas",
+    "field_name": FIELD_NAMES,
+    "pct": np.random.uniform(0, 100, size=len(FIELD_NAMES))
+})
 
 # ────────────────────────────────────────────────────────────────
-# 8. Build app & layout with gating controls
+# 8. Initialize SAS session for Ad-hoc
+# ────────────────────────────────────────────────────────────────
+sas = saspy.SASsession(cfgname="default")
+
+# ────────────────────────────────────────────────────────────────
+# 9. Build app & layout with gating
 # ────────────────────────────────────────────────────────────────
 external_stylesheets = ["https://cdn.jsdelivr.net/npm/bootswatch@4.5.2/dist/flatly/bootstrap.min.css"]
 app = Dash(__name__, external_stylesheets=external_stylesheets)
@@ -228,80 +231,60 @@ app.layout = html.Div([
 
         dcc.Tabs(id="main-tabs", children=[
 
-            # ────────── Summary Tab ──────────
+            # Summary Tab
             dcc.Tab(label="Summary", className="p-3", children=[
                 html.Div(className="row mb-5", children=[
                     html.Div(className="col-md-3", children=[
                         html.Label(f"Missing {DATE1:%b-%Y}"),
-                        dcc.Dropdown(
-                            id="filter-miss1",
-                            options=[{"label":i,"value":i}
-                                     for i in sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())],
-                            multi=True,
-                            value=sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique()),
-                            className="form-control"
-                        )
+                        dcc.Dropdown(id="filter-miss1",
+                                     options=[{"label":i,"value":i}
+                                              for i in sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique())],
+                                     multi=True, value=sorted(initial_summary[f"Missing {DATE1:%m/%d/%Y}"].unique()),
+                                     className="form-control")
                     ]),
                     html.Div(className="col-md-3", children=[
                         html.Label(f"Missing {prev_month:%b-%Y}"),
-                        dcc.Dropdown(
-                            id="filter-miss2",
-                            options=[{"label":i,"value":i}
-                                     for i in sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())],
-                            multi=True,
-                            value=sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique()),
-                            className="form-control"
-                        )
+                        dcc.Dropdown(id="filter-miss2",
+                                     options=[{"label":i,"value":i}
+                                              for i in sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique())],
+                                     multi=True, value=sorted(initial_summary[f"Missing {prev_month:%m/%d/%Y}"].unique()),
+                                     className="form-control")
                     ]),
                     html.Div(className="col-md-3", children=[
                         html.Label(f"M2M Diff {DATE1:%b-%Y}"),
-                        dcc.Dropdown(
-                            id="filter-m2m1",
-                            options=[{"label":i,"value":i}
-                                     for i in sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())],
-                            multi=True,
-                            value=sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique()),
-                            className="form-control"
-                        )
+                        dcc.Dropdown(id="filter-m2m1",
+                                     options=[{"label":i,"value":i}
+                                              for i in sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique())],
+                                     multi=True, value=sorted(initial_summary[f"M2M Diff {DATE1:%m/%d/%Y}"].unique()),
+                                     className="form-control")
                     ]),
                     html.Div(className="col-md-3", children=[
                         html.Label(f"M2M Diff {prev_month:%b-%Y}"),
-                        dcc.Dropdown(
-                            id="filter-m2m2",
-                            options=[{"label":i,"value":i}
-                                     for i in sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())],
-                            multi=True,
-                            value=sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique()),
-                            className="form-control"
-                        )
+                        dcc.Dropdown(id="filter-m2m2",
+                                     options=[{"label":i,"value":i}
+                                              for i in sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique())],
+                                     multi=True, value=sorted(initial_summary[f"M2M Diff {prev_month:%m/%d/%Y}"].unique()),
+                                     className="form-control")
                     ]),
                 ]),
                 dash_table.DataTable(
                     id="summary-table",
-                    columns=[
-                        {"name":c,"id":c,"editable":c in ["Comment Missing","Comment M2M"]}
-                        for c in initial_summary.columns
-                    ],
-                    data=[],
-                    editable=True,
-                    sort_action="native",
-                    row_selectable="single",
-                    page_size=20,
+                    columns=[{"name":c,"id":c,"editable":c in ["Comment Missing","Comment M2M"]}
+                             for c in initial_summary.columns],
+                    data=[], editable=True, sort_action="native",
+                    row_selectable="single", page_size=20,
                     style_table={"overflowX":"auto"},
                     style_cell={"textAlign":"left"}
                 )
             ]),
 
-            # ────────── Value Distribution Tab ──────────
+            # Value Distribution Tab
             dcc.Tab(label="Value Distribution", className="p-3", children=[
                 dash_table.DataTable(
                     id="vd-table",
                     columns=[{"name":c,"id":c} for c in vd_wide.columns],
-                    data=[],
-                    filter_action="native",
-                    sort_action="native",
-                    row_selectable="single",
-                    page_size=20,
+                    data=[], filter_action="native", sort_action="native",
+                    row_selectable="single", page_size=20,
                     style_table={"overflowX":"auto"},
                     style_cell={"textAlign":"left"}
                 ),
@@ -310,7 +293,8 @@ app.layout = html.Div([
                     dcc.Input(id="vd-val-lbl", readOnly=True, className="form-control mb-2"),
                     dcc.Textarea(id="vd_comm_text", placeholder="Enter comment…",
                                  style={"width":"100%","height":"80px"}, className="form-control"),
-                    html.Button("Add Comment", id="vd_comm_btn", className="btn btn-primary btn-sm mt-2")
+                    html.Button("Add Comment", id="vd_comm_btn",
+                                className="btn btn-primary btn-sm mt-2")
                 ]),
                 html.Div(className="mt-3", children=[
                     html.H5("Value SQL Logic:"),
@@ -322,16 +306,13 @@ app.layout = html.Div([
                 ])
             ]),
 
-            # ────────── Population Comparison Tab ──────────
+            # Population Comparison Tab
             dcc.Tab(label="Population Comparison", className="p-3", children=[
                 dash_table.DataTable(
                     id="pc-table",
                     columns=[{"name":c,"id":c} for c in pc_wide.columns],
-                    data=[],
-                    filter_action="native",
-                    sort_action="native",
-                    row_selectable="single",
-                    page_size=20,
+                    data=[], filter_action="native", sort_action="native",
+                    row_selectable="single", page_size=20,
                     style_table={"overflowX":"auto"},
                     style_cell={"textAlign":"left"}
                 ),
@@ -340,7 +321,8 @@ app.layout = html.Div([
                     dcc.Input(id="pc-val-lbl", readOnly=True, className="form-control mb-2"),
                     dcc.Textarea(id="pc_comm_text", placeholder="Enter comment…",
                                  style={"width":"100%","height":"80px"}, className="form-control"),
-                    html.Button("Add Comment", id="pc_comm_btn", className="btn btn-primary btn-sm mt-2")
+                    html.Button("Add Comment", id="pc_comm_btn",
+                                className="btn btn-primary btn-sm mt-2")
                 ]),
                 html.Div(className="mt-3", children=[
                     html.H5("Population-Comp SQL Logic:"),
@@ -352,7 +334,7 @@ app.layout = html.Div([
                 ])
             ]),
 
-            # ────────── Comments Tab ──────────
+            # Comments Tab
             dcc.Tab(label="Comments", className="p-3", children=[
                 html.Button("Show All Fields", id="prev_show_all_btn",
                             className="btn btn-secondary btn-sm mb-3"),
@@ -360,16 +342,14 @@ app.layout = html.Div([
                     id="prev-comments-table",
                     columns=[{"name":c,"id":c} for c in prev_cols],
                     data=prev_summary_display.to_dict("records"),
-                    filter_action="native",
-                    sort_action="native",
-                    page_size=20,
-                    style_table={"overflowX":"auto"},
+                    filter_action="native", sort_action="native",
+                    page_size=20, style_table={"overflowX":"auto"},
                     style_cell_conditional=style_cell_conditional_prev,
                     style_cell={"whiteSpace":"normal","textAlign":"left"}
                 )
             ]),
 
-            # ────────── SAS History Tab ──────────
+            # SAS History Tab
             dcc.Tab(label="SAS History", className="p-3", children=[
                 html.H4("bref_14M_final.sas"),
                 html.Pre(sas_scripts[0]["code"],
@@ -379,8 +359,7 @@ app.layout = html.Div([
                         html.Label("Select Fields:"),
                         dcc.Dropdown(id="sas-history-fields",
                                      options=[{"label":f,"value":f} for f in FIELD_NAMES],
-                                     multi=True,
-                                     placeholder="Choose fields...")
+                                     multi=True)
                     ]),
                     html.Div(className="col-md-6", children=[
                         html.Label("Threshold (%):"),
@@ -398,8 +377,7 @@ app.layout = html.Div([
                 )
             ]),
 
-            # ────────── SAS Ad-hoc Execution Tab ──────────
-                        # ────────── SAS Ad-hoc Execution Tab ──────────
+            # SAS Ad-hoc Execution Tab
             dcc.Tab(label="SAS Ad-hoc", className="p-3", children=[
                 html.Label("Enter SAS Code:"),
                 dcc.Textarea(
@@ -425,8 +403,6 @@ app.layout = html.Div([
                 ])
             ]),
 
-       
-
         ])  # end Tabs
 
     ])  # end dashboard-container
@@ -434,7 +410,7 @@ app.layout = html.Div([
 ], className="container-fluid p-4", style={"backgroundColor":"#f8f9fa"})
 
 # ────────────────────────────────────────────────────────────────
-# 9. Callbacks
+# 10. Callbacks
 # ────────────────────────────────────────────────────────────────
 @app.callback(
     Output("dashboard-container","style"),
@@ -448,10 +424,8 @@ def toggle_dashboard(portfolio, report, month):
 @app.callback(
     Output("summary-table","data"),
     Input("summary-store","data"),
-    Input("filter-miss1","value"),
-    Input("filter-miss2","value"),
-    Input("filter-m2m1","value"),
-    Input("filter-m2m2","value"),
+    Input("filter-miss1","value"), Input("filter-miss2","value"),
+    Input("filter-m2m1","value"), Input("filter-m2m2","value")
 )
 def filter_summary(store_data, m1, m2, d1, d2):
     df = pd.DataFrame(store_data)
@@ -463,14 +437,12 @@ def filter_summary(store_data, m1, m2, d1, d2):
 
 @app.callback(
     Output("summary-store","data"),
-    Input("vd_comm_btn","n_clicks"),
-    Input("pc_comm_btn","n_clicks"),
+    Input("vd_comm_btn","n_clicks"), Input("pc_comm_btn","n_clicks"),
     State("vd-table","active_cell"), State("vd-table","data"), State("vd_comm_text","value"),
     State("pc-table","active_cell"), State("pc-table","data"), State("pc_comm_text","value"),
-    State("summary-store","data"),
-    prevent_initial_call=True
+    State("summary-store","data"), prevent_initial_call=True
 )
-def update_comments(n_vd,n_pc,vd_act,vd_data,vd_txt,pc_act,pc_data,pc_txt,store):
+def update_comments(n_vd, n_pc, vd_act, vd_data, vd_txt, pc_act, pc_data, pc_txt, store):
     df_sum = pd.DataFrame(store)
     trig = dash.callback_context.triggered[0]["prop_id"].split(".")[0]
     if trig=="vd_comm_btn" and vd_act and vd_txt:
@@ -495,20 +467,21 @@ def update_detail(selected, summary_rows):
         fld=summary_rows[selected[0]]["Field Name"]
         vd_df=vd_wide[vd_wide.field_name==fld]
         pc_df=pc_wide[pc_wide.field_name==fld]
-        vd_sql=sql_for(fld,"value_dist")
-        pc_sql=sql_for(fld,"pop_comp")
+        vd_sql=sql_for(fld,"value_dist"); pc_sql=sql_for(fld,"pop_comp")
     else:
         vd_df,pc_df,vd_sql,pc_sql=vd_wide,pc_wide,"",""
     return add_total_row(vd_df).to_dict("records"), add_total_row(pc_df).to_dict("records"), vd_sql, pc_sql
 
 @app.callback(
-    Output("vd-val-lbl","value"), Input("vd-table","active_cell"), State("vd-table","data")
+    Output("vd-val-lbl","value"),
+    Input("vd-table","active_cell"), State("vd-table","data")
 )
 def update_vd_label(active, rows):
     return rows[active["row"]]["value_label"] if active else ""
 
 @app.callback(
-    Output("pc-val-lbl","value"), Input("pc-table","active_cell"), State("pc-table","data")
+    Output("pc-val-lbl","value"),
+    Input("pc-table","active_cell"), State("pc-table","data")
 )
 def update_pc_label(active, rows):
     return rows[active["row"]]["value_label"] if active else ""
@@ -518,52 +491,49 @@ def update_pc_label(active, rows):
     Input("summary-table","selected_rows"), Input("prev_show_all_btn","n_clicks"),
     State("summary-table","data")
 )
-def update_prev_comments(sel,show_all,summary_rows):
+def update_prev_comments(sel, show_all, summary_rows):
     trig = dash.callback_context.triggered[0]["prop_id"].split(".")[0]
     if trig=="prev_show_all_btn":
         filtered = prev_summary_display
     elif sel:
         fld=summary_rows[sel[0]]["Field Name"]
-        filtered=prev_summary_display[prev_summary_display["Field Name"]==fld]
+        filtered = prev_summary_display[prev_summary_display["Field Name"]==fld]
     else:
-        filtered=prev_summary_display
+        filtered = prev_summary_display
     return filtered.to_dict("records")
 
 @app.callback(
     Output("sas-history-data-table","data"), Output("sas-history-data-table","columns"),
     Input("sas-history-fields","value"), Input("sas-threshold","value")
 )
-def filter_sas_history(selected_fields, threshold):
+def filter_sas_history(fields, threshold):
     df = sas_history_df.copy()
-    if selected_fields:
-        df = df[df.field_name.isin(selected_fields)]
+    if fields:
+        df = df[df.field_name.isin(fields)]
     df = df[df.pct >= (threshold or 0)]
-    data = df.to_dict("records")
-    cols = [{"name":c,"id":c} for c in df.columns]
-    return data, cols
+    return df.to_dict("records"), [{"name":c,"id":c} for c in df.columns]
 
 @app.callback(
-    Output("sas-ad-hoc-sql","children"),
-    Output("sas-ad-hoc-log","children"),
-    Output("sas-ad-hoc-data-output","data"),
-    Output("sas-ad-hoc-data-output","columns"),
-    Input("run-sas-ad-hoc-btn","n_clicks"),
-    State("sas-ad-hoc-field","value"),
+    Output("sas-log-output","children"),
+    Output("sas-data-output","data"),
+    Output("sas-data-output","columns"),
+    Input("run-sas-btn","n_clicks"),
+    State("sas-code-input","value"),
     prevent_initial_call=True
 )
-def run_sas_ad_hoc(n, field):
-    sql = sql_for(field, "pop_comp")
-    log = f"Submitted Population-Comp SQL for {field}:\n{sql}"
-    # simulate result: sample up to 5 labels & random diffs
-    labels = pc_wide[pc_wide.field_name==field]["value_label"].unique()
-    sample = np.random.choice(labels, size=min(5, len(labels)), replace=False)
-    df = pd.DataFrame({
-        "value_label": sample,
-        "diff_count": np.random.randint(1, 100, size=len(sample))
-    })
-    data = df.to_dict("records")
-    cols = [{"name":c,"id":c} for c in df.columns]
-    return sql, log, data, cols
+def run_sas_code(n, code):
+    if not code:
+        return "", [], []
+    result = sas.submit(code, results="text")
+    log = result["LOG"]
+    ds_list = result.get("SASDATA", [])
+    data, cols = [], []
+    if ds_list:
+        lib, table = ds_list[0].split(".")
+        df = sas.sasdata2dataframe(table=table, libref=lib)
+        data = df.to_dict("records")
+        cols = [{"name":c,"id":c} for c in df.columns]
+    return log, data, cols
 
 if __name__ == "__main__":
     app.run(debug=True)
