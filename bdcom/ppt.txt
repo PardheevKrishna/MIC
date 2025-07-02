@@ -1,136 +1,128 @@
 Slide 1: BDCOMM FRY14M Field Analysis Dashboard
 	•	Unified interface for field-level data-quality review
-	•	Key features: missing-value tracking, anomaly detection, collaborative comments, SAS integrations
-	•	Underlying data prepared nightly via SAS jobs into a standardized Excel
-Image: Screenshot of the dashboard home page showing the main tabs and summary table
+	•	Key capabilities: missing-value tracking, anomaly detection, collaborative comments, SAS script insights
+	•	Image: Full-screen screenshot of the dashboard landing view (showing gating selectors hidden or disabled)
 
 ⸻
 
 Slide 2: Agenda
-	•	Data preparation pipeline (Data & Control sheets)
+	•	Data preparation pipeline & gating flow
 	•	Summary tab: filters & comments
-	•	Value Distribution & Pop-Comp deep dives
-	•	Comments tab: consolidated user notes
-	•	SAS History: threshold-driven insights
-	•	SAS Ad-hoc: targeted code execution
+	•	Deep dives: Value Distribution & Pop-Comp
+	•	Consolidated comments view
+	•	SAS History: threshold-driven script outputs
+	•	SAS Ad-hoc: free-text code execution placeholder
 	•	End-to-end analyst workflow & best practices
-Image: Simple infographic listing the agenda topics
+	•	Image: Simple agenda graphic or icon list
 
 ⸻
 
-Slide 3: Data Preparation Pipeline
-	•	Nightly SAS jobs cleanse and aggregate raw source data
-	•	Output written to input.xlsx with two sheets:
-	•	Data: field-level counts, labels, metrics
-	•	Control: metadata (field descriptions, thresholds, domain rules)
-	•	Guarantees consistent inputs for every dashboard cycle
-Image: ETL pipeline diagram illustrating raw data → SAS jobs → input.xlsx
+Slide 3: Data Preparation & Gating Flow
+	•	Nightly SAS jobs produce input.xlsx with Data & Control sheets
+	•	Control sheet holds metadata (field descriptions, thresholds, domain rules)
+	•	Gating selectors:
+	1.	Choose Portfolio
+	2.	Select Excel report version
+	3.	Select Month
+	•	Dashboard unlocks only after all three selections
+	•	Image: Flow diagram: SAS jobs → Excel → gating dropdowns → dashboard
 
 ⸻
 
-Slide 4: Pre-executed SAS Repository
-	•	All core SAS scripts have been run against master data in UNIX
-	•	Repository holds:
-	•	Script filenames & code snippets
-	•	Per-field output values used for research and thresholds
-	•	Surfaced in the SAS History tab for quick reference
-Image: Folder icon or screenshot of a list of SAS script files
-
-⸻
-
-Slide 5: Summary Tab – Quick Health Check
+Slide 4: Summary Tab – At-a-Glance Health Check
 	•	Columns:
-	•	Missing-value count (current vs. prior month)
+	•	Missing-value counts (current vs prior month)
 	•	Month-over-month diff (anomaly count)
-	•	Editable comment fields for each metric
-	•	Filters: Four dropdowns to narrow by any count range
-	•	Pinpoint fields needing immediate attention
-Image: Screenshot of the Summary tab with filters applied and comments cells highlighted
+	•	Editable “Comment” fields for each metric
+	•	Four dropdown filters to narrow by count ranges
+	•	Image: Screenshot of Summary tab with filters applied
 
 ⸻
 
-Slide 6: Filtering & Commenting in Summary
-	1.	Apply filters on missing or diff counts to shortlist fields
-	2.	Select a row to load its details in the detail tabs
-	3.	Add comments in the Value Distribution or Pop-Comp tab
-	4.	Comments automatically appear back in the Summary grid
-Image: Sequence screenshot: dropdown selection → row highlight → comment added
+Slide 5: Filtering & Commenting Workflow
+	1.	Apply any combination of Missing or Diff filters
+	2.	Click a row to load that field’s details in the lower tabs
+	3.	Enter observations in the detail tab’s comment box
+	4.	Click “Add Comment” → appears inline in Summary
+
+	•	Image: Sequence: filter panel → selected row highlight → comment entry → updated summary
 
 ⸻
 
-Slide 7: Value Distribution Tab
-	•	Shows last 13 months of counts per value label for the selected field
-	•	Includes a “Total” row for overall volume context
-	•	Built-in SQL panel delivers the exact query for this view
-	•	Copy directly into your BI tool or SQL editor
-Image: Screenshot of the Value Distribution grid alongside the SQL panel
+Slide 6: Value Distribution Tab
+	•	Displays counts by value label for the chosen field over last 13 months
+	•	“Total” row summarizes overall volume
+	•	Built-in SQL snippet panel shows the exact query used
+	•	Image: Screenshot of Value Distribution grid plus SQL panel
 
 ⸻
 
-Slide 8: Population Comparison Tab
-	•	Focus on predefined anomaly conditions (e.g. “Prior Null → Current Pop”)
-	•	Month-by-month counts of only the flagged values
-	•	SQL snippet below ensures reproducibility of logic
-Image: Screenshot of the Population Comparison grid and SQL panel
+Slide 7: Population Comparison Tab
+	•	Shows only predefined anomaly phrases (pop-comp flags) by month
+	•	Tracks emergence/resolution of population shifts
+	•	Copy-ready SQL snippet below the table
+	•	Image: Screenshot of Pop-Comp grid and SQL panel
 
 ⸻
 
-Slide 9: Comments Tab
-	•	Consolidated view of all user comments by field and month
-	•	“Show All Fields” button clears any field filter
-	•	Track collaborative notes without mixing in raw metrics
-Image: Screenshot of the Comments tab showing comment columns and “Show All Fields” button
+Slide 8: Comments Tab
+	•	Consolidated, chronological view of all user comments per field
+	•	“Show All Fields” button resets any field filter
+	•	Compare current observations against past notes easily
+	•	Image: Screenshot of Comments tab with several months’ columns
 
 ⸻
 
-Slide 10: SAS History Tab
-	•	Lists pre-executed SAS scripts (filename & code excerpt)
-	•	Value Threshold input: set a numeric cutoff
-	•	Table below shows every field whose script output meets or exceeds the threshold
-Image: Screenshot of the SAS History tab with threshold input and filtered output table
+Slide 9: SAS History Tab
+	•	Surfaces the bref_14M_final.sas script: filename + code excerpt
+	•	“Select Fields” multi-select and “Threshold (%)” input
+	•	Table below shows only selected fields whose script output ≥ threshold
+	•	Image: Screenshot of SAS History tab with threshold filter active
 
 ⸻
 
-Slide 11: SAS Ad-hoc Execution Tab
-	•	Pre-loaded template SAS code for common on-the-fly checks
-	•	“Run SAS” button executes code and returns:
-	•	Log Output with execution notes
-	•	Data Output preview of the first few rows
-	•	Enables quick investigations without external SAS sessions
-Image: Screenshot of the Ad-hoc tab showing code area, log output, and data table
+Slide 10: SAS Ad-hoc Execution Tab
+	•	Free-text editor for entering any SAS code snippet
+	•	“Run SAS” button (placeholder) for future dynamic execution
+	•	Static panels:
+	•	Log Output placeholder
+	•	Data Output placeholder
+	•	Image: Screenshot of Ad-hoc tab showing code area and placeholders
 
 ⸻
 
-Slide 12: End-to-End Analyst Workflow
-	1.	Filter Summary to identify hot spots
-	2.	Drill into Value Distribution & Pop-Comp for context
-	3.	Annotate findings via comments in the detail tabs
-	4.	Review consolidated comments in the Comments tab
-	5.	Adjust SAS History threshold to spotlight scripted outputs
-	6.	Perform targeted Ad-hoc SAS checks as needed
-Image: Flowchart diagram illustrating the six workflow steps
+Slide 11: End-to-End Analyst Workflow
+	1.	Make gating selections (Portfolio, Report, Month)
+	2.	Filter Summary to identify fields of interest
+	3.	Drill into Value Distribution & Pop-Comp for context
+	4.	Annotate findings via “Add Comment”
+	5.	Review all notes in Comments tab
+	6.	Adjust SAS History threshold → inspect script outputs
+	7.	Draft or paste SAS in Ad-hoc for quick checks
+
+	•	Image: Flowchart illustrating these seven steps
 
 ⸻
 
-Slide 13: Best Practices
-	•	Schedule nightly SAS prep to keep input.xlsx up to date
-	•	Use clear comment prefixes (e.g. “QA:”, “Action:”)
-	•	Calibrate your SAS History threshold based on data volumes
-	•	Copy-and-paste SQL snippets for reproducibility in other tools
-Image: Icon of a checklist or best-practices document
+Slide 12: Best Practices
+	•	Keep input.xlsx up-to-date with scheduled SAS runs
+	•	Use clear prefixes in comments (e.g. “QA:”, “Action:”)
+	•	Calibrate SAS History threshold to match data volumes
+	•	Leverage SQL panels for reproducible queries in other tools
+	•	Image: Icon of a checklist or best-practices guide
 
 ⸻
 
-Slide 14: Support & Resources
-	•	User Guide: step-by-step documentation and field definitions
-	•	SQL Reference: catalog of built-in queries and domain logic
-	•	Training: periodic workshops and office hours
-	•	Helpdesk: Slack channel #data-quality or analytics@company.com
-Image: Graphic showing helpdesk and documentation resources
+Slide 13: Support & Resources
+	•	User Guide: detailed step-by-step instructions & metadata definitions
+	•	SQL Reference: library of built-in queries & domain logic
+	•	Training: periodic workshops & office hours
+	•	Helpdesk: Slack #data-quality or email analytics@company.com
+	•	Image: Graphic showing documentation, chat, and training icons
 
 ⸻
 
-Slide 15: Q&A
+Slide 14: Q&A
 	•	Open floor for questions
-	•	Ready to walk through any tab or scenario in detail
-Image: Q&A or discussion graphic to invite audience participation
+	•	Optional live walkthrough of any tab or scenario
+	•	Image: Q&A icon or audience discussion graphic
