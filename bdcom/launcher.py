@@ -399,28 +399,24 @@ app.layout = html.Div([
             ]),
 
             # ────────── SAS Ad-hoc Execution Tab ──────────
+                        # ────────── SAS Ad-hoc Execution Tab ──────────
             dcc.Tab(label="SAS Ad-hoc", className="p-3", children=[
-                html.Div(className="mb-3", children=[
-                    html.Label("Select Field:"),
-                    dcc.Dropdown(id="sas-ad-hoc-field",
-                                 options=[{"label":f,"value":f} for f in FIELD_NAMES],
-                                 placeholder="Choose a field...")
-                ]),
-                html.Div(className="mb-3", children=[
-                    html.H5("Population-Comp SQL:"),
-                    html.Div(id="sas-ad-hoc-sql",
-                             style={"whiteSpace":"pre-wrap","border":"1px solid #ddd","padding":"10px"})
-                ]),
-                html.Button("Run SAS", id="run-sas-ad-hoc-btn", className="btn btn-primary"),
+                html.Label("Enter SAS Code:"),
+                dcc.Textarea(
+                    id="sas-code-input",
+                    style={"width":"100%","height":"300px"},
+                    placeholder="Paste your SAS code here..."
+                ),
+                html.Button("Run SAS", id="run-sas-btn", className="btn btn-primary mt-2"),
                 html.Div(className="mt-4", children=[
                     html.H5("Log Output:"),
-                    html.Pre(id="sas-ad-hoc-log",
+                    html.Pre(id="sas-log-output",
                              style={"whiteSpace":"pre-wrap","border":"1px solid #ccc","padding":"10px"})
                 ]),
                 html.Div(className="mt-4", children=[
                     html.H5("Data Output:"),
                     dash_table.DataTable(
-                        id="sas-ad-hoc-data-output",
+                        id="sas-data-output",
                         columns=[], data=[],
                         page_size=20,
                         style_table={"overflowX":"auto"},
@@ -428,6 +424,8 @@ app.layout = html.Div([
                     )
                 ])
             ]),
+
+       
 
         ])  # end Tabs
 
