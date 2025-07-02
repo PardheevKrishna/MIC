@@ -1,0 +1,109 @@
+Slide 1: Welcome & Objectives
+	•	BDCOMM FRY14M Field Analysis Dashboard
+	•	Walk through how analysts interact with key tabs
+	•	Understand background data prep, comment workflows, and SAS integrations
+
+⸻
+
+Slide 2: Agenda
+	•	Data preparation & Excel generation
+	•	Summary tab: filtering & commenting
+	•	Deep dives: Value Distribution & Pop-Comp
+	•	Historical context: Previous Comments
+	•	SAS History: threshold-based script outputs
+	•	SAS Ad-hoc: example code & sample results
+	•	Typical analyst workflow & tips
+
+⸻
+
+Slide 3: Data Prep Background
+	•	Overnight SAS jobs (via saspy) run over raw data
+	•	Produce input.xlsx with “Data” and “Control” sheets
+	•	Ensures consistent field-level metrics for the dashboard
+
+⸻
+
+Slide 4: Pre-executed SAS Repository
+	•	All research-purpose SAS scripts already run on UNIX
+	•	Results stored as:
+	•	Script filenames & code
+	•	Per-field output values
+	•	Ready for threshold-based inspection in the dashboard
+
+⸻
+
+Slide 5: Summary Tab – Spot-Check Key Metrics
+	•	View each field’s:
+	•	Missing-value count (current vs prior month)
+	•	Month-over-month diff (anomaly count)
+	•	Free-text comments for both metrics
+	•	Four dropdowns let you narrow fields by any count range
+	•	Insert SS of filtered Summary table
+
+⸻
+
+Slide 6: Adding Comments in Summary
+	•	Click a field row to select it
+	•	In the detail tabs, enter observations in the comment box
+	•	“Add Comment” pushes your note back into the Summary grid
+	•	Keeps analyst notes centrally visible
+
+⸻
+
+Slide 7: Value Distribution Tab
+	•	Shows last 13 months of counts per value label for the selected field
+	•	“Total” row highlights overall volume
+	•	Copy-ready SQL snippet below for reproducibility
+	•	Insert SS of Value Distribution view
+
+⸻
+
+Slide 8: Population Comparison Tab
+	•	Focused on predefined anomaly phrases (pop-comp flags)
+	•	Month-by-month counts of those conditions only
+	•	Built-in SQL panel to copy the exact logic
+	•	Insert SS of Population Comparison view
+
+⸻
+
+Slide 9: Previous Comments Tab
+	•	Displays past 12 months of comments per field, by month
+	•	“Show All Fields” button resets any field filter
+	•	Quickly spot recurring issues or improvements over time
+	•	Insert SS of Previous Comments view
+
+⸻
+
+Slide 10: SAS History Tab
+	•	Lists all pre-executed SAS scripts (filename & code)
+	•	Value Threshold input: set a numeric cutoff
+	•	Below, table shows every field whose script-output ≥ threshold
+	•	Instantly identify fields exceeding your chosen limit
+	•	Insert SS of SAS History with threshold filter
+
+⸻
+
+Slide 11: SAS Ad-hoc Execution Tab
+	•	Pre-populated example SAS block for demo
+	•	Click “Run SAS” to see simulated log messages
+	•	Sample output table shows the first 5 observations
+	•	Enables one-off checks without leaving the dashboard
+	•	Insert SS of Ad-hoc code + log + data view
+
+⸻
+
+Slide 12: Typical Analyst Workflow
+	1.	Filter Summary for fields of interest
+	2.	Select a field → review Value Distribution & Pop-Comp
+	3.	Comment findings directly in the dashboard
+	4.	Compare with past notes in Previous Comments
+	5.	Adjust SAS History threshold → inspect script outputs
+	6.	Run quick Ad-hoc SAS checks as needed
+
+⸻
+
+Slide 13: Best Practices & Support
+	•	Update input.xlsx daily via scheduled SAS jobs
+	•	Use clear prefixes in comments (e.g. “QA:…”, “Dev:…”)
+	•	Calibrate your SAS History threshold for each review cycle
+	•	Reach out on Slack #data-quality or email analytics@company.com
