@@ -2,7 +2,6 @@ import os
 import re
 import datetime as dt
 import pandas as pd
-import saspy
 
 from dash import Dash, dcc, html, dash_table
 from dash.dependencies import Input, Output, State
@@ -13,9 +12,7 @@ import dash  # for callback_context
 # ────────────────────────────────────────────────────────────────
 INPUT_FILE = "input.xlsx"
 df_data = pd.read_excel(INPUT_FILE, sheet_name="Data")
-df_data["filemonth_dt"] = pd.to_datetime(
-    df_data["filemonth_dt"], format="%m/%d/%Y"
-)
+df_data["filemonth_dt"] = pd.to_datetime(df_data["filemonth_dt"], format="%m/%d/%Y")
 
 # ────────────────────────────────────────────────────────────────
 # 2. 13-month window (descending)
@@ -191,20 +188,11 @@ for col in prev_cols:
     )
 
 # ────────────────────────────────────────────────────────────────
-# 7. SAS integration: history & ad-hoc execution
+# 7. Placeholder for SAS tabs (no SAS integration yet)
 # ────────────────────────────────────────────────────────────────
-sas = saspy.SASsession(cfgname="default")
-SAS_HISTORY_DIR = "sas_history/"
-
 def load_sas_history():
-    rows = []
-    for fname in sorted(os.listdir(SAS_HISTORY_DIR)):
-        if fname.lower().endswith(".sas"):
-            path = os.path.join(SAS_HISTORY_DIR, fname)
-            with open(path, "r") as f:
-                code = f.read()
-            rows.append({"filename": fname, "code": code})
-    return rows
+    # placeholder: no SAS history available
+    return []
 
 # ────────────────────────────────────────────────────────────────
 # 8. Build app & layout
@@ -217,14 +205,14 @@ app = Dash(__name__, external_stylesheets=external_stylesheets)
 app.layout = html.Div(
     [
         dcc.Store(id="summary-store", data=initial_summary.to_dict("records")),
-        html.H2(
-            "BDCOMM FRY14M Field Analysis", className="text-center mb-4"
-        ),
+
+        html.H2("BDCOMM FRY14M Field Analysis", className="text-center mb-4"),
+
         dcc.Tabs(
             id="main-tabs",
             style={"marginBottom": "1rem"},
             children=[
-                # ────────── Summary Tab
+                # ────────── Summary Tab ──────────
                 dcc.Tab(
                     label="Summary",
                     className="p-3",
@@ -237,10 +225,7 @@ app.layout = html.Div(
                                         dcc.Dropdown(
                                             id="filter-miss1",
                                             options=[
-                                                {
-                                                    "label": i,
-                                                    "value": i,
-                                                }
+                                                {"label": i, "value": i}
                                                 for i in sorted(
                                                     initial_summary[
                                                         f"Missing {DATE1:%m/%d/%Y}"
@@ -264,16 +249,11 @@ app.layout = html.Div(
                                 ),
                                 html.Div(
                                     [
-                                        html.Label(
-                                            f"Missing {prev_month:%b-%Y}"
-                                        ),
+                                        html.Label(f"Missing {prev_month:%b-%Y}"),
                                         dcc.Dropdown(
                                             id="filter-miss2",
                                             options=[
-                                                {
-                                                    "label": i,
-                                                    "value": i,
-                                                }
+                                                {"label": i, "value": i}
                                                 for i in sorted(
                                                     initial_summary[
                                                         f"Missing {prev_month:%m/%d/%Y}"
@@ -297,16 +277,11 @@ app.layout = html.Div(
                                 ),
                                 html.Div(
                                     [
-                                        html.Label(
-                                            f"M2M Diff {DATE1:%b-%Y}"
-                                        ),
+                                        html.Label(f"M2M Diff {DATE1:%b-%Y}"),
                                         dcc.Dropdown(
                                             id="filter-m2m1",
                                             options=[
-                                                {
-                                                    "label": i,
-                                                    "value": i,
-                                                }
+                                                {"label": i, "value": i}
                                                 for i in sorted(
                                                     initial_summary[
                                                         f"M2M Diff {DATE1:%m/%d/%Y}"
@@ -330,16 +305,11 @@ app.layout = html.Div(
                                 ),
                                 html.Div(
                                     [
-                                        html.Label(
-                                            f"M2M Diff {prev_month:%b-%Y}"
-                                        ),
+                                        html.Label(f"M2M Diff {prev_month:%b-%Y}"),
                                         dcc.Dropdown(
                                             id="filter-m2m2",
                                             options=[
-                                                {
-                                                    "label": i,
-                                                    "value": i,
-                                                }
+                                                {"label": i, "value": i}
                                                 for i in sorted(
                                                     initial_summary[
                                                         f"M2M Diff {prev_month:%m/%d/%Y}"
@@ -370,8 +340,7 @@ app.layout = html.Div(
                                 {
                                     "name": c,
                                     "id": c,
-                                    "editable": c
-                                    in ["Comment Missing", "Comment M2M"],
+                                    "editable": c in ["Comment Missing", "Comment M2M"],
                                 }
                                 for c in initial_summary.columns
                             ],
@@ -391,16 +360,14 @@ app.layout = html.Div(
                     ],
                 ),
 
-                # ────────── Value Distribution Tab
+                # ────────── Value Distribution Tab ──────────
                 dcc.Tab(
                     label="Value Distribution",
                     className="p-3",
                     children=[
                         dash_table.DataTable(
                             id="vd-table",
-                            columns=[
-                                {"name": c, "id": c} for c in vd_wide.columns
-                            ],
+                            columns=[{"name": c, "id": c} for c in vd_wide.columns],
                             data=[],
                             filter_action="native",
                             sort_action="native",
@@ -421,10 +388,7 @@ app.layout = html.Div(
                                 dcc.Textarea(
                                     id="vd_comm_text",
                                     placeholder="Enter comment…",
-                                    style={
-                                        "width": "100%",
-                                        "height": "80px",
-                                    },
+                                    style={"width": "100%", "height": "80px"},
                                     className="form-control",
                                 ),
                                 html.Button(
@@ -458,16 +422,14 @@ app.layout = html.Div(
                     ],
                 ),
 
-                # ────────── Population Comparison Tab
+                # ────────── Population Comparison Tab ──────────
                 dcc.Tab(
                     label="Population Comparison",
                     className="p-3",
                     children=[
                         dash_table.DataTable(
                             id="pc-table",
-                            columns=[
-                                {"name": c, "id": c} for c in pc_wide.columns
-                            ],
+                            columns=[{"name": c, "id": c} for c in pc_wide.columns],
                             data=[],
                             filter_action="native",
                             sort_action="native",
@@ -488,10 +450,7 @@ app.layout = html.Div(
                                 dcc.Textarea(
                                     id="pc_comm_text",
                                     placeholder="Enter comment…",
-                                    style={
-                                        "width": "100%",
-                                        "height": "80px",
-                                    },
+                                    style={"width": "100%", "height": "80px"},
                                     className="form-control",
                                 ),
                                 html.Button(
@@ -525,7 +484,7 @@ app.layout = html.Div(
                     ],
                 ),
 
-                # ────────── Previous Comments Tab
+                # ────────── Previous Comments Tab ──────────
                 dcc.Tab(
                     label="Previous Comments",
                     className="p-3",
@@ -537,24 +496,19 @@ app.layout = html.Div(
                         ),
                         dash_table.DataTable(
                             id="prev-comments-table",
-                            columns=[
-                                {"name": c, "id": c} for c in prev_cols
-                            ],
+                            columns=[{"name": c, "id": c} for c in prev_cols],
                             data=prev_summary_display.to_dict("records"),
                             filter_action="native",
                             sort_action="native",
                             page_size=20,
                             style_table={"overflowX": "auto"},
                             style_cell_conditional=style_cell_conditional_prev,
-                            style_cell={
-                                "whiteSpace": "normal",
-                                "textAlign": "left",
-                            },
+                            style_cell={"whiteSpace": "normal", "textAlign": "left"},
                         ),
                     ],
                 ),
 
-                # ────────── SAS History Tab
+                # ────────── SAS History Tab (placeholder) ──────────
                 dcc.Tab(
                     label="SAS History",
                     className="p-3",
@@ -577,7 +531,7 @@ app.layout = html.Div(
                     ],
                 ),
 
-                # ────────── SAS Ad-hoc Execution Tab
+                # ────────── SAS Ad-hoc Tab (placeholder) ──────────
                 dcc.Tab(
                     label="SAS Ad-hoc",
                     className="p-3",
@@ -587,16 +541,14 @@ app.layout = html.Div(
                                 html.Label("Enter SAS Code:"),
                                 dcc.Textarea(
                                     id="sas-code-input",
-                                    style={
-                                        "width": "100%",
-                                        "height": "300px",
-                                    },
-                                    placeholder="Paste your SAS code here...",
+                                    style={"width": "100%", "height": "300px"},
+                                    placeholder="(placeholder) SAS execution not yet implemented",
                                 ),
                                 html.Button(
                                     "Run SAS",
                                     id="run-sas-btn",
-                                    className="btn btn-primary mt-2",
+                                    className="btn btn-secondary mt-2",
+                                    disabled=True,
                                 ),
                             ]
                         ),
@@ -604,7 +556,7 @@ app.layout = html.Div(
                             [
                                 html.H5("Log Output:"),
                                 html.Pre(
-                                    id="sas-log-output",
+                                    "(placeholder)",
                                     style={
                                         "border": "1px solid #ccc",
                                         "padding": "10px",
@@ -619,7 +571,7 @@ app.layout = html.Div(
                                 html.H5("Data Output:"),
                                 dash_table.DataTable(
                                     id="sas-data-output",
-                                    columns=[],  # filled by callback
+                                    columns=[],
                                     data=[],
                                     page_size=20,
                                     style_table={"overflowX": "auto"},
@@ -763,29 +715,6 @@ def update_prev_comments(selected, show_all, summary_rows):
     else:
         filtered = prev_summary_display
     return filtered.to_dict("records")
-
-
-@app.callback(
-    Output("sas-log-output", "children"),
-    Output("sas-data-output", "data"),
-    Output("sas-data-output", "columns"),
-    Input("run-sas-btn", "n_clicks"),
-    State("sas-code-input", "value"),
-    prevent_initial_call=True,
-)
-def run_sas_code(n_clicks, code):
-    if not code or n_clicks is None:
-        return "", [], []
-    result = sas.submit(code, results="text")
-    log = result["LOG"]
-    ds_list = result.get("SASDATA", [])
-    data, columns = [], []
-    if ds_list:
-        libref, dsname = ds_list[0].split(".")
-        df = sas.sasdata2dataframe(table=dsname, libref=libref)
-        data = df.to_dict("records")
-        columns = [{"name": c, "id": c} for c in df.columns]
-    return log, data, columns
 
 
 # ────────────────────────────────────────────────────────────────
