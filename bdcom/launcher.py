@@ -114,7 +114,7 @@ def wide(df_src):
 vd_wide = wide(df_data[df_data.analysis_type=="value_dist"])
 pc_wide = wide(
     df_data[
-        (df_data.analysis_type=="pop_comp") & 
+        (df_data.analysis_type=="pop_comp") &
         (df_data.value_label.apply(_contains))
     ]
 )
@@ -153,7 +153,7 @@ def pivot_comments(df, prefix):
           .reset_index()
     )
     pts["col"] = pts["month"].apply(fmt)
-    w = pts.pivot(index="field_name", columns="col", values="comment")
+    w = pts.pivot(index="field_name",columns="col",values="comment")
     w.columns = [f"{prefix} {c}" for c in w.columns]
     return w.reset_index()
 
@@ -161,8 +161,7 @@ pivot_miss = pivot_comments(miss, "Prev Missing")
 pivot_m2m   = pivot_comments(m2m,   "Prev M2M")
 prev_comments_wide = pd.merge(pivot_miss, pivot_m2m, on="field_name", how="outer").fillna("")
 cur = initial_summary[["Field Name","Comment Missing","Comment M2M"]].rename(
-    columns={"Comment Missing":"Comment Missing This Month",
-             "Comment M2M":"Comment M2M This Month"}
+    columns={"Comment Missing":"Comment Missing This Month","Comment M2M":"Comment M2M This Month"}
 )
 prev_summary = pd.merge(cur, prev_comments_wide,
                         left_on="Field Name", right_on="field_name",
@@ -182,6 +181,7 @@ sas_scripts = [{
     "filename":"bref_14M_final.sas",
     "code":"/* field-level percentage check */\nproc sql;\n  select field_name, sum(value)/sum(_tot)*100 as pct\n  from analysis group by field_name;\nquit;"
 }]
+
 sas_history_df = pd.DataFrame({
     "filename": "bref_14M_final.sas",
     "field_name": FIELD_NAMES,
@@ -310,19 +310,12 @@ app.layout = html.Div([
                     style_cell={"textAlign":"left"}
                 ),
                 html.Div(className="mt-3", children=[
-                    html.Label("Selected Value Label:"),
-                    dcc.Input(id="vd-val-lbl", readOnly=True, className="form-control mb-2"),
-                    dcc.Textarea(id="vd_comm_text", placeholder="Enter comment…",
-                                 style={"width":"100%","height":"80px"}, className="form-control"),
-                    html.Button("Add Comment", id="vd_comm_btn",
-                                className="btn btn-primary btn-sm mt-2")
+                    html.Label("Selected Value Label:"), dcc.Input(id="vd-val-lbl", readOnly=True, className="form-control mb-2"),
+                    dcc.Textarea(id="vd_comm_text", placeholder="Enter comment…", style={"width":"100%","height":"80px"}, className="form-control"),
+                    html.Button("Add Comment", id="vd_comm_btn", className="btn btn-primary btn-sm mt-2")
                 ]),
                 html.Div(className="mt-3", children=[
-                    html.H5("Value SQL Logic:"),
-                    html.Div(id="vd_sql", style={
-                        "whiteSpace":"pre-wrap","border":"1px solid #ced4da",
-                        "padding":"0.5rem","borderRadius":"0.25rem"
-                    }),
+                    html.H5("Value SQL Logic:"), html.Div(id="vd_sql", style={"whiteSpace":"pre-wrap","border":"1px solid #ced4da","padding":"0.5rem","borderRadius":"0.25rem"}),
                     dcc.Clipboard(target_id="vd_sql", title="Copy SQL", style={"marginTop":"0.5rem"})
                 ])
             ]),
@@ -341,36 +334,25 @@ app.layout = html.Div([
                     style_cell={"textAlign":"left"}
                 ),
                 html.Div(className="mt-3", children=[
-                    html.Label("Selected Value Label:"),
-                    dcc.Input(id="pc-val-lbl", readOnly=True, className="form-control mb-2"),
-                    dcc.Textarea(id="pc_comm_text", placeholder="Enter comment…",
-                                 style={"width":"100%","height":"80px"}, className="form-control"),
-                    html.Button("Add Comment", id="pc_comm_btn",
-                                className="btn btn-primary btn-sm mt-2")
+                    html.Label("Selected Value Label:"), dcc.Input(id="pc-val-lbl", readOnly=True, className="form-control mb-2"),
+                    dcc.Textarea(id="pc_comm_text", placeholder="Enter comment…", style={"width":"100%","height":"80px"}, className="form-control"),
+                    html.Button("Add Comment", id="pc_comm_btn", className="btn btn-primary btn-sm mt-2")
                 ]),
                 html.Div(className="mt-3", children=[
-                    html.H5("Population-Comp SQL Logic:"),
-                    html.Div(id="pc_sql", style={
-                        "whiteSpace":"pre-wrap","border":"1px solid #ced4da",
-                        "padding":"0.5rem","borderRadius":"0.25rem"
-                    }),
+                    html.H5("Population-Comp SQL Logic:"), html.Div(id="pc_sql", style={"whiteSpace":"pre-wrap","border":"1px solid #ced4da","padding":"0.5rem","borderRadius":"0.25rem"}),
                     dcc.Clipboard(target_id="pc_sql", title="Copy SQL", style={"marginTop":"0.5rem"})
                 ])
             ]),
 
             # Comments Tab
             dcc.Tab(label="Comments", className="p-3", children=[
-                html.Button("Show All Fields", id="prev_show_all_btn",
-                            className="btn btn-secondary btn-sm mb-3"),
+                html.Button("Show All Fields", id="prev_show_all_btn", className="btn btn-secondary btn-sm mb-3"),
                 dash_table.DataTable(
                     id="prev-comments-table",
                     columns=[{"name":c,"id":c} for c in prev_cols],
                     data=prev_summary_display.to_dict("records"),
-                    filter_action="native",
-                    sort_action="native",
-                    page_size=20,
-                    style_table={"overflowX":"auto"},
-                    style_cell_conditional=style_cell_conditional_prev,
+                    filter_action="native", sort_action="native", page_size=20,
+                    style_table={"overflowX":"auto"}, style_cell_conditional=style_cell_conditional_prev,
                     style_cell={"whiteSpace":"normal","textAlign":"left"}
                 )
             ]),
@@ -378,53 +360,40 @@ app.layout = html.Div([
             # SAS History Tab
             dcc.Tab(label="SAS History", className="p-3", children=[
                 html.H4("bref_14M_final.sas"),
-                html.Pre(sas_scripts[0]["code"],
-                         style={"whiteSpace":"pre-wrap","border":"1px solid #ddd","padding":"10px"}),
+                html.Pre(sas_scripts[0]["code"], style={"whiteSpace":"pre-wrap","border":"1px solid #ddd","padding":"10px"}),
                 html.Div(className="row my-3", children=[
                     html.Div(className="col-md-6", children=[
-                        html.Label("Select Fields:"),
-                        dcc.Dropdown(id="sas-history-fields",
-                                     options=[{"label":f,"value":f} for f in FIELD_NAMES],
-                                     multi=True)
+                        html.Label("Select Fields:"), dcc.Dropdown(
+                            id="sas-history-fields",
+                            options=[{"label":f,"value":f} for f in FIELD_NAMES],
+                            multi=True
+                        )
                     ]),
                     html.Div(className="col-md-6", children=[
                         html.Label("Threshold (%):"),
-                        dcc.Input(id="sas-threshold", type="number",
-                                  min=0, max=100, step=1, value=50,
-                                  className="form-control")
+                        dcc.Input(id="sas-threshold", type="number", min=0, max=100, step=1, value=50, className="form-control")
                     ])
                 ]),
                 dash_table.DataTable(
                     id="sas-history-data-table",
-                    columns=[], data=[],
-                    page_size=20,
-                    style_table={"overflowX":"auto"},
-                    style_cell={"textAlign":"left"}
+                    columns=[], data=[], page_size=20,
+                    style_table={"overflowX":"auto"}, style_cell={"textAlign":"left"}
                 )
             ]),
 
-            # SAS Ad-hoc Execution Tab (static placeholder)
+            # SAS Ad-hoc Execution Tab
             dcc.Tab(label="SAS Ad-hoc", className="p-3", children=[
-                html.Label("Enter SAS Code:"),
-                dcc.Textarea(
-                    id="sas-code-input",
-                    style={"width":"100%","height":"300px"},
-                    placeholder="Paste your SAS code here..."
-                ),
-                html.Button("Run SAS", id="run-sas-btn", className="btn btn-secondary mt-2", disabled=True),
+                html.Label("Enter SAS Code:"), 
+                dcc.Textarea(id="sas-code-input", style={"width":"100%","height":"300px"}, placeholder="Paste your SAS code here..."),
+                html.Button("Run SAS", id="run-sas-btn", className="btn btn-primary mt-2"),
                 html.Div(className="mt-4", children=[
-                    html.H5("Log Output:"), html.Pre("(placeholder)", 
-                        style={"whiteSpace":"pre-wrap","border":"1px solid #ccc","padding":"10px"})
+                    html.H5("Log Output:"), html.Pre(id="sas-log-output", style={"whiteSpace":"pre-wrap","border":"1px solid #ccc","padding":"10px"})
                 ]),
                 html.Div(className="mt-4", children=[
                     html.H5("Data Output:"), 
                     dash_table.DataTable(
-                        id="sas-data-output",
-                        columns=[{"name":"(placeholder)","id":"(placeholder)"}],
-                        data=[{"(placeholder)":"(no data)"}],
-                        page_size=5,
-                        style_table={"overflowX":"auto"},
-                        style_cell={"textAlign":"left"}
+                        id="sas-data-output", columns=[], data=[], page_size=5,
+                        style_table={"overflowX":"auto"}, style_cell={"textAlign":"left"}
                     )
                 ])
             ]),
@@ -436,7 +405,7 @@ app.layout = html.Div([
 ], className="container-fluid p-4", style={"backgroundColor":"#f8f9fa"})
 
 # ────────────────────────────────────────────────────────────────
-# 10. Callbacks
+# 9. Callbacks
 # ────────────────────────────────────────────────────────────────
 @app.callback(
     Output("dashboard-container","style"),
@@ -450,10 +419,8 @@ def toggle_dashboard(portfolio, report, month):
 @app.callback(
     Output("summary-table","data"),
     Input("summary-store","data"),
-    Input("filter-miss1","value"),
-    Input("filter-miss2","value"),
-    Input("filter-m2m1","value"),
-    Input("filter-m2m2","value"),
+    Input("filter-miss1","value"), Input("filter-miss2","value"),
+    Input("filter-m2m1","value"), Input("filter-m2m2","value"),
 )
 def filter_summary(store_data, m1, m2, d1, d2):
     df = pd.DataFrame(store_data)
@@ -474,19 +441,13 @@ def update_comments(n_vd, n_pc, vd_act, vd_data, vd_txt, pc_act, pc_data, pc_txt
     df_sum = pd.DataFrame(store)
     trig = dash.callback_context.triggered[0]["prop_id"].split(".")[0]
     if trig=="vd_comm_btn" and vd_act and vd_txt:
-        r = vd_act["row"]
-        fld = vd_data[r]["field_name"]
-        lbl = vd_data[r]["value_label"]
-        ent = f"{lbl} - {vd_txt}"
-        m = df_sum["Field Name"]==fld
+        r = vd_act["row"]; fld = vd_data[r]["field_name"]; lbl = vd_data[r]["value_label"]
+        ent = f"{lbl} - {vd_txt}"; m = df_sum["Field Name"]==fld
         old = df_sum.loc[m,"Comment Missing"].iloc[0]
         df_sum.loc[m,"Comment Missing"] = (old+"\n" if old else "")+ent
     if trig=="pc_comm_btn" and pc_act and pc_txt:
-        r = pc_act["row"]
-        fld = pc_data[r]["field_name"]
-        lbl = pc_data[r]["value_label"]
-        ent = f"{lbl} - {pc_txt}"
-        m = df_sum["Field Name"]==fld
+        r = pc_act["row"]; fld = pc_data[r]["field_name"]; lbl = pc_data[r]["value_label"]
+        ent = f"{lbl} - {pc_txt}"; m = df_sum["Field Name"]==fld
         old = df_sum.loc[m,"Comment M2M"].iloc[0]
         df_sum.loc[m,"Comment M2M"] = (old+"\n" if old else "")+ent
     return df_sum.to_dict("records")
@@ -501,8 +462,7 @@ def update_detail(selected, summary_rows):
         fld = summary_rows[selected[0]]["Field Name"]
         vd_df = vd_wide[vd_wide.field_name==fld]
         pc_df = pc_wide[pc_wide.field_name==fld]
-        vd_sql = sql_for(fld,"value_dist")
-        pc_sql = sql_for(fld,"pop_comp")
+        vd_sql = sql_for(fld,"value_dist"); pc_sql = sql_for(fld,"pop_comp")
     else:
         vd_df, pc_df, vd_sql, pc_sql = vd_wide, pc_wide, "", ""
     return (
@@ -552,6 +512,26 @@ def filter_sas_history(fields, threshold):
         df = df[df.field_name.isin(fields)]
     df = df[df.pct >= (threshold or 0)]
     return df.to_dict("records"), [{"name":c,"id":c} for c in df.columns]
+
+@app.callback(
+    Output("sas-log-output","children"),
+    Output("sas-data-output","data"),
+    Output("sas-data-output","columns"),
+    Input("run-sas-btn","n_clicks"),
+    State("sas-code-input","value"),
+    prevent_initial_call=True
+)
+def run_sas_code(n, code):
+    # ignore code; generate random placeholder output
+    log = "NOTE: SAS code executed (static placeholder)."
+    sample_fields = np.random.choice(FIELD_NAMES, size=min(5, len(FIELD_NAMES)), replace=False)
+    df = pd.DataFrame({
+        "field_name": sample_fields,
+        "pct": np.round(np.random.uniform(0, 100, size=len(sample_fields)), 2)
+    })
+    data = df.to_dict("records")
+    cols = [{"name":c,"id":c} for c in df.columns]
+    return log, data, cols
 
 if __name__ == "__main__":
     app.run(debug=True)
