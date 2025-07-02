@@ -1,152 +1,795 @@
-# dashboard_launcher.py
-
 import os
-import glob
-import multiprocessing
-import sys
+import re
+import datetime as dt
+import pandas as pd
+import saspy
 
-from dash import Dash, dcc, html
+from dash import Dash, dcc, html, dash_table
 from dash.dependencies import Input, Output, State
+import dash  # for callback_context
 
 # ────────────────────────────────────────────────────────────────
-# 1.  Wrappers that spawn each dashboard in its own process
+# 1. Load workbook
 # ────────────────────────────────────────────────────────────────
-
-def _start_field(input_file, port=8051):
-    # import and override, then run with no reloader
-    import dash_fieldanalysis
-    dash_fieldanalysis.INPUT_FILE = input_file
-    dash_fieldanalysis.app.run = dash_fieldanalysis.app.run_server
-    dash_fieldanalysis.app.run(debug=True, port=port, use_reloader=False)
-
-def _start_dqe(input_file, port=8052):
-    import dash_dqe
-    dash_dqe.INPUT_FILE = input_file
-    dash_dqe.app.run = dash_dqe.app.run_server
-    dash_dqe.app.run(debug=True, port=port, use_reloader=False)
-
-def _start_9avar(input_file, port=8053):
-    import dash_9avar
-    dash_9avar.INPUT_FILE = input_file
-    dash_9avar.app.run = dash_9avar.app.run_server
-    dash_9avar.app.run(debug=True, port=port, use_reloader=False)
-
-
-# ────────────────────────────────────────────────────────────────
-# 2.  Build the “launcher” Dash app
-# ────────────────────────────────────────────────────────────────
-
-BASE_PATH = os.getcwd()
-FOLDERS = sorted(
-    d for d in os.listdir(BASE_PATH)
-    if os.path.isdir(os.path.join(BASE_PATH, d))
+INPUT_FILE = "input.xlsx"
+df_data = pd.read_excel(INPUT_FILE, sheet_name="Data")
+df_data["filemonth_dt"] = pd.to_datetime(
+    df_data["filemonth_dt"], format="%m/%d/%Y"
 )
 
-launcher = Dash(__name__,
-    external_stylesheets=[
-        "https://cdn.jsdelivr.net/npm/bootswatch@4.5.2/dist/flatly/bootstrap.min.css"
+# ────────────────────────────────────────────────────────────────
+# 2. 13-month window (descending)
+# ────────────────────────────────────────────────────────────────
+DATE1 = dt.datetime(2025, 1, 1)
+MONTHS = pd.date_range(end=DATE1, periods=13, freq="MS")[::-1]
+fmt = lambda d: d.strftime("%b-%Y")
+prev_month = MONTHS[1]
+
+# ────────────────────────────────────────────────────────────────
+# 3. Helper for pop-comparison phrases
+# ────────────────────────────────────────────────────────────────
+_PHRASES = [
+    r"1\)\s*CF Loan - Both Pop, Diff Values",
+    r"2\)\s*CF Loan - Prior Null, Current Pop",
+    r"3\)\s*CF Loan - Prior Pop, Current Null",
+]
+_contains = lambda x: any(re.search(p, str(x)) for p in _PHRASES)
+
+# ────────────────────────────────────────────────────────────────
+# 4. Build the summary DataFrame for current vs. prior month
+# ────────────────────────────────────────────────────────────────
+rows = []
+for fld in sorted(df_data["field_name"].unique()):
+    miss1 = df_data[
+        (df_data.analysis_type == "value_dist")
+        & (df_data.field_name == fld)
+        & (df_data.filemonth_dt == DATE1)
+        & (df_data.value_label.str.contains("Missing", case=False, na=False))
+    ]["value_records"].sum()
+    miss2 = df_data[
+        (df_data.analysis_type == "value_dist")
+        & (df_data.field_name == fld)
+        & (df_data.filemonth_dt == prev_month)
+        & (df_data.value_label.str.contains("Missing", case=False, na=False))
+    ]["value_records"].sum()
+    diff1 = df_data[
+        (df_data.analysis_type == "pop_comp")
+        & (df_data.field_name == fld)
+        & (df_data.filemonth_dt == DATE1)
+        & (df_data.value_label.apply(_contains))
+    ]["value_records"].sum()
+    diff2 = df_data[
+        (df_data.analysis_type == "pop_comp")
+        & (df_data.field_name == fld)
+        & (df_data.filemonth_dt == prev_month)
+        & (df_data.value_label.apply(_contains))
+    ]["value_records"].sum()
+    rows.append([fld, miss1, miss2, "", diff1, diff2, ""])
+
+initial_summary = pd.DataFrame(
+    rows,
+    columns=[
+        "Field Name",
+        f"Missing {DATE1:%m/%d/%Y}",
+        f"Missing {prev_month:%m/%d/%Y}",
+        "Comment Missing",
+        f"M2M Diff {DATE1:%m/%d/%Y}",
+        f"M2M Diff {prev_month:%m/%d/%Y}",
+        "Comment M2M",
+    ],
+)
+
+# ────────────────────────────────────────────────────────────────
+# 5. Build wide-format tables for Value Distribution & Pop-Comp
+# ────────────────────────────────────────────────────────────────
+def wide(df_src):
+    df_src = df_src[df_src.filemonth_dt.isin(MONTHS)].copy()
+    denom = (
+        df_src.groupby(["field_name", "filemonth_dt"], as_index=False)
+        .value_records.sum()
+        .rename(columns={"value_records": "_tot"})
+    )
+    merged = df_src.merge(denom, on=["field_name", "filemonth_dt"])
+    base = (
+        merged[["field_name", "value_label"]]
+        .drop_duplicates()
+        .sort_values(["field_name", "value_label"])
+        .reset_index(drop=True)
+    )
+    for m in MONTHS:
+        mm = merged[merged.filemonth_dt == m][
+            ["field_name", "value_label", "value_records"]
+        ]
+        base = (
+            base.merge(mm, on=["field_name", "value_label"], how="left")
+            .rename(columns={"value_records": fmt(m)})
+        )
+    cols = [c for c in base.columns if c not in ("field_name", "value_label")]
+    base[cols] = base[cols].fillna(0)
+    return base
+
+vd_wide = wide(df_data[df_data.analysis_type == "value_dist"])
+pc_wide = wide(
+    df_data[
+        (df_data.analysis_type == "pop_comp")
+        & (df_data.value_label.apply(_contains))
     ]
 )
 
-launcher.layout = html.Div([
-    html.H2("📁 Folder → Analysis → Excel Launcher",
-            className="text-center mb-4"),
+def add_total_row(df):
+    total = {"field_name": "Total", "value_label": "Sum"}
+    for c in df.columns:
+        if c not in ("field_name", "value_label"):
+            total[c] = df[c].sum()
+    return pd.concat([df, pd.DataFrame([total])], ignore_index=True)
 
-    html.Div(className="row mb-3", children=[
-
-        html.Div(className="col-md-4", children=[
-            html.Label("Folder"),
-            dcc.Dropdown(
-                id="folder-dropdown",
-                options=[{"label":f,"value":f} for f in FOLDERS],
-                placeholder="Select folder…"
-            ),
-        ]),
-
-        html.Div(className="col-md-4", children=[
-            html.Label("Analysis"),
-            dcc.Dropdown(
-                id="analysis-dropdown",
-                options=[
-                    {"label":"Field Analysis","value":"field"},
-                    {"label":"DQE","value":"dqe"},
-                    {"label":"9a_Var","value":"9a_var"},
-                ],
-                placeholder="Select analysis…"
-            ),
-        ]),
-
-        html.Div(className="col-md-4", children=[
-            html.Label("Excel File"),
-            dcc.Dropdown(
-                id="file-dropdown",
-                placeholder="Choose folder & analysis first…"
-            ),
-        ]),
-    ]),
-
-    html.Button("Start", id="start-btn", n_clicks=0,
-                className="btn btn-primary"),
-    html.Div(id="start-output", className="mt-3")
-], className="container mt-5")
-
+def sql_for(fld, analysis):
+    sub = df_data[
+        (df_data.analysis_type == analysis)
+        & (df_data.field_name == fld)
+        & (df_data.value_sql_logic.notna())
+    ]
+    if not sub.empty:
+        return sub.value_sql_logic.iloc[0].replace("\\n", "\n").replace("\\t", "\t")
+    return ""
 
 # ────────────────────────────────────────────────────────────────
-# 3.  Populate the Excel-file dropdown
+# 6. Load & pivot previous comments (last 12 months)
 # ────────────────────────────────────────────────────────────────
-@launcher.callback(
-    Output("file-dropdown", "options"),
-    Input("folder-dropdown", "value"),
-    Input("analysis-dropdown", "value")
+prev_comments = pd.read_csv("prev_comments.csv", parse_dates=["date"])
+temp = prev_comments.copy()
+temp["month"] = temp["date"].dt.to_period("M").dt.to_timestamp()
+temp = temp[temp.month.isin(MONTHS[1:])]  # last 12 of the 13 months
+miss = temp[temp.research == "Missing"]
+m2m = temp[temp.research == "M2M Diff"]
+
+def pivot_comments(df, prefix):
+    pts = (
+        df.groupby(["field_name", "month"])["comment"]
+        .agg(lambda x: "\n".join(x))
+        .reset_index()
+    )
+    pts["col"] = pts["month"].apply(fmt)
+    w = pts.pivot(index="field_name", columns="col", values="comment")
+    w.columns = [f"{prefix} {c}" for c in w.columns]
+    return w.reset_index()
+
+pivot_miss = pivot_comments(miss, "Prev Missing")
+pivot_m2m = pivot_comments(m2m, "Prev M2M")
+prev_comments_wide = pd.merge(pivot_miss, pivot_m2m, on="field_name", how="outer").fillna("")
+
+cur = initial_summary[
+    ["Field Name", "Comment Missing", "Comment M2M"]
+].rename(
+    columns={
+        "Comment Missing": "Comment Missing This Month",
+        "Comment M2M": "Comment M2M This Month",
+    }
 )
-def _update_file_list(folder, analysis):
-    if not folder or not analysis:
-        return []
-    folder_path = os.path.join(BASE_PATH, folder)
-    files = sorted(glob.glob(os.path.join(folder_path, "*.xlsx")))
-    return [{"label": os.path.basename(f), "value": f} for f in files]
+prev_summary = pd.merge(
+    cur,
+    prev_comments_wide,
+    left_on="Field Name",
+    right_on="field_name",
+    how="left",
+).drop(columns=["field_name"])
 
+prev_cols = [
+    c
+    for c in prev_summary.columns
+    if c not in ["Comment Missing This Month", "Comment M2M This Month"]
+]
+prev_summary_display = prev_summary[prev_cols]
+
+style_cell_conditional_prev = []
+for col in prev_cols:
+    style_cell_conditional_prev.append(
+        {
+            "if": {"column_id": col},
+            "width": f"{max(len(col) * 8, 100)}px",
+        }
+    )
 
 # ────────────────────────────────────────────────────────────────
-# 4.  When Start is clicked → spawn the right dashboard
+# 7. SAS integration: history & ad-hoc execution
 # ────────────────────────────────────────────────────────────────
-@launcher.callback(
-    Output("start-output", "children"),
-    Input("start-btn", "n_clicks"),
-    State("analysis-dropdown", "value"),
-    State("file-dropdown", "value"),
-    prevent_initial_call=True
+sas = saspy.SASsession(cfgname="default")
+SAS_HISTORY_DIR = "sas_history/"
+
+def load_sas_history():
+    rows = []
+    for fname in sorted(os.listdir(SAS_HISTORY_DIR)):
+        if fname.lower().endswith(".sas"):
+            path = os.path.join(SAS_HISTORY_DIR, fname)
+            with open(path, "r") as f:
+                code = f.read()
+            rows.append({"filename": fname, "code": code})
+    return rows
+
+# ────────────────────────────────────────────────────────────────
+# 8. Build app & layout
+# ────────────────────────────────────────────────────────────────
+external_stylesheets = [
+    "https://cdn.jsdelivr.net/npm/bootswatch@4.5.2/dist/flatly/bootstrap.min.css"
+]
+app = Dash(__name__, external_stylesheets=external_stylesheets)
+
+app.layout = html.Div(
+    [
+        dcc.Store(id="summary-store", data=initial_summary.to_dict("records")),
+        html.H2(
+            "BDCOMM FRY14M Field Analysis", className="text-center mb-4"
+        ),
+        dcc.Tabs(
+            id="main-tabs",
+            style={"marginBottom": "1rem"},
+            children=[
+                # ────────── Summary Tab
+                dcc.Tab(
+                    label="Summary",
+                    className="p-3",
+                    children=[
+                        html.Div(
+                            [
+                                html.Div(
+                                    [
+                                        html.Label(f"Missing {DATE1:%b-%Y}"),
+                                        dcc.Dropdown(
+                                            id="filter-miss1",
+                                            options=[
+                                                {
+                                                    "label": i,
+                                                    "value": i,
+                                                }
+                                                for i in sorted(
+                                                    initial_summary[
+                                                        f"Missing {DATE1:%m/%d/%Y}"
+                                                    ].unique()
+                                                )
+                                            ],
+                                            multi=True,
+                                            value=sorted(
+                                                initial_summary[
+                                                    f"Missing {DATE1:%m/%d/%Y}"
+                                                ].unique()
+                                            ),
+                                            className="form-control",
+                                            style={
+                                                "position": "relative",
+                                                "zIndex": 2000,
+                                            },
+                                        ),
+                                    ],
+                                    className="col-md-3",
+                                ),
+                                html.Div(
+                                    [
+                                        html.Label(
+                                            f"Missing {prev_month:%b-%Y}"
+                                        ),
+                                        dcc.Dropdown(
+                                            id="filter-miss2",
+                                            options=[
+                                                {
+                                                    "label": i,
+                                                    "value": i,
+                                                }
+                                                for i in sorted(
+                                                    initial_summary[
+                                                        f"Missing {prev_month:%m/%d/%Y}"
+                                                    ].unique()
+                                                )
+                                            ],
+                                            multi=True,
+                                            value=sorted(
+                                                initial_summary[
+                                                    f"Missing {prev_month:%m/%d/%Y}"
+                                                ].unique()
+                                            ),
+                                            className="form-control",
+                                            style={
+                                                "position": "relative",
+                                                "zIndex": 2000,
+                                            },
+                                        ),
+                                    ],
+                                    className="col-md-3",
+                                ),
+                                html.Div(
+                                    [
+                                        html.Label(
+                                            f"M2M Diff {DATE1:%b-%Y}"
+                                        ),
+                                        dcc.Dropdown(
+                                            id="filter-m2m1",
+                                            options=[
+                                                {
+                                                    "label": i,
+                                                    "value": i,
+                                                }
+                                                for i in sorted(
+                                                    initial_summary[
+                                                        f"M2M Diff {DATE1:%m/%d/%Y}"
+                                                    ].unique()
+                                                )
+                                            ],
+                                            multi=True,
+                                            value=sorted(
+                                                initial_summary[
+                                                    f"M2M Diff {DATE1:%m/%d/%Y}"
+                                                ].unique()
+                                            ),
+                                            className="form-control",
+                                            style={
+                                                "position": "relative",
+                                                "zIndex": 2000,
+                                            },
+                                        ),
+                                    ],
+                                    className="col-md-3",
+                                ),
+                                html.Div(
+                                    [
+                                        html.Label(
+                                            f"M2M Diff {prev_month:%b-%Y}"
+                                        ),
+                                        dcc.Dropdown(
+                                            id="filter-m2m2",
+                                            options=[
+                                                {
+                                                    "label": i,
+                                                    "value": i,
+                                                }
+                                                for i in sorted(
+                                                    initial_summary[
+                                                        f"M2M Diff {prev_month:%m/%d/%Y}"
+                                                    ].unique()
+                                                )
+                                            ],
+                                            multi=True,
+                                            value=sorted(
+                                                initial_summary[
+                                                    f"M2M Diff {prev_month:%m/%d/%Y}"
+                                                ].unique()
+                                            ),
+                                            className="form-control",
+                                            style={
+                                                "position": "relative",
+                                                "zIndex": 2000,
+                                            },
+                                        ),
+                                    ],
+                                    className="col-md-3",
+                                ),
+                            ],
+                            className="row mb-5",
+                        ),
+                        dash_table.DataTable(
+                            id="summary-table",
+                            columns=[
+                                {
+                                    "name": c,
+                                    "id": c,
+                                    "editable": c
+                                    in ["Comment Missing", "Comment M2M"],
+                                }
+                                for c in initial_summary.columns
+                            ],
+                            data=[],
+                            editable=True,
+                            filter_action="none",
+                            sort_action="native",
+                            row_selectable="single",
+                            page_size=20,
+                            style_table={"overflowX": "auto"},
+                            style_cell={
+                                "textAlign": "left",
+                                "position": "relative",
+                                "zIndex": 1,
+                            },
+                        ),
+                    ],
+                ),
+
+                # ────────── Value Distribution Tab
+                dcc.Tab(
+                    label="Value Distribution",
+                    className="p-3",
+                    children=[
+                        dash_table.DataTable(
+                            id="vd-table",
+                            columns=[
+                                {"name": c, "id": c} for c in vd_wide.columns
+                            ],
+                            data=[],
+                            filter_action="native",
+                            sort_action="native",
+                            row_selectable="single",
+                            page_size=20,
+                            style_table={"overflowX": "auto"},
+                            style_cell={"textAlign": "left"},
+                        ),
+                        html.Div(
+                            [
+                                html.Label("Selected Value Label:"),
+                                dcc.Input(
+                                    id="vd-val-lbl",
+                                    value="",
+                                    readOnly=True,
+                                    className="form-control mb-2",
+                                ),
+                                dcc.Textarea(
+                                    id="vd_comm_text",
+                                    placeholder="Enter comment…",
+                                    style={
+                                        "width": "100%",
+                                        "height": "80px",
+                                    },
+                                    className="form-control",
+                                ),
+                                html.Button(
+                                    "Add Comment",
+                                    id="vd_comm_btn",
+                                    className="btn btn-primary btn-sm mt-2",
+                                ),
+                            ],
+                            className="mt-3",
+                        ),
+                        html.Div(
+                            [
+                                html.H5("Value SQL Logic:"),
+                                html.Div(
+                                    id="vd_sql",
+                                    style={
+                                        "whiteSpace": "pre-wrap",
+                                        "border": "1px solid #ced4da",
+                                        "padding": "0.5rem",
+                                        "borderRadius": "0.25rem",
+                                    },
+                                ),
+                                dcc.Clipboard(
+                                    target_id="vd_sql",
+                                    title="Copy SQL",
+                                    style={"marginTop": "0.5rem"},
+                                ),
+                            ],
+                            className="mt-3",
+                        ),
+                    ],
+                ),
+
+                # ────────── Population Comparison Tab
+                dcc.Tab(
+                    label="Population Comparison",
+                    className="p-3",
+                    children=[
+                        dash_table.DataTable(
+                            id="pc-table",
+                            columns=[
+                                {"name": c, "id": c} for c in pc_wide.columns
+                            ],
+                            data=[],
+                            filter_action="native",
+                            sort_action="native",
+                            row_selectable="single",
+                            page_size=20,
+                            style_table={"overflowX": "auto"},
+                            style_cell={"textAlign": "left"},
+                        ),
+                        html.Div(
+                            [
+                                html.Label("Selected Value Label:"),
+                                dcc.Input(
+                                    id="pc-val-lbl",
+                                    value="",
+                                    readOnly=True,
+                                    className="form-control mb-2",
+                                ),
+                                dcc.Textarea(
+                                    id="pc_comm_text",
+                                    placeholder="Enter comment…",
+                                    style={
+                                        "width": "100%",
+                                        "height": "80px",
+                                    },
+                                    className="form-control",
+                                ),
+                                html.Button(
+                                    "Add Comment",
+                                    id="pc_comm_btn",
+                                    className="btn btn-primary btn-sm mt-2",
+                                ),
+                            ],
+                            className="mt-3",
+                        ),
+                        html.Div(
+                            [
+                                html.H5("Population-Comp SQL Logic:"),
+                                html.Div(
+                                    id="pc_sql",
+                                    style={
+                                        "whiteSpace": "pre-wrap",
+                                        "border": "1px solid #ced4da",
+                                        "padding": "0.5rem",
+                                        "borderRadius": "0.25rem",
+                                    },
+                                ),
+                                dcc.Clipboard(
+                                    target_id="pc_sql",
+                                    title="Copy SQL",
+                                    style={"marginTop": "0.5rem"},
+                                ),
+                            ],
+                            className="mt-3",
+                        ),
+                    ],
+                ),
+
+                # ────────── Previous Comments Tab
+                dcc.Tab(
+                    label="Previous Comments",
+                    className="p-3",
+                    children=[
+                        html.Button(
+                            "Show All Fields",
+                            id="prev_show_all_btn",
+                            className="btn btn-secondary btn-sm mb-3",
+                        ),
+                        dash_table.DataTable(
+                            id="prev-comments-table",
+                            columns=[
+                                {"name": c, "id": c} for c in prev_cols
+                            ],
+                            data=prev_summary_display.to_dict("records"),
+                            filter_action="native",
+                            sort_action="native",
+                            page_size=20,
+                            style_table={"overflowX": "auto"},
+                            style_cell_conditional=style_cell_conditional_prev,
+                            style_cell={
+                                "whiteSpace": "normal",
+                                "textAlign": "left",
+                            },
+                        ),
+                    ],
+                ),
+
+                # ────────── SAS History Tab
+                dcc.Tab(
+                    label="SAS History",
+                    className="p-3",
+                    children=[
+                        html.H4("Previously Executed SAS Scripts"),
+                        dash_table.DataTable(
+                            id="sas-history-table",
+                            columns=[
+                                {"name": "Filename", "id": "filename"},
+                                {"name": "Code", "id": "code"},
+                            ],
+                            data=load_sas_history(),
+                            page_size=10,
+                            style_cell={
+                                "textAlign": "left",
+                                "whiteSpace": "pre-wrap",
+                                "fontFamily": "monospace",
+                            },
+                        ),
+                    ],
+                ),
+
+                # ────────── SAS Ad-hoc Execution Tab
+                dcc.Tab(
+                    label="SAS Ad-hoc",
+                    className="p-3",
+                    children=[
+                        html.Div(
+                            [
+                                html.Label("Enter SAS Code:"),
+                                dcc.Textarea(
+                                    id="sas-code-input",
+                                    style={
+                                        "width": "100%",
+                                        "height": "300px",
+                                    },
+                                    placeholder="Paste your SAS code here...",
+                                ),
+                                html.Button(
+                                    "Run SAS",
+                                    id="run-sas-btn",
+                                    className="btn btn-primary mt-2",
+                                ),
+                            ]
+                        ),
+                        html.Div(
+                            [
+                                html.H5("Log Output:"),
+                                html.Pre(
+                                    id="sas-log-output",
+                                    style={
+                                        "border": "1px solid #ccc",
+                                        "padding": "10px",
+                                        "whiteSpace": "pre-wrap",
+                                    },
+                                ),
+                            ],
+                            className="mt-4",
+                        ),
+                        html.Div(
+                            [
+                                html.H5("Data Output:"),
+                                dash_table.DataTable(
+                                    id="sas-data-output",
+                                    columns=[],  # filled by callback
+                                    data=[],
+                                    page_size=20,
+                                    style_table={"overflowX": "auto"},
+                                    style_cell={"textAlign": "left"},
+                                ),
+                            ],
+                            className="mt-4",
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    ],
+    className="container-fluid p-4",
+    style={"backgroundColor": "#f8f9fa"},
 )
-def _launch(n_clicks, analysis, filepath):
-    if not (analysis and filepath):
-        return html.Div(
-            "⚠️ Please select an Analysis type and an Excel file.",
-            style={"color":"red"}
-        )
 
-    if analysis == "field":
-        target, port, label = _start_field, 8051, "Field Analysis"
-    elif analysis == "dqe":
-        target, port, label = _start_dqe, 8052, "DQE"
+# ────────────────────────────────────────────────────────────────
+# 9. Callbacks
+# ────────────────────────────────────────────────────────────────
+@app.callback(
+    Output("summary-table", "data"),
+    Input("summary-store", "data"),
+    Input("filter-miss1", "value"),
+    Input("filter-miss2", "value"),
+    Input("filter-m2m1", "value"),
+    Input("filter-m2m2", "value"),
+)
+def filter_summary(store_data, m1, m2, d1, d2):
+    df = pd.DataFrame(store_data)
+    df = df[df[f"Missing {DATE1:%m/%d/%Y}"].isin(m1)]
+    df = df[df[f"Missing {prev_month:%m/%d/%Y}"].isin(m2)]
+    df = df[df[f"M2M Diff {DATE1:%m/%d/%Y}"].isin(d1)]
+    df = df[df[f"M2M Diff {prev_month:%m/%d/%Y}"].isin(d2)]
+    return df.to_dict("records")
+
+
+@app.callback(
+    Output("summary-store", "data"),
+    Input("vd_comm_btn", "n_clicks"),
+    Input("pc_comm_btn", "n_clicks"),
+    State("vd-table", "active_cell"),
+    State("vd-table", "data"),
+    State("vd_comm_text", "value"),
+    State("pc-table", "active_cell"),
+    State("pc-table", "data"),
+    State("pc_comm_text", "value"),
+    State("summary-store", "data"),
+    prevent_initial_call=True,
+)
+def update_comments(
+    n_vd,
+    n_pc,
+    vd_act,
+    vd_data,
+    vd_txt,
+    pc_act,
+    pc_data,
+    pc_txt,
+    store_data,
+):
+    df_sum = pd.DataFrame(store_data)
+    trig = dash.callback_context.triggered[0]["prop_id"].split(".")[0]
+    if trig == "vd_comm_btn" and vd_act and vd_txt:
+        r = vd_act["row"]
+        fld = vd_data[r]["field_name"]
+        lbl = vd_data[r]["value_label"]
+        ent = f"{lbl} - {vd_txt}"
+        m = df_sum["Field Name"] == fld
+        old = df_sum.loc[m, "Comment Missing"].iloc[0]
+        df_sum.loc[m, "Comment Missing"] = (old + "\n" if old else "") + ent
+    if trig == "pc_comm_btn" and pc_act and pc_txt:
+        r = pc_act["row"]
+        fld = pc_data[r]["field_name"]
+        lbl = pc_data[r]["value_label"]
+        ent = f"{lbl} - {pc_txt}"
+        m = df_sum["Field Name"] == fld
+        old = df_sum.loc[m, "Comment M2M"].iloc[0]
+        df_sum.loc[m, "Comment M2M"] = (old + "\n" if old else "") + ent
+    return df_sum.to_dict("records")
+
+
+@app.callback(
+    Output("vd-table", "data"),
+    Output("pc-table", "data"),
+    Output("vd_sql", "children"),
+    Output("pc_sql", "children"),
+    Input("summary-table", "selected_rows"),
+    State("summary-table", "data"),
+)
+def update_detail(selected, summary_rows):
+    if selected:
+        fld = summary_rows[selected[0]]["Field Name"]
+        vd_df = vd_wide[vd_wide.field_name == fld]
+        pc_df = pc_wide[pc_wide.field_name == fld]
+        vd_sql = sql_for(fld, "value_dist")
+        pc_sql = sql_for(fld, "pop_comp")
     else:
-        target, port, label = _start_9avar, 8053, "9a_Var"
+        vd_df, pc_df, vd_sql, pc_sql = vd_wide, pc_wide, "", ""
+    return (
+        add_total_row(vd_df).to_dict("records"),
+        add_total_row(pc_df).to_dict("records"),
+        vd_sql,
+        pc_sql,
+    )
 
-    # spawn it in its own process
-    proc = multiprocessing.Process(target=target, args=(filepath, port))
-    proc.daemon = True
-    proc.start()
 
-    link = f"http://127.0.0.1:{port}"
-    return html.Div([
-        f"🚀 Launched **{label}** on port {port}. ",
-        html.A("Open it here", href=link, target="_blank")
-    ])
+@app.callback(
+    Output("vd-val-lbl", "value"),
+    Input("vd-table", "active_cell"),
+    State("vd-table", "data"),
+)
+def update_vd_label(active, rows):
+    return rows[active["row"]]["value_label"] if active else ""
+
+
+@app.callback(
+    Output("pc-val-lbl", "value"),
+    Input("pc-table", "active_cell"),
+    State("pc-table", "data"),
+)
+def update_pc_label(active, rows):
+    return rows[active["row"]]["value_label"] if active else ""
+
+
+@app.callback(
+    Output("prev-comments-table", "data"),
+    Input("summary-table", "selected_rows"),
+    Input("prev_show_all_btn", "n_clicks"),
+    State("summary-table", "data"),
+)
+def update_prev_comments(selected, show_all, summary_rows):
+    trig = dash.callback_context.triggered[0]["prop_id"].split(".")[0]
+    if trig == "prev_show_all_btn":
+        filtered = prev_summary_display
+    elif selected:
+        fld = summary_rows[selected[0]]["Field Name"]
+        filtered = prev_summary_display[
+            prev_summary_display["Field Name"] == fld
+        ]
+    else:
+        filtered = prev_summary_display
+    return filtered.to_dict("records")
+
+
+@app.callback(
+    Output("sas-log-output", "children"),
+    Output("sas-data-output", "data"),
+    Output("sas-data-output", "columns"),
+    Input("run-sas-btn", "n_clicks"),
+    State("sas-code-input", "value"),
+    prevent_initial_call=True,
+)
+def run_sas_code(n_clicks, code):
+    if not code or n_clicks is None:
+        return "", [], []
+    result = sas.submit(code, results="text")
+    log = result["LOG"]
+    ds_list = result.get("SASDATA", [])
+    data, columns = [], []
+    if ds_list:
+        libref, dsname = ds_list[0].split(".")
+        df = sas.sasdata2dataframe(table=dsname, libref=libref)
+        data = df.to_dict("records")
+        columns = [{"name": c, "id": c} for c in df.columns]
+    return log, data, columns
 
 
 # ────────────────────────────────────────────────────────────────
-# 5.  Run the launcher itself on 8050
+# 10. Run the app
 # ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # alias for convenience
-    launcher.run = launcher.run_server
-    launcher.run(debug=True, port=8050)
+    app.run(debug=True)
