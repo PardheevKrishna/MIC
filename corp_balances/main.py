@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, getpass, time, threading, logging, datetime
+import os, getpass, time, threading, logging, datetime, math
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 
@@ -15,6 +15,7 @@ from reportlab.platypus import (
 )
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.pdfgen.canvas import Canvas
 
 # ─── Logging ───────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -46,28 +47,38 @@ def update_progress(r, elapsed):
     lbl_rows.config(text=f"Processed rows: {r}")
     lbl_time.config(text=f"Elapsed time: {elapsed:.2f}s")
 
+# ─── ProgressCanvas ────────────────────────────────────────────────────────
+class ProgressCanvas(Canvas):
+    def __init__(self, filename, pagesize, progress, **kwargs):
+        super().__init__(filename, pagesize=pagesize, **kwargs)
+        self._pbar = progress
+    def showPage(self):
+        super().showPage()
+        self._pbar.update(1)
+    def save(self):
+        super().save()
+        self._pbar.close()
+
 # ─── Worker ─────────────────────────────────────────────────────────────────
 def process_file(path):
     t0 = time.perf_counter()
     user = getpass.getuser()
     today = time.strftime("%m/%d/%Y")
 
-    # Update UI immediately
+    # immediate UI update
     root.after(0, lambda: lbl_by.config(text=f"Uploaded by: {user}"))
     root.after(0, lambda: lbl_date.config(text=f"Uploaded date: {today}"))
 
-    # 1) Read headers to get column names
-    logging.info("Reading header row…")
+    # 1) Read headers
     wb_head = load_workbook(path, read_only=True)
     ws_head = wb_head.active
     header = [c.value for c in ws_head[1]][:22]
     wb_head.close()
-
     colA_name = header[0]
     val_names = header[1:11]
     var_names = header[12:22]
 
-    # 2) Stream‐read all rows via openpyxl + tqdm
+    # 2) Stream‐read with openpyxl + tqdm
     logging.info("Streaming rows from Excel…")
     wb = load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
@@ -87,14 +98,10 @@ def process_file(path):
             colA[i] = a.strftime("%m/%d/%Y")
         else:
             colA[i] = str(a) if a is not None else ""
-
         val_block[i, :] = row[1:11]
         var_block[i, :] = row[12:22]
-
-        # per‐row UI update
         elapsed = time.perf_counter() - t0
         root.after(0, update_progress, i+1, elapsed)
-
     wb.close()
     logging.info(f"Read {total_rows:,} rows in {time.perf_counter()-t0:.2f}s")
 
@@ -104,7 +111,7 @@ def process_file(path):
     mask = np.isnan(var_block)
     var_block[mask] = (val_block - shifted)[mask]
 
-    # 4) Summary statistics pivoted
+    # 4) Summary statistics
     logging.info("Computing summary statistics…")
     stats_idx = [
         "Q0","Q1","Q2","Q3","Q4","IQR",
@@ -114,12 +121,10 @@ def process_file(path):
         "Rec Lower Thresh","Rec Upper Thresh"
     ]
     df_stats = pd.DataFrame(index=var_names, columns=stats_idx, dtype=float)
-
     for j, m in enumerate(var_names):
         col = var_block[:, j]
         col = col[~np.isnan(col)]
-        if col.size == 0:
-            continue
+        if col.size == 0: continue
         q = np.percentile(col, [0,25,50,75,100])
         mean, std = col.mean(), col.std(ddof=1)
         df_stats.loc[m, ["Q0","Q1","Q2","Q3","Q4"]] = q
@@ -130,14 +135,14 @@ def process_file(path):
         df_stats.at[m, "Rec Lower Thresh"] = round(mean - 3*std, -3)
         df_stats.at[m, "Rec Upper Thresh"] = round(mean + 3*std, -3)
 
-    # 5) Write CSV of the full variance table
+    # 5) Write variance CSV
     logging.info("Writing variance CSV…")
     df_var = pd.DataFrame(var_block, columns=var_names)
     df_var.insert(0, colA_name, colA)
     csv_out = "variances.csv"
     df_var.to_csv(csv_out, index=False)
 
-    # 6) Build PDF with per‐row tqdm
+    # 6) Build PDF with per‐page tqdm
     logging.info("Building PDF…")
     pdf_out = "output.pdf"
     doc = SimpleDocTemplate(
@@ -165,42 +170,49 @@ def process_file(path):
     for stat in stats_idx:
         row = [stat] + [f"{df_stats.at[m,stat]:,.2f}" for m in var_names]
         data.append(row)
-
-    tbl = Table(data, repeatRows=1, hAlign="LEFT")
-    tbl.setStyle(TableStyle([
-        ("FONTNAME", (0,0), (-1,-1), "Helvetica"),
-        ("FONTSIZE",  (0,0), (-1,0),    8),
-        ("FONTSIZE",  (0,1), (-1,-1),   6),
-        ("ALIGN",     (1,0), (-1,-1), "RIGHT"),
-        ("GRID",      (0,0), (-1,-1), 0.25, colors.black),
-        ("BACKGROUND",(0,0), (-1,0), colors.lightgrey),
-    ]))
-    elems.append(tbl)
+    elems.append(Table(data, repeatRows=1, hAlign="LEFT",
+        style=TableStyle([
+            ("GRID",(0,0),(-1,-1),0.25,colors.black),
+            ("BACKGROUND",(0,0),(-1,0),colors.lightgrey),
+            ("ALIGN",(1,0),(-1,-1),"RIGHT"),
+            ("FONTSIZE",(0,0),(-1,0),8),
+            ("FONTSIZE",(0,1),(-1,-1),6),
+        ])
+    ))
     elems.append(PageBreak())
 
-    # Full variance table with tqdm per row
+    # Full variance table
     var_data = [[colA_name] + var_names]
     for i in tqdm(range(total_rows), desc="Building PDF table", unit="row"):
-        var_data.append([
-            colA[i]
-        ] + [
+        var_data.append([colA[i]] + [
             f"{var_block[i,j]:,.2f}" if not np.isnan(var_block[i,j]) else ""
             for j in range(len(var_names))
         ])
-
-    tbl2 = Table(var_data, repeatRows=1, hAlign="LEFT")
-    tbl2.setStyle(TableStyle([
-        ("FONTNAME", (0,0), (-1,-1), "Helvetica"),
-        ("FONTSIZE",  (0,0), (-1,0),    7),
-        ("FONTSIZE",  (0,1), (-1,-1),   4),
-        ("ALIGN",     (1,0), (-1,-1), "RIGHT"),
-        ("GRID",      (0,0), (-1,-1), 0.25, colors.black),
-        ("BACKGROUND",(0,0), (-1,0), colors.lightgrey),
-    ]))
+    tbl2 = Table(var_data, repeatRows=1, hAlign="LEFT",
+        style=TableStyle([
+            ("GRID",(0,0),(-1,-1),0.25,colors.black),
+            ("BACKGROUND",(0,0),(-1,0),colors.lightgrey),
+            ("ALIGN",(1,0),(-1,-1),"RIGHT"),
+            ("FONTSIZE",(0,0),(-1,0),7),
+            ("FONTSIZE",(0,1),(-1,-1),4),
+        ])
+    )
     elems.append(tbl2)
 
+    # Estimate pages
+    _, page_height = landscape(A4)
+    usable = page_height - doc.topMargin - doc.bottomMargin
+    row_h = 4 * 1.2  # data row font size 4 pt × leading
+    rows_per_page = max(1, int(usable / row_h))
+    pages_data = math.ceil((len(var_data)) / rows_per_page)
+    pages_total = pages_data + 1  # +1 for summary page
+
+    pbar_pdf = tqdm(total=pages_total, desc="PDF pages", unit="page")
     try:
-        doc.build(elems)
+        doc.build(
+            elems,
+            canvasmaker=lambda fn, **kw: ProgressCanvas(fn, pagesize=landscape(A4), progress=pbar_pdf, **kw)
+        )
         logging.info("PDF build complete.")
     except Exception:
         logging.exception("PDF build error")
@@ -208,21 +220,21 @@ def process_file(path):
         btn.config(state="normal")
         return
 
-    # Final UI update
+    # final UI update
     def finish():
-        lbl_time .config(text=f"Process time: {time.perf_counter()-t0:.2f}s")
+        elapsed = time.perf_counter()-t0
+        lbl_time .config(text=f"Process time: {elapsed:.2f}s")
         lbl_rows .config(text=f"Processed rows: {total_rows}")
         messagebox.showinfo("Done",
-            f"Completed in {time.perf_counter()-t0:.2f}s\nPDF → {pdf_out}\nCSV → {csv_out}"
+            f"Completed in {elapsed:.2f}s\nPDF → {pdf_out}\nCSV → {csv_out}"
         )
         btn.config(state="normal")
-
     root.after(0, finish)
 
-# ─── Button hookup ─────────────────────────────────────────────────────────
+# ─── Button callback ────────────────────────────────────────────────────────
 def on_upload():
     fn = filedialog.askopenfilename(
-        title="Select Excel file",
+        title="Select Excel",
         filetypes=[("Excel","*.xlsx *.xls")]
     )
     if not fn:
