@@ -10,8 +10,7 @@ from tkinter import filedialog, ttk, messagebox
 
 import numpy as np
 import pandas as pd
-from openpyxl import load_workbook
-
+from docx import Document  # still used for docx → pdf link?
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import (
     SimpleDocTemplate, Table, TableStyle,
@@ -19,7 +18,6 @@ from reportlab.platypus import (
 )
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
-from tqdm import tqdm
 
 # ─── Logging ───────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -57,84 +55,78 @@ def process_file(path):
     user = getpass.getuser()
     today = time.strftime("%m/%d/%Y")
 
-    # Final UI update when processing starts
-    root.after(0, lambda: lbl_by.config(text=f"Uploaded by: {user}"))
+    # immediate UI update
+    root.after(0, lambda: lbl_by .config(text=f"Uploaded by: {user}"))
     root.after(0, lambda: lbl_date.config(text=f"Uploaded date: {today}"))
 
-    logging.info(f"Opening (read_only) '{path}'…")
-    wb = load_workbook(path, read_only=True, data_only=True)
-    ws = wb.active
-    total_rows = ws.max_row - 1
-
-    # Grab headers from row 1
-    header = [cell.value for cell in ws[1]][:22]
-    colA_name = header[0]
-    val_names = header[1:11]
-    var_names = header[12:22]
-
-    # Pre‐allocate arrays
-    colA      = np.empty(total_rows, dtype="U50")
-    val_block = np.full((total_rows, 10), np.nan)
-    var_block = np.full((total_rows, 10), np.nan)
-
-    logging.info("Streaming rows from Excel…")
-    it = ws.iter_rows(
-        min_row=2, max_row=ws.max_row,
-        min_col=1, max_col=22, values_only=True
+    logging.info(f"Reading Excel via pandas.read_excel…")
+    # read only A, B–K, M–V via usecols
+    df = pd.read_excel(
+        path,
+        header=0,
+        usecols=lambda x: True if x in {0} or (1 <= df_cols.index(x) <= 10) or (12 <= df_cols.index(x) <= 21) else False
     )
-    for i, row in enumerate(tqdm(it, total=total_rows, desc="Reading Excel", unit="row")):
-        a = row[0]
-        if isinstance(a, (datetime.date, datetime.datetime)):
-            colA[i] = a.strftime("%m/%d/%Y")
-        else:
-            colA[i] = str(a) if a is not None else ""
 
-        val_block[i, :] = row[1:11]
-        var_block[i, :] = row[12:22]
+    # But we need actual header names first—so read them separately
+    x1 = pd.read_excel(path, nrows=0)
+    df_cols = list(x1.columns)
+    colA_name = df_cols[0]
+    val_names = df_cols[1:11]
+    var_names = df_cols[12:22]
 
-        # GUI update
-        elapsed = time.perf_counter() - t0
-        root.after(0, update_progress, i+1, elapsed)
+    # Now re-read with proper usecols
+    usecols = [colA_name] + val_names + var_names
+    df = pd.read_excel(path, usecols=usecols, engine='openpyxl')
+    total_rows = len(df)
 
-    wb.close()
-    logging.info(f"Read {total_rows:,} rows in {time.perf_counter()-t0:.2f}s")
+    # extract arrays
+    colA      = df[colA_name].astype(str).to_numpy()
+    val_block = df[val_names].to_numpy(dtype=float)
+    var_block = df[var_names].to_numpy(dtype=float)
 
-    logging.info("Computing missing variances…")
-    shifted = np.vstack([val_block[1:], np.full((1,10), np.nan)])
-    mask = np.isnan(var_block)
+    root.after(0, update_progress, total_rows, time.perf_counter()-t0)
+    logging.info(f"Loaded {total_rows:,} rows in {time.perf_counter()-t0:.2f}s")
+
+    # fill missing variances
+    logging.info("Computing missing variances (vectorized)…")
+    shifted    = np.vstack([val_block[1:], np.full((1,10), np.nan)])
+    mask       = np.isnan(var_block)
     var_block[mask] = (val_block - shifted)[mask]
 
+    # summary stats
     logging.info("Computing summary statistics…")
-    df_stats = pd.DataFrame(index=var_names, columns=[
+    stats_idx = [
         "Q0","Q1","Q2","Q3","Q4","IQR",
         "Lower 2SD","Upper 2SD",
         "Lower 3SD","Upper 3SD",
         "Lower 4SD","Upper 4SD",
         "Rec Lower Thresh","Rec Upper Thresh"
-    ], dtype=float)
+    ]
+    df_stats = pd.DataFrame(index=var_names, columns=stats_idx, dtype=float)
 
     for j, m in enumerate(var_names):
         col = var_block[:, j]
         col = col[~np.isnan(col)]
-        if col.size == 0: continue
-        qs = np.percentile(col, [0,25,50,75,100])
+        if col.size == 0:
+            continue
+        q = np.percentile(col, [0,25,50,75,100])
         mean, std = col.mean(), col.std(ddof=1)
-        df_stats.at[m, "Q0":"Q4"] = qs
-        df_stats.at[m, "IQR"] = qs[3] - qs[1]
+        df_stats.loc[m, ["Q0","Q1","Q2","Q3","Q4"]] = q
+        df_stats.at[m, "IQR"] = q[3] - q[1]
         for k in (2,3,4):
             df_stats.at[m, f"Lower {k}SD"] = mean - k*std
             df_stats.at[m, f"Upper {k}SD"] = mean + k*std
         df_stats.at[m, "Rec Lower Thresh"] = round(mean - 3*std, -3)
         df_stats.at[m, "Rec Upper Thresh"] = round(mean + 3*std, -3)
 
-    # Save CSV out of the full variance table
+    # write variance CSV
+    logging.info("Writing variance CSV…")
     df_var = pd.DataFrame(var_block, columns=var_names)
     df_var.insert(0, colA_name, colA)
     csv_out = "variances.csv"
     df_var.to_csv(csv_out, index=False)
-    logging.info(f"Wrote variance CSV → {csv_out}")
 
-    # Build PDF
+    # build PDF
     logging.info("Starting PDF build…")
     pdf_out = "output.pdf"
     doc = SimpleDocTemplate(
@@ -146,7 +138,7 @@ def process_file(path):
     styles = getSampleStyleSheet()
     elems = []
 
-    # Meta info
+    # meta
     for k,v in [
         ("Uploaded by", user),
         ("Uploaded date", today),
@@ -156,10 +148,10 @@ def process_file(path):
         elems.append(Paragraph(f"<b>{k}:</b> {v}", styles["Normal"]))
     elems.append(Spacer(1,12))
 
-    # Summary table: stats as rows, metrics as columns
+    # summary table
     header_row = ["Statistic"] + var_names
     data = [header_row]
-    for stat in df_stats.columns:
+    for stat in stats_idx:
         row = [stat] + [f"{df_stats.at[m,stat]:,.2f}" for m in var_names]
         data.append(row)
 
@@ -175,9 +167,9 @@ def process_file(path):
     elems.append(tbl)
     elems.append(PageBreak())
 
-    # Full variance table (warning: very large!)
-    var_data = [ [colA_name] + var_names ]
-    for i in tqdm(range(total_rows), desc="Building PDF table", unit="row"):
+    # full variance table—WARNING: huge
+    var_data = [[colA_name] + var_names]
+    for i in range(total_rows):
         row = [colA[i]] + [
             f"{var_block[i,j]:,.2f}" if not np.isnan(var_block[i,j]) else ""
             for j in range(len(var_names))
@@ -195,44 +187,35 @@ def process_file(path):
     ]))
     elems.append(tbl2)
 
-    # Actually build the PDF
     try:
         doc.build(elems)
         logging.info("PDF build finished.")
-    except Exception as e:
-        logging.exception("Error during PDF build:")
-        # schedule a messagebox on the main thread
-        root.after(0, lambda: messagebox.showerror("PDF Error", str(e)))
+    except Exception:
+        logging.exception("PDF build error")
+        root.after(0, lambda: messagebox.showerror("PDF Error","See console"))
         btn.config(state="normal")
         return
 
-    # Final UI updates & notification on main thread
+    # final UI update
     def finish():
         lbl_time .config(text=f"Process time: {time.perf_counter()-t0:.2f}s")
         lbl_rows .config(text=f"Processed rows: {total_rows}")
         messagebox.showinfo("Done",
             f"Completed in {time.perf_counter()-t0:.2f}s\n"
-            f"PDF → {pdf_out}\nCSV → {csv_out}"
-        )
+            f"PDF → {pdf_out}\nCSV → {csv_out}")
         btn.config(state="normal")
 
     root.after(0, finish)
 
-
 # ─── Button hookup ─────────────────────────────────────────────────────────
 def on_upload():
     fn = filedialog.askopenfilename(
-        title="Select Excel file",
+        title="Select Excel",
         filetypes=[("Excel","*.xlsx *.xls")]
     )
     if not fn:
         return
     lbl_file.config(text=os.path.basename(fn))
-    # Immediately update uploaded by / date
-    lbl_by  .config(text=f"Uploaded by: {getpass.getuser()}")
-    lbl_date.config(text=f"Uploaded date: {time.strftime('%m/%d/%Y')}")
-    lbl_time .config(text="Process time: N/A")
-    lbl_rows .config(text="Processed rows: 0")
     btn.config(state="disabled")
     threading.Thread(target=process_file, args=(fn,), daemon=True).start()
 
