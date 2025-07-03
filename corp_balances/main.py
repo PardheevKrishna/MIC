@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
 from tqdm import tqdm
+import xlsxwriter
 
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import (
@@ -29,7 +30,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S"
 )
 
-# ─── Tkinter UI ────────────────────────────────────────────────────────────
+# ─── Tk UI ─────────────────────────────────────────────────────────────────
 root = tk.Tk()
 root.title("Metrics ⇒ PDF + Excel")
 frame = ttk.Frame(root, padding=10)
@@ -48,8 +49,8 @@ for i, w in enumerate((lbl_by, lbl_date, lbl_time, lbl_rows), start=1):
     w.grid(row=i, column=0, columnspan=2, sticky="w", pady=2)
 
 def update_progress(r, elapsed):
-    lbl_rows.config(text=f"Processed rows: {r}")
-    lbl_time.config(text=f"Elapsed time: {elapsed:.2f}s")
+    lbl_rows .config(text=f"Processed rows: {r}")
+    lbl_time .config(text=f"Elapsed time: {elapsed:.2f}s")
 
 # ─── Canvas for PDF page tqdm ───────────────────────────────────────────────
 class ProgressCanvas(Canvas):
@@ -73,7 +74,7 @@ def process_file(path):
     root.after(0, lambda: lbl_by  .config(text=f"Uploaded by: {user}"))
     root.after(0, lambda: lbl_date.config(text=f"Uploaded date: {today}"))
 
-    # 1) Read header row to get names
+    # 1) Read header row
     logging.info("Reading header row…")
     wb_h = load_workbook(path, read_only=True)
     ws_h = wb_h.active
@@ -83,7 +84,7 @@ def process_file(path):
     val_names = hdr[1:11]
     var_names = hdr[12:22]
 
-    # 2) Stream‐read Excel with per-row tqdm
+    # 2) Stream‐read Excel with tqdm
     logging.info("Streaming rows from Excel…")
     wb = load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
@@ -125,7 +126,7 @@ def process_file(path):
     else:
         logging.info("All var metrics present; skipping fill.")
 
-    # 4) Summary statistics per-metric
+    # 4) Summary statistics per metric
     logging.info("Computing summary statistics…")
     stats = [
         "Q0","Q1","Q2","Q3","Q4","IQR",
@@ -141,7 +142,7 @@ def process_file(path):
                       unit="metric"):
         col = var_block[:,j]
         col = col[~np.isnan(col)]
-        if col.size==0: continue
+        if col.size == 0: continue
         q = np.percentile(col, [0,25,50,75,100])
         mean,std = col.mean(), col.std(ddof=1)
         df_stats.loc[mn, ["Q0","Q1","Q2","Q3","Q4"]] = q
@@ -152,18 +153,22 @@ def process_file(path):
         df_stats.at[mn,"Rec Lower Thresh"] = round(mean-3*std, -3)
         df_stats.at[mn,"Rec Upper Thresh"] = round(mean+3*std, -3)
 
-    # 5) Write variances.xlsx (fast) with a 1-step tqdm
+    # 5) Write variances.xlsx row-by-row with tqdm
     logging.info("Writing variances.xlsx…")
-    pbar_xlsx = tqdm(total=1, desc="Writing Excel", unit="task")
-    df_var = pd.DataFrame(var_block, columns=var_names)
-    df_var.insert(0, colA_name, colA)
     var_xlsx = "variances.xlsx"
-    with pd.ExcelWriter(var_xlsx, engine="xlsxwriter") as writer:
-        df_var.to_excel(writer, index=False, sheet_name="Sheet1")
-    pbar_xlsx.update(1); pbar_xlsx.close()
-    logging.info(f"Wrote '{var_xlsx}'")
+    workbook = xlsxwriter.Workbook(var_xlsx, {'constant_memory': True})
+    worksheet = workbook.add_worksheet()
+    # write header
+    worksheet.write_row(0, 0, [colA_name] + var_names)
+    for i in tqdm(range(total_rows),
+                  desc="Writing Excel rows",
+                  unit="row"):
+        row = [colA[i]] + [var_block[i,j] for j in range(10)]
+        worksheet.write_row(i+1, 0, row)
+    workbook.close()
+    logging.info(f"Wrote {total_rows:,} rows to '{var_xlsx}'")
 
-    # 6) Build single-page PDF summary + hyperlink
+    # 6) Build one-page PDF summary + hyperlink
     logging.info("Building summary PDF…")
     pdf_out = "summary.pdf"
     doc = SimpleDocTemplate(
@@ -176,14 +181,13 @@ def process_file(path):
     elems = []
 
     # Meta info
-    for label,val in [
+    for label, val in [
         ("Uploaded by", user),
         ("Uploaded date", today),
         ("Original file", os.path.basename(path)),
         ("Process time", f"{time.perf_counter()-t0:.2f}s")
     ]:
-        elems.append(Paragraph(f"<b>{label}:</b> {val}",
-                               styles["Normal"]))
+        elems.append(Paragraph(f"<b>{label}:</b> {val}", styles["Normal"]))
     elems.append(Spacer(1,12))
 
     # Summary table
@@ -215,32 +219,28 @@ def process_file(path):
     try:
         doc.build(
             elems,
-            canvasmaker=lambda fn, **kw:
-                ProgressCanvas(fn, progress=pbar_pdf, **kw)
+            canvasmaker=lambda fn, **kw: ProgressCanvas(fn, progress=pbar_pdf, **kw)
         )
         logging.info(f"Built PDF '{pdf_out}'")
     except Exception:
         logging.exception("PDF build error")
-        root.after(0,
-            lambda: messagebox.showerror(
-                "PDF Error","See console"))
+        root.after(0, lambda: messagebox.showerror("PDF Error","See console"))
         btn.config(state="normal")
         return
 
     # Final UI update & notify
     def finish():
-        elapsed = time.perf_counter()-t0
+        elapsed = time.perf_counter() - t0
         lbl_time .config(text=f"Process time: {elapsed:.2f}s")
         lbl_rows .config(text=f"Processed rows: {total_rows}")
         messagebox.showinfo("Done",
-            f"Finished in {elapsed:.2f}s\n"
+            f"Completed in {elapsed:.2f}s\n"
             f"PDF → {pdf_out}\n"
             f"Excel → {var_xlsx}"
         )
         btn.config(state="normal")
     root.after(0, finish)
 
-# ─── Button hookup ─────────────────────────────────────────────────────────
 def on_upload():
     fn = filedialog.askopenfilename(
         title="Select Excel file",
@@ -250,8 +250,7 @@ def on_upload():
         return
     lbl_file.config(text=os.path.basename(fn))
     btn.config(state="disabled")
-    threading.Thread(target=process_file,
-                     args=(fn,), daemon=True).start()
+    threading.Thread(target=process_file, args=(fn,), daemon=True).start()
 
 btn.config(command=on_upload)
 root.mainloop()
