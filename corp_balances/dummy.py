@@ -2,17 +2,20 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from datetime import datetime
-from datetime import timedelta
+import logging
+
+# ——— configure logging ———
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s: %(message)s',
+    datefmt='%H:%M:%S'
+)
 
 def random_dates(start_date, end_date, n):
-    """
-    Generate n random dates between start_date and end_date.
-    Returns a DatetimeIndex at midnight for each date.
-    """
+    """Generate n random dates between start_date and end_date."""
     delta_days = (end_date - start_date).days
-    # random offsets from 0 to delta_days
-    random_offsets = np.random.randint(0, delta_days + 1, size=n)
-    return start_date + pd.to_timedelta(random_offsets, unit='D')
+    offsets = np.random.randint(0, delta_days + 1, size=n)
+    return start_date + pd.to_timedelta(offsets, unit='D')
 
 def generate_metrics_excel(
     num_rows=1_000_000,
@@ -22,25 +25,27 @@ def generate_metrics_excel(
     date_end='2025-12-31'
 ):
     """
-    - Column A: 'Date' in MM/DD/YYYY format (no time)
-    - Columns Val_Metric1..Val_Metric10 and Var_Metric1..Var_Metric10
-      * Only the chosen metric_type gets random +/- values up to ±1e9
-      * The other block is left empty
-    - One blank column between the two metric blocks
-    - Progress bar via tqdm
+    1) Date generation
+    2) Metric columns (Val/Var) generation
+    3) DataFrame assembly
+    4) Excel write
     """
-    # parse string dates to Timestamps (at midnight)
+    phases = ["Dates", "Metrics", "Assemble DF", "Write Excel"]
+    overall = tqdm(total=len(phases), desc="Overall Progress", position=0)
+
+    # — Phase 1: Dates —
+    logging.info("Phase 1: Starting date generation…")
     start = pd.to_datetime(date_start)
     end   = pd.to_datetime(date_end)
-    
-    # build data dict
-    data = {}
     dates = random_dates(start, end, num_rows)
-    # format as MM/DD/YYYY strings
-    data['Date'] = dates.strftime('%m/%d/%Y')
-    
-    # generate your 10 val & 10 var columns
-    for i in tqdm(range(1, 11), desc='Generating metrics'):
+    dates_str = dates.strftime('%m/%d/%Y')
+    data = {'Date': dates_str}
+    logging.info("Phase 1: Date generation complete.")
+    overall.update(1)
+
+    # — Phase 2: Metrics —
+    logging.info(f"Phase 2: Generating '{metric_type.upper()}' metrics…")
+    for i in tqdm(range(1, 11), desc="Generating metrics", position=1):
         if metric_type.lower() == 'val':
             data[f'Val_Metric{i}'] = np.random.randint(-10**9, 10**9, size=num_rows)
             data[f'Var_Metric{i}'] = pd.NA
@@ -49,22 +54,32 @@ def generate_metrics_excel(
             data[f'Var_Metric{i}'] = np.random.randint(-10**9, 10**9, size=num_rows)
         else:
             raise ValueError("metric_type must be 'val' or 'var'")
-    
-    # assemble into DataFrame
+    logging.info("Phase 2: Metric generation complete.")
+    overall.update(1)
+
+    # — Phase 3: Assemble DataFrame —
+    logging.info("Phase 3: Assembling DataFrame…")
     df = pd.DataFrame(data)
-    # insert one blank column after Val_Metric10 (position index 11)
-    df.insert(11, '', pd.NA)
-    
-    # enforce the desired column order
-    cols = ['Date'] \
-         + [f'Val_Metric{i}' for i in range(1,11)] \
-         + [''] \
-         + [f'Var_Metric{i}' for i in range(1,11)]
+    df.insert(11, '', pd.NA)  # blank column
+    # enforce exact column order
+    cols = (
+        ['Date']
+        + [f'Val_Metric{i}' for i in range(1, 11)]
+        + ['']
+        + [f'Var_Metric{i}' for i in range(1, 11)]
+    )
     df = df[cols]
-    
-    # write out to Excel
+    logging.info("Phase 3: DataFrame ready.")
+    overall.update(1)
+
+    # — Phase 4: Write to Excel —
+    logging.info(f"Phase 4: Writing {num_rows:,} rows to '{output_file}'…")
     df.to_excel(output_file, index=False)
-    print(f"✓ Done – {num_rows:,} rows written to '{output_file}'")
+    logging.info("Phase 4: Excel file written.")
+    overall.update(1)
+    overall.close()
+
+    print(f"\n✓ All done – '{output_file}' is ready.")
 
 if __name__ == '__main__':
     # Example: only Val_Metric populated
