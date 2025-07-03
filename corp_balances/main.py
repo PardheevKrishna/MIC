@@ -1,199 +1,170 @@
 #!/usr/bin/env python3
-import os
-import getpass
-import time
-import threading
-import logging
+import os, getpass, time, threading, logging
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+from openpyxl import load_workbook
 from docx import Document
 from tqdm import tqdm
 
-# ─── Logging ────────────────────────────────────────────────────────────────
+# ─── Logging ───────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s %(levelname)s: %(message)s',
-    datefmt='%H:%M:%S'
+    format="%(asctime)s %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S"
 )
 
-# ─── GUI SETUP ─────────────────────────────────────────────────────────────
+# ─── TK UI SETUP ────────────────────────────────────────────────────────────
 root = tk.Tk()
-root.title('Metrics Processor')
-
-# Frame & widgets
+root.title("Metrics Processor")
 frame = ttk.Frame(root, padding=10)
 frame.grid()
 
-btn_upload = ttk.Button(frame, text='Upload Excel File')
-btn_upload.grid(row=0, column=0, sticky='w')
-lbl_file = ttk.Label(frame, text='No file selected')
+btn = ttk.Button(frame, text="Upload Excel")
+btn.grid(row=0, column=0)
+lbl_file = ttk.Label(frame, text="No file")
 lbl_file.grid(row=0, column=1, padx=10)
 
-lbl_uploaded_date = ttk.Label(frame, text='Uploaded date: N/A')
-lbl_uploaded_date.grid(row=1, column=0, columnspan=2, sticky='w', pady=5)
+lbl_by   = ttk.Label(frame, text="Uploaded by: N/A")
+lbl_date = ttk.Label(frame, text="Uploaded date: N/A")
+lbl_time = ttk.Label(frame, text="Process time: N/A")
+lbl_rows = ttk.Label(frame, text="Processed rows: 0")
 
-lbl_user = ttk.Label(frame, text='Uploaded by: N/A')
-lbl_user.grid(row=2, column=0, columnspan=2, sticky='w', pady=5)
+for i, w in enumerate((lbl_by, lbl_date, lbl_time, lbl_rows), start=1):
+    w.grid(row=i, column=0, columnspan=2, sticky="w", pady=2)
 
-lbl_process_time = ttk.Label(frame, text='Process time: 0.00s')
-lbl_process_time.grid(row=3, column=0, columnspan=2, sticky='w', pady=5)
+def update_progress(r, elapsed):
+    lbl_rows .config(text=f"Processed rows: {r}")
+    lbl_time .config(text=f"Elapsed time: {elapsed:.2f}s")
 
-lbl_rows = ttk.Label(frame, text='Processed rows: 0')
-lbl_rows.grid(row=4, column=0, columnspan=2, sticky='w', pady=5)
+# ─── WORKER ─────────────────────────────────────────────────────────────────
+def process_file(path):
+    start_all = time.perf_counter()
+    logging.info(f"Loading (read_only) '{path}'…")
 
-lbl_elapsed = ttk.Label(frame, text='Elapsed time: 0.00s')
-lbl_elapsed.grid(row=5, column=0, columnspan=2, sticky='w', pady=5)
+    # ── 1) STREAM‐READ only cols A,B–K,M–V via openpyxl read_only ─────────────
+    wb = load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
 
-def update_progress(processed_rows, elapsed):
-    """Called via root.after to update the GUI per‐row."""
-    lbl_rows.config(text=f'Processed rows: {processed_rows}')
-    lbl_elapsed.config(text=f'Elapsed time: {elapsed:.2f}s')
+    # we'll collect in numpy arrays for speed
+    rows = ws.max_row - 1  # minus header
+    dates = np.empty(rows, dtype="U10")
+    val_block = np.empty((rows, 10), dtype="float64")
+    var_block = np.empty((rows, 10), dtype="float64")
+    val_block.fill(np.nan)
+    var_block.fill(np.nan)
 
-# ─── PROCESSING FUNCTION ───────────────────────────────────────────────────
-def process_file(file_path):
-    start_time = time.perf_counter()
-    logging.info(f"Starting processing of '{file_path}'")
+    logging.info("Reading rows…")
+    it = ws.iter_rows(min_row=2, max_row=ws.max_row,
+                      min_col=1, max_col=22, values_only=True)
+    for i, row in enumerate(tqdm(it, total=rows, desc="Reading Excel", unit="row")):
+        # row: (A,B…K,L,M…V,…) total 22 cols; we ignore L (idx=11)
+        dates[i] = row[0].strftime("%m/%d/%Y")
+        val_block[i,:] = row[1:11]
+        var_block[i,:] = row[12:22]
 
-    # Phase 1: Read Excel
-    logging.info("Reading Excel file…")
-    df = pd.read_excel(file_path, engine='openpyxl')
-    nrows, ncols = df.shape
-    logging.info(f"Loaded {nrows:,} rows × {ncols} cols")
+    wb.close()
+    logging.info(f"Read {rows:,} rows in {time.perf_counter()-start_all:.2f}s")
 
-    # Column positions:
-    #  A → df.iloc[:,0]
-    #  B–K → df.iloc[:,1:11]
-    #  blank col at 11
-    #  M–V → df.iloc[:,12:22]
-    dates = df.iloc[:, 0].astype(str).tolist()
-    val_df = df.iloc[:, 1:11]
-    var_df = df.iloc[:, 12:22]
+    # ── 2) COMPUTE missing var = val[i] - val[i+1] vectorized ────────────────
+    logging.info("Computing missing variances…")
+    # shift up by one for next‐row val
+    shifted = np.vstack([val_block[1:], np.full((1,10), np.nan)])
+    mask_missing = np.isnan(var_block)
+    var_block[mask_missing] = (val_block - shifted)[mask_missing]
 
-    # Phase 2: Compute missing var metrics from val metrics
-    logging.info("Computing var metrics from val metrics…")
-    computed = val_df.subtract(val_df.shift(-1)).fillna(np.nan)
-    var_final = var_df.where(var_df.notna(), computed)
-    logging.info("Var metrics ready.")
-
-    # Phase 3: Compute summary statistics for each var‐column
+    # ── 3) SUMMARY STATS (quartiles, IQR, ±2/3/4 SD) ─────────────────────────
     logging.info("Calculating summary statistics…")
     summary = []
-    # columns M–V correspond to letters M…V
-    letters = [chr(ord('M') + i) for i in range(var_final.shape[1])]
-    for idx, letter in enumerate(letters):
-        series = var_final.iloc[:, idx].dropna().astype(float)
-        if series.empty:
+    for j in range(10):
+        col = var_block[:, j]
+        col = col[~np.isnan(col)]
+        if col.size == 0:
             continue
-        q0, q1, q2, q3, q4 = (
-            series.quantile(0.0),
-            series.quantile(0.25),
-            series.quantile(0.5),
-            series.quantile(0.75),
-            series.quantile(1.0),
-        )
-        iqr   = q3 - q1
-        mean  = series.mean()
-        std   = series.std()
-        low2  = mean - 2*std; up2  = mean + 2*std
-        low3  = mean - 3*std; up3  = mean + 3*std
-        low4  = mean - 4*std; up4  = mean + 4*std
+        q0, q1, q2, q3, q4 = np.percentile(col, [0,25,50,75,100])
+        iqr = q3 - q1
+        mean = col.mean(); std = col.std(ddof=1)
+        lows = [mean - k*std for k in (2,3,4)]
+        ups  = [mean + k*std for k in (2,3,4)]
         summary.append({
-            'Metric': letter,
-            'Q0': q0, 'Q1': q1, 'Q2': q2, 'Q3': q3, 'Q4': q4,
-            'IQR': iqr,
-            'Lower 2SD': low2, 'Upper 2SD': up2,
-            'Lower 3SD': low3, 'Upper 3SD': up3,
-            'Lower 4SD': low4, 'Upper 4SD': up4,
-            'Rec Lower (3SD)': round(low3, 3),
-            'Rec Upper (3SD)': round(up3, 3),
+            "Metric": f"Var_Metric{j+1}",
+            "Q0": q0, "Q1": q1, "Q2": q2, "Q3": q3, "Q4": q4,
+            "IQR": iqr,
+            "Lower 2SD": lows[0],  "Upper 2SD": ups[0],
+            "Lower 3SD": lows[1],  "Upper 3SD": ups[1],
+            "Lower 4SD": lows[2],  "Upper 4SD": ups[2],
+            "Rec Low (3SD)": round(lows[1],3),
+            "Rec Up  (3SD)": round(ups[1],3)
         })
-    logging.info("Summary statistics done.")
 
-    # Phase 4: Build the Word document
-    logging.info("Generating Word document…")
+    # ── 4) DUMP variance table to CSV (blazing fast) ─────────────────────────
+    var_df = pd.DataFrame(var_block, columns=[f"Var_Metric{i}" for i in range(1,11)])
+    var_csv = "variances.csv"
+    var_df.insert(0, "Date", dates)
+    var_df.to_csv(var_csv, index=False)
+    logging.info(f"Wrote variance CSV → {var_csv}")
+
+    # ── 5) BUILD DOCX (meta + summary + link to CSV) ──────────────────────────
+    logging.info("Building DOCX…")
     doc = Document()
     user = getpass.getuser()
-    uploaded_date = time.strftime('%m/%d/%Y')
-    filename = os.path.basename(file_path)
+    today = time.strftime("%m/%d/%Y")
+    fname = os.path.basename(path)
 
-    # Meta info
     doc.add_paragraph(f"Uploaded by: {user}")
-    doc.add_paragraph(f"Uploaded date: {uploaded_date}")
-    doc.add_paragraph(f"File name: {filename}")
+    doc.add_paragraph(f"Uploaded date: {today}")
+    doc.add_paragraph(f"File name: {fname}")
     p_time = doc.add_paragraph("Process time: calculating…")
 
-    # Summary table
-    cols_sum = [
-        'Metric','Q0','Q1','Q2','Q3','Q4','IQR',
-        'Lower 2SD','Upper 2SD',
-        'Lower 3SD','Upper 3SD',
-        'Lower 4SD','Upper 4SD',
-        'Rec Lower (3SD)','Rec Upper (3SD)'
-    ]
-    tbl = doc.add_table(rows=1, cols=len(cols_sum))
-    for i, h in enumerate(cols_sum):
+    # summary table
+    cols = list(summary[0].keys())
+    tbl = doc.add_table(rows=1, cols=len(cols))
+    for i, h in enumerate(cols):
         tbl.rows[0].cells[i].text = h
     for row in summary:
         cells = tbl.add_row().cells
-        for i, key in enumerate(cols_sum):
-            cells[i].text = str(row[key])
+        for i, h in enumerate(cols):
+            cells[i].text = str(row[h])
 
-    # Page break
+    # second page: link to CSV
     doc.add_page_break()
+    para = doc.add_paragraph("Full variance table (1 M rows) → ")
+    link = para.add_run(var_csv)
+    link.font.underline = True
 
-    # Variances table on second page
-    cols_var = ['Date'] + letters
-    tbl2 = doc.add_table(rows=1, cols=len(cols_var))
-    for i, h in enumerate(cols_var):
-        tbl2.rows[0].cells[i].text = h
+    total_t = time.perf_counter() - start_all
+    p_time.clear().add_run(f"Process time: {total_t:.2f} seconds")
 
-    # Row-by-row insertion so we can update both tqdm and the Tk UI each time
-    for i in tqdm(range(nrows), desc='Building variances table', unit='row'):
-        cells = tbl2.add_row().cells
-        cells[0].text = dates[i]
-        for j in range(len(letters)):
-            val = var_final.iat[i, j]
-            cells[j+1].text = '' if pd.isna(val) else str(val)
+    out = "output.docx"
+    doc.save(out)
+    logging.info(f"Saved DOCX → {out}")
 
-        # Update the GUI
-        elapsed = time.perf_counter() - start_time
-        root.after(0, update_progress, i+1, elapsed)
+    # GUI updates
+    root.after(0, lbl_by .config, {"text":f"Uploaded by: {user}"})
+    root.after(0, lbl_date.config, {"text":f"Uploaded date: {today}"})
+    root.after(0, lbl_time.config, {"text":f"Process time: {total_t:.2f}s"})
+    root.after(0, lbl_rows.config, {"text":f"Processed rows: {rows}"})
 
-    # Compute and patch in process time
-    total_time = time.perf_counter() - start_time
-    p_time.text = f"Process time: {total_time:.2f} seconds"
-
-    # Save
-    out_doc = 'output.docx'
-    doc.save(out_doc)
-    logging.info(f"Document saved as '{out_doc}'")
-
-    # Notify user
-    messagebox.showinfo('Done', f"Finished in {total_time:.2f}s\nSaved → {out_doc}")
-    btn_upload.config(state='normal')
-
-
-# ─── BUTTON CALLBACK ────────────────────────────────────────────────────────
-def on_upload():
-    fp = filedialog.askopenfilename(
-        title='Select Excel file',
-        filetypes=[('Excel', '*.xlsx *.xls')]
+    messagebox.showinfo("Done",
+        f"Completed in {total_t:.2f}s\n"
+        f"- Summary DOCX: {out}\n"
+        f"- Variance CSV: {var_csv}"
     )
-    if not fp:
+    btn.config(state="normal")
+
+# ─── UPLOAD CALLBACK ────────────────────────────────────────────────────────
+def on_upload():
+    fn = filedialog.askopenfilename(
+        title="Select Excel",
+        filetypes=[("Excel", "*.xlsx *.xls")]
+    )
+    if not fn:
         return
-    # Update UI meta
-    lbl_file.config(text=os.path.basename(fp))
-    lbl_uploaded_date.config(text=f"Uploaded date: {time.strftime('%m/%d/%Y')}")
-    lbl_user.config(text=f"Uploaded by: {getpass.getuser()}")
+    lbl_file.config(text=os.path.basename(fn))
+    btn.config(state="disabled")
+    threading.Thread(target=process_file, args=(fn,), daemon=True).start()
 
-    # Kick off processing in a background thread
-    btn_upload.config(state='disabled')
-    threading.Thread(target=process_file, args=(fp,), daemon=True).start()
-
-btn_upload.config(command=on_upload)
-
-# ─── MAINLOOP ───────────────────────────────────────────────────────────────
+btn.config(command=on_upload)
 root.mainloop()
