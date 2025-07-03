@@ -29,7 +29,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S"
 )
 
-# ─── Tk UI ─────────────────────────────────────────────────────────────────
+# ─── Tkinter UI ────────────────────────────────────────────────────────────
 root = tk.Tk()
 root.title("Metrics ⇒ PDF + Excel")
 frame = ttk.Frame(root, padding=10)
@@ -63,17 +63,17 @@ class ProgressCanvas(Canvas):
         super().save()
         self._pbar.close()
 
-# ─── Main work ───────────────────────────────────────────────────────────────
+# ─── Main processing ───────────────────────────────────────────────────────
 def process_file(path):
     t0 = time.perf_counter()
     user  = getpass.getuser()
     today = time.strftime("%m/%d/%Y")
 
-    # immediate UI update
+    # Immediate UI update
     root.after(0, lambda: lbl_by  .config(text=f"Uploaded by: {user}"))
     root.after(0, lambda: lbl_date.config(text=f"Uploaded date: {today}"))
 
-    # 1) read header row
+    # 1) Read header row to get names
     logging.info("Reading header row…")
     wb_h = load_workbook(path, read_only=True)
     ws_h = wb_h.active
@@ -82,33 +82,50 @@ def process_file(path):
     colA_name = hdr[0]
     val_names = hdr[1:11]
     var_names = hdr[12:22]
-    usecols   = [colA_name] + val_names + var_names
 
-    # 2) fast read via pandas with no per-row tqdm
-    logging.info("Loading Excel via pandas.read_excel…")
-    df = pd.read_excel(path, usecols=usecols, engine='openpyxl')
-    n  = len(df)
-    elapsed = time.perf_counter() - t0
-    logging.info(f"Loaded {n:,} rows in {elapsed:.2f}s")
-    root.after(0, update_progress, n, elapsed)
+    # 2) Stream‐read Excel with per-row tqdm
+    logging.info("Streaming rows from Excel…")
+    wb = load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
+    total_rows = ws.max_row - 1
 
-    colA      = df[colA_name].astype(str).to_numpy()
-    val_block = df[val_names].to_numpy(float)
-    var_block = df[var_names].to_numpy(float)
+    colA      = np.empty(total_rows, dtype="U50")
+    val_block = np.full((total_rows,10), np.nan)
+    var_block = np.full((total_rows,10), np.nan)
 
-    # 3) fill missing variances if any (dummy tqdm 1 step)
+    it = ws.iter_rows(
+        min_row=2, max_row=ws.max_row,
+        min_col=1, max_col=22, values_only=True
+    )
+    for i, row in enumerate(tqdm(it,
+                                  total=total_rows,
+                                  desc="Reading Excel",
+                                  unit="row")):
+        a = row[0]
+        if isinstance(a, (datetime.date, datetime.datetime)):
+            colA[i] = a.strftime("%m/%d/%Y")
+        else:
+            colA[i] = str(a) if a is not None else ""
+        val_block[i,:] = row[1:11]
+        var_block[i,:] = row[12:22]
+        elapsed = time.perf_counter() - t0
+        root.after(0, update_progress, i+1, elapsed)
+    wb.close()
+    logging.info(f"Read {total_rows:,} rows in {time.perf_counter()-t0:.2f}s")
+
+    # 3) Fill missing variances if any
     if np.isnan(var_block).any():
         logging.info("Filling missing variances…")
         pbar_fill = tqdm(total=1, desc="Filling variances", unit="step")
         shifted = np.vstack([val_block[1:], np.full((1,10), np.nan)])
-        m = np.isnan(var_block)
-        var_block[m] = (val_block - shifted)[m]
+        mask    = np.isnan(var_block)
+        var_block[mask] = (val_block - shifted)[mask]
         pbar_fill.update(1)
         pbar_fill.close()
     else:
         logging.info("All var metrics present; skipping fill.")
 
-    # 4) summary statistics per metric
+    # 4) Summary statistics per-metric
     logging.info("Computing summary statistics…")
     stats = [
         "Q0","Q1","Q2","Q3","Q4","IQR",
@@ -135,29 +152,30 @@ def process_file(path):
         df_stats.at[mn,"Rec Lower Thresh"] = round(mean-3*std, -3)
         df_stats.at[mn,"Rec Upper Thresh"] = round(mean+3*std, -3)
 
-    # 5) write variances.xlsx with a 1-step tqdm
+    # 5) Write variances.xlsx (fast) with a 1-step tqdm
     logging.info("Writing variances.xlsx…")
     pbar_xlsx = tqdm(total=1, desc="Writing Excel", unit="task")
     df_var = pd.DataFrame(var_block, columns=var_names)
     df_var.insert(0, colA_name, colA)
     var_xlsx = "variances.xlsx"
-    with pd.ExcelWriter(var_xlsx, engine="xlsxwriter",
-                        options={"constant_memory":True}) as writer:
+    with pd.ExcelWriter(var_xlsx, engine="xlsxwriter") as writer:
         df_var.to_excel(writer, index=False, sheet_name="Sheet1")
     pbar_xlsx.update(1); pbar_xlsx.close()
     logging.info(f"Wrote '{var_xlsx}'")
 
-    # 6) PDF summary + link
-    logging.info("Building PDF summary…")
+    # 6) Build single-page PDF summary + hyperlink
+    logging.info("Building summary PDF…")
     pdf_out = "summary.pdf"
     doc = SimpleDocTemplate(
-        pdf_out, pagesize=landscape(A4),
+        pdf_out,
+        pagesize=landscape(A4),
         leftMargin=20, rightMargin=20,
         topMargin=20, bottomMargin=20
     )
     styles = getSampleStyleSheet()
     elems = []
 
+    # Meta info
     for label,val in [
         ("Uploaded by", user),
         ("Uploaded date", today),
@@ -168,6 +186,7 @@ def process_file(path):
                                styles["Normal"]))
     elems.append(Spacer(1,12))
 
+    # Summary table
     header_row = ["Statistic"] + var_names
     data = [header_row]
     for st in stats:
@@ -185,6 +204,7 @@ def process_file(path):
     ))
     elems.append(Spacer(1,12))
 
+    # Hyperlink
     link = f"file:///{os.path.abspath(var_xlsx)}"
     elems.append(Paragraph(
         f'<a href="{link}">Download full variances Excel</a>',
@@ -207,22 +227,23 @@ def process_file(path):
         btn.config(state="normal")
         return
 
-    # final UI update
+    # Final UI update & notify
     def finish():
         elapsed = time.perf_counter()-t0
         lbl_time .config(text=f"Process time: {elapsed:.2f}s")
-        lbl_rows .config(text=f"Processed rows: {n}")
+        lbl_rows .config(text=f"Processed rows: {total_rows}")
         messagebox.showinfo("Done",
-            f"Completed in {elapsed:.2f}s\n"
+            f"Finished in {elapsed:.2f}s\n"
             f"PDF → {pdf_out}\n"
             f"Excel → {var_xlsx}"
         )
         btn.config(state="normal")
     root.after(0, finish)
 
+# ─── Button hookup ─────────────────────────────────────────────────────────
 def on_upload():
     fn = filedialog.askopenfilename(
-        title="Select Excel",
+        title="Select Excel file",
         filetypes=[("Excel","*.xlsx *.xls")]
     )
     if not fn:
