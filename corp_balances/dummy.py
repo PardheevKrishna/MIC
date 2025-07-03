@@ -1,15 +1,18 @@
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from datetime import datetime, timedelta
+from datetime import datetime
+from datetime import timedelta
 
 def random_dates(start_date, end_date, n):
-    """Generate n random dates between start_date and end_date."""
-    start_u = start_date.toordinal()
-    end_u   = end_date.toordinal()
-    # random integers in [start_u, end_u]
-    ordinals = np.random.randint(start_u, end_u + 1, size=n)
-    return pd.to_datetime(ordinals, origin='1970-01-01', unit='D')
+    """
+    Generate n random dates between start_date and end_date.
+    Returns a DatetimeIndex at midnight for each date.
+    """
+    delta_days = (end_date - start_date).days
+    # random offsets from 0 to delta_days
+    random_offsets = np.random.randint(0, delta_days + 1, size=n)
+    return start_date + pd.to_timedelta(random_offsets, unit='D')
 
 def generate_metrics_excel(
     num_rows=1_000_000,
@@ -19,23 +22,24 @@ def generate_metrics_excel(
     date_end='2025-12-31'
 ):
     """
-    Generates an Excel file with:
-      - Column A: 'Date' of random dates between date_start and date_end
-      - Columns Val_Metric1..Val_Metric10 and Var_Metric1..Var_Metric10
-        * Only the chosen metric_type is populated with random +/- million–billion values
-        * The other set remains empty (but columns still present)
-      - One blank column between Val_… and Var_… blocks
-      - A progress bar showing column‐by‐column generation via tqdm
+    - Column A: 'Date' in MM/DD/YYYY format (no time)
+    - Columns Val_Metric1..Val_Metric10 and Var_Metric1..Var_Metric10
+      * Only the chosen metric_type gets random +/- values up to ±1e9
+      * The other block is left empty
+    - One blank column between the two metric blocks
+    - Progress bar via tqdm
     """
-    # parse dates
+    # parse string dates to Timestamps (at midnight)
     start = pd.to_datetime(date_start)
     end   = pd.to_datetime(date_end)
     
-    # prepare container for data
+    # build data dict
     data = {}
-    data['Date'] = random_dates(start, end, num_rows)
+    dates = random_dates(start, end, num_rows)
+    # format as MM/DD/YYYY strings
+    data['Date'] = dates.strftime('%m/%d/%Y')
     
-    # create metric columns
+    # generate your 10 val & 10 var columns
     for i in tqdm(range(1, 11), desc='Generating metrics'):
         if metric_type.lower() == 'val':
             data[f'Val_Metric{i}'] = np.random.randint(-10**9, 10**9, size=num_rows)
@@ -46,30 +50,28 @@ def generate_metrics_excel(
         else:
             raise ValueError("metric_type must be 'val' or 'var'")
     
-    # assemble DataFrame
+    # assemble into DataFrame
     df = pd.DataFrame(data)
-    
-    # insert blank column after Val_Metric10 (i.e. at position 11)
+    # insert one blank column after Val_Metric10 (position index 11)
     df.insert(11, '', pd.NA)
     
-    # reorder just to be safe
+    # enforce the desired column order
     cols = ['Date'] \
          + [f'Val_Metric{i}' for i in range(1,11)] \
          + [''] \
          + [f'Var_Metric{i}' for i in range(1,11)]
     df = df[cols]
     
-    # write to Excel
+    # write out to Excel
     df.to_excel(output_file, index=False)
-    print(f"✓ Done – saved {num_rows:,} rows to '{output_file}'")
+    print(f"✓ Done – {num_rows:,} rows written to '{output_file}'")
 
 if __name__ == '__main__':
-    # Example runs:
-    # To generate only Val_Metric columns:
-    # generate_metrics_excel(num_rows=1_000_000, metric_type='val', output_file='val_metrics.xlsx')
+    # Example: only Val_Metric populated
+    # generate_metrics_excel(num_rows=1_000_000, metric_type='val',  output_file='val_metrics.xlsx')
     #
-    # To generate only Var_Metric columns:
-    # generate_metrics_excel(num_rows=1_000_000, metric_type='var', output_file='var_metrics.xlsx')
-    
-    # By default, this will make 1,000,000 rows with Val_Metric populated:
+    # Example: only Var_Metric populated
+    # generate_metrics_excel(num_rows=1_000_000, metric_type='var',  output_file='var_metrics.xlsx')
+    #
+    # Default call (1M rows, Val_Metric):
     generate_metrics_excel()
