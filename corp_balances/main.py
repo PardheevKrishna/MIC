@@ -11,8 +11,9 @@ from tkinter import filedialog, ttk, messagebox
 import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
-from tqdm import tqdm
+from openpyxl.styles import Font
 import xlsxwriter
+from tqdm import tqdm
 
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import (
@@ -81,10 +82,10 @@ def process_file(path):
     hdr = [c.value for c in ws_h[1]][:22]
     wb_h.close()
     colA_name = hdr[0]
-    val_names = hdr[1:11]
-    var_names = hdr[12:22]
+    val_names  = hdr[1:11]
+    var_names  = hdr[12:22]
 
-    # 2) Stream‐read Excel with tqdm
+    # 2) Stream-read Excel
     logging.info("Streaming rows from Excel…")
     wb = load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
@@ -114,19 +115,18 @@ def process_file(path):
     wb.close()
     logging.info(f"Read {total_rows:,} rows in {time.perf_counter()-t0:.2f}s")
 
-    # 3) Fill missing variances if any
+    # 3) Fill missing variances
     if np.isnan(var_block).any():
         logging.info("Filling missing variances…")
         pbar_fill = tqdm(total=1, desc="Filling variances", unit="step")
         shifted = np.vstack([val_block[1:], np.full((1,10), np.nan)])
         mask    = np.isnan(var_block)
         var_block[mask] = (val_block - shifted)[mask]
-        pbar_fill.update(1)
-        pbar_fill.close()
+        pbar_fill.update(1); pbar_fill.close()
     else:
         logging.info("All var metrics present; skipping fill.")
 
-    # 4) Summary statistics per metric
+    # 4) Summary stats
     logging.info("Computing summary statistics…")
     stats = [
         "Q0","Q1","Q2","Q3","Q4","IQR",
@@ -142,7 +142,7 @@ def process_file(path):
                       unit="metric"):
         col = var_block[:,j]
         col = col[~np.isnan(col)]
-        if col.size == 0: continue
+        if col.size==0: continue
         q = np.percentile(col, [0,25,50,75,100])
         mean,std = col.mean(), col.std(ddof=1)
         df_stats.loc[mn, ["Q0","Q1","Q2","Q3","Q4"]] = q
@@ -153,13 +153,15 @@ def process_file(path):
         df_stats.at[mn,"Rec Lower Thresh"] = round(mean-3*std, -3)
         df_stats.at[mn,"Rec Upper Thresh"] = round(mean+3*std, -3)
 
-    # 5) Write variances.xlsx row-by-row with tqdm
+    # 5) Write variances.xlsx row-by-row
     logging.info("Writing variances.xlsx…")
     var_xlsx = "variances.xlsx"
-    workbook = xlsxwriter.Workbook(var_xlsx, {'constant_memory': True})
+    workbook  = xlsxwriter.Workbook(var_xlsx, {'constant_memory':True})
     worksheet = workbook.add_worksheet()
-    # write header
-    worksheet.write_row(0, 0, [colA_name] + var_names)
+    # Header
+    header = [colA_name] + var_names
+    worksheet.write_row(0, 0, header)
+    # Rows
     for i in tqdm(range(total_rows),
                   desc="Writing Excel rows",
                   unit="row"):
@@ -168,7 +170,27 @@ def process_file(path):
     workbook.close()
     logging.info(f"Wrote {total_rows:,} rows to '{var_xlsx}'")
 
-    # 6) Build one-page PDF summary + hyperlink
+    # 6) Auto-fit & format via openpyxl
+    logging.info("Auto-fitting & formatting Excel…")
+    wb2 = load_workbook(var_xlsx)
+    ws2 = wb2.active
+    # Bold header
+    for cell in ws2[1]:
+        cell.font = Font(bold=True)
+    # Freeze pane
+    ws2.freeze_panes = "A2"
+    # Auto-fit columns (sampling first 1000 rows)
+    sample_n = min(1000, total_rows)
+    for col in tqdm(ws2.columns,
+                    desc="Auto-fitting cols",
+                    unit="col"):
+        vals = [cell.value for cell in col[:sample_n+1]]
+        maxlen = max(len(str(v)) if v is not None else 0 for v in vals)
+        ws2.column_dimensions[col[0].column_letter].width = maxlen + 2
+    wb2.save(var_xlsx)
+    logging.info("Excel auto-fit & formatted.")
+
+    # 7) Build single-page PDF summary + hyperlink
     logging.info("Building summary PDF…")
     pdf_out = "summary.pdf"
     doc = SimpleDocTemplate(
@@ -180,8 +202,8 @@ def process_file(path):
     styles = getSampleStyleSheet()
     elems = []
 
-    # Meta info
-    for label, val in [
+    # Meta
+    for label,val in [
         ("Uploaded by", user),
         ("Uploaded date", today),
         ("Original file", os.path.basename(path)),
@@ -190,14 +212,20 @@ def process_file(path):
         elems.append(Paragraph(f"<b>{label}:</b> {val}", styles["Normal"]))
     elems.append(Spacer(1,12))
 
-    # Summary table
+    # Summary table with auto colWidths
     header_row = ["Statistic"] + var_names
     data = [header_row]
     for st in stats:
         data.append([st] + [f"{df_stats.at[m,st]:,.2f}" for m in var_names])
 
+    page_w, _ = landscape(A4)
+    avail_w   = page_w - doc.leftMargin - doc.rightMargin
+    num_cols  = len(header_row)
+    w         = avail_w/num_cols
+    col_widths= [w]*num_cols
+
     elems.append(Table(
-        data, repeatRows=1, hAlign="LEFT",
+        data, repeatRows=1, hAlign="LEFT", colWidths=col_widths,
         style=TableStyle([
             ("GRID",(0,0),(-1,-1),0.25,colors.black),
             ("BACKGROUND",(0,0),(-1,0),colors.lightgrey),
@@ -208,7 +236,6 @@ def process_file(path):
     ))
     elems.append(Spacer(1,12))
 
-    # Hyperlink
     link = f"file:///{os.path.abspath(var_xlsx)}"
     elems.append(Paragraph(
         f'<a href="{link}">Download full variances Excel</a>',
@@ -219,16 +246,18 @@ def process_file(path):
     try:
         doc.build(
             elems,
-            canvasmaker=lambda fn, **kw: ProgressCanvas(fn, progress=pbar_pdf, **kw)
+            canvasmaker=lambda fn, **kw:
+                ProgressCanvas(fn, progress=pbar_pdf, **kw)
         )
         logging.info(f"Built PDF '{pdf_out}'")
     except Exception:
         logging.exception("PDF build error")
-        root.after(0, lambda: messagebox.showerror("PDF Error","See console"))
+        root.after(0,
+            lambda: messagebox.showerror("PDF Error","See console"))
         btn.config(state="normal")
         return
 
-    # Final UI update & notify
+    # Final UI update
     def finish():
         elapsed = time.perf_counter() - t0
         lbl_time .config(text=f"Process time: {elapsed:.2f}s")
@@ -250,7 +279,8 @@ def on_upload():
         return
     lbl_file.config(text=os.path.basename(fn))
     btn.config(state="disabled")
-    threading.Thread(target=process_file, args=(fn,), daemon=True).start()
+    threading.Thread(target=process_file,
+                     args=(fn,), daemon=True).start()
 
 btn.config(command=on_upload)
 root.mainloop()
