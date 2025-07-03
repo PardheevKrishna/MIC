@@ -4,7 +4,6 @@ import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 
 import numpy as np
-import pandas as pd
 from openpyxl import load_workbook
 from tqdm import tqdm
 
@@ -49,8 +48,9 @@ def update_progress(r, elapsed):
 
 # ─── ProgressCanvas ────────────────────────────────────────────────────────
 class ProgressCanvas(Canvas):
-    def __init__(self, filename, pagesize, progress, **kwargs):
-        super().__init__(filename, pagesize=pagesize, **kwargs)
+    def __init__(self, filename, progress, **kwargs):
+        # kwargs will include pagesize
+        super().__init__(filename, **kwargs)
         self._pbar = progress
     def showPage(self):
         super().showPage()
@@ -65,8 +65,8 @@ def process_file(path):
     user = getpass.getuser()
     today = time.strftime("%m/%d/%Y")
 
-    # immediate UI update
-    root.after(0, lambda: lbl_by.config(text=f"Uploaded by: {user}"))
+    # Immediate UI update
+    root.after(0, lambda: lbl_by  .config(text=f"Uploaded by: {user}"))
     root.after(0, lambda: lbl_date.config(text=f"Uploaded date: {today}"))
 
     # 1) Read headers
@@ -78,7 +78,7 @@ def process_file(path):
     val_names = header[1:11]
     var_names = header[12:22]
 
-    # 2) Stream‐read with openpyxl + tqdm
+    # 2) Stream‐read via openpyxl + tqdm
     logging.info("Streaming rows from Excel…")
     wb = load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
@@ -100,8 +100,11 @@ def process_file(path):
             colA[i] = str(a) if a is not None else ""
         val_block[i, :] = row[1:11]
         var_block[i, :] = row[12:22]
+
+        # per‐row UI update
         elapsed = time.perf_counter() - t0
         root.after(0, update_progress, i+1, elapsed)
+
     wb.close()
     logging.info(f"Read {total_rows:,} rows in {time.perf_counter()-t0:.2f}s")
 
@@ -181,13 +184,14 @@ def process_file(path):
     ))
     elems.append(PageBreak())
 
-    # Full variance table
+    # Full variance table data
     var_data = [[colA_name] + var_names]
-    for i in tqdm(range(total_rows), desc="Building PDF table", unit="row"):
+    for i in range(total_rows):
         var_data.append([colA[i]] + [
             f"{var_block[i,j]:,.2f}" if not np.isnan(var_block[i,j]) else ""
             for j in range(len(var_names))
         ])
+
     tbl2 = Table(var_data, repeatRows=1, hAlign="LEFT",
         style=TableStyle([
             ("GRID",(0,0),(-1,-1),0.25,colors.black),
@@ -200,27 +204,27 @@ def process_file(path):
     elems.append(tbl2)
 
     # Estimate pages
-    _, page_height = landscape(A4)
-    usable = page_height - doc.topMargin - doc.bottomMargin
-    row_h = 4 * 1.2  # data row font size 4 pt × leading
+    _, page_h = landscape(A4)
+    usable = page_h - doc.topMargin - doc.bottomMargin
+    row_h = 4 * 1.2
     rows_per_page = max(1, int(usable / row_h))
-    pages_data = math.ceil((len(var_data)) / rows_per_page)
-    pages_total = pages_data + 1  # +1 for summary page
+    pages_data = math.ceil(len(var_data)/rows_per_page)
+    pages_total = pages_data + 1  # +1 summary
 
     pbar_pdf = tqdm(total=pages_total, desc="PDF pages", unit="page")
     try:
         doc.build(
             elems,
-            canvasmaker=lambda fn, **kw: ProgressCanvas(fn, pagesize=landscape(A4), progress=pbar_pdf, **kw)
+            canvasmaker=lambda fn, **kw: ProgressCanvas(fn, progress=pbar_pdf, **kw)
         )
         logging.info("PDF build complete.")
     except Exception:
         logging.exception("PDF build error")
-        root.after(0, lambda: messagebox.showerror("PDF Error", "See console"))
+        root.after(0, lambda: messagebox.showerror("PDF Error","See console"))
         btn.config(state="normal")
         return
 
-    # final UI update
+    # Final UI update
     def finish():
         elapsed = time.perf_counter()-t0
         lbl_time .config(text=f"Process time: {elapsed:.2f}s")
@@ -231,10 +235,10 @@ def process_file(path):
         btn.config(state="normal")
     root.after(0, finish)
 
-# ─── Button callback ────────────────────────────────────────────────────────
+# ─── Button hookup ─────────────────────────────────────────────────────────
 def on_upload():
     fn = filedialog.askopenfilename(
-        title="Select Excel",
+        title="Select Excel file",
         filetypes=[("Excel","*.xlsx *.xls")]
     )
     if not fn:
