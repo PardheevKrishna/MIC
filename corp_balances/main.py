@@ -11,7 +11,6 @@ from tkinter import filedialog, ttk, messagebox
 import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Font
 import xlsxwriter
 from tqdm import tqdm
 from PyPDF2 import PdfReader, PdfWriter
@@ -69,9 +68,9 @@ class ProgressCanvas(Canvas):
 # ─── Main worker ────────────────────────────────────────────────────────────
 def process_file(path):
     t0 = time.perf_counter()
-    user    = getpass.getuser()
-    today   = datetime.date.today().strftime("%m/%d/%Y")
-    datefn  = datetime.date.today().strftime("%m-%d-%Y")
+    user     = getpass.getuser()
+    today    = datetime.date.today().strftime("%m/%d/%Y")
+    datefn   = datetime.date.today().strftime("%m-%d-%Y")
     input_nm = os.path.splitext(os.path.basename(path))[0]
 
     # UI: uploaded by/date
@@ -88,7 +87,7 @@ def process_file(path):
     val_names  = hdr[1:11]
     var_names  = hdr[12:22]
 
-    # 2) Stream‐read rows
+    # 2) Stream-read rows
     logging.info("Streaming rows from Excel…")
     wb = load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
@@ -97,7 +96,7 @@ def process_file(path):
     colA             = np.empty(total_rows, dtype="U50")
     val_block        = np.full((total_rows,10), np.nan)
     var_input_block  = np.full((total_rows,10), np.nan)
-    var_block        = np.full((total_rows,10), np.nan)  # final
+    var_block        = np.full((total_rows,10), np.nan)
 
     it = ws.iter_rows(
         min_row=2, max_row=ws.max_row,
@@ -106,9 +105,11 @@ def process_file(path):
     for i, row in enumerate(tqdm(it, total=total_rows,
                                   desc="Reading Excel", unit="row")):
         a = row[0]
-        colA[i] = (a.strftime("%m/%d/%Y")
-                   if isinstance(a, (datetime.date, datetime.datetime))
-                   else (str(a) if a is not None else ""))
+        colA[i] = (
+            a.strftime("%m/%d/%Y")
+            if isinstance(a, (datetime.date, datetime.datetime))
+            else str(a) if a is not None else ""
+        )
         val_block[i,:]       = row[1:11]
         var_input_block[i,:] = row[12:22]
         elapsed = time.perf_counter() - t0
@@ -118,9 +119,9 @@ def process_file(path):
 
     # 3) Build var_block: preserve input, fill gaps skipping nulls
     logging.info("Computing variances skipping nulls…")
-    var_block[:] = var_input_block  # start with user-supplied
+    var_block[:] = var_input_block
     for j in tqdm(range(10), desc="Variance calc", unit="metric"):
-        v = val_block[:, j]
+        v   = val_block[:, j]
         idx = np.where(~np.isnan(v))[0]
         for k in range(len(idx)-1):
             i0, i1 = idx[k], idx[k+1]
@@ -142,34 +143,32 @@ def process_file(path):
     for j,mn in tqdm(enumerate(var_names),
                     total=len(var_names),
                     desc="Summary stats", unit="metric"):
-        # choose input series for Count
+        # Count on input series
         inp = var_input_block[:,j]
         if np.isnan(inp).all():
-            # no input var's: count is number of non-nulls in val
             inp = val_block[:,j]
-
         nonnan = inp[~np.isnan(inp)]
         cnt    = nonnan.size
         meanv  = nonnan.mean() if cnt else 0.0
-        absmean= np.mean(np.abs(nonnan)) if cnt else 0.0
+        absm   = np.mean(np.abs(nonnan)) if cnt else 0.0
 
-        # fill stats if we have computed var_block
-        vb = var_block[:, j]
+        # Stats on var_block
+        vb = var_block[:,j]
         vn = vb[~np.isnan(vb)]
         if vn.size:
-            q = np.percentile(vn, [0,25,50,75,100])
+            q  = np.percentile(vn, [0,25,50,75,100])
             sd = vn.std(ddof=1)
             df_stats.loc[["Q0","Q1","Q2","Q3","Q4"], mn] = q
-            df_stats.at["IQR", mn] = q[3] - q[1]
+            df_stats.at["IQR",mn] = q[3] - q[1]
             for k in (2,3,4):
                 df_stats.at[f"Lower {k}SD", mn] = meanv - k*sd
                 df_stats.at[f"Upper {k}SD", mn] = meanv + k*sd
-            df_stats.at["Rec Lower Thresh", mn] = round(meanv - 3*sd, -3)
-            df_stats.at["Rec Upper Thresh", mn] = round(meanv + 3*sd, -3)
+            df_stats.at["Rec Lower Thresh",mn] = round(meanv - 3*sd, -3)
+            df_stats.at["Rec Upper Thresh",mn] = round(meanv + 3*sd, -3)
 
-        df_stats.at["Count", mn]         = cnt
-        df_stats.at["Mean", mn]          = meanv
-        df_stats.at["Absolute Mean", mn] = absmean
+        df_stats.at["Count",mn]         = cnt
+        df_stats.at["Mean",mn]          = meanv
+        df_stats.at["Absolute Mean",mn] = absm
 
     # 5) Write Excel row-by-row
     out_xlsx = f"ThresholdAnalysis_output_{input_nm}_{datefn}.xlsx"
@@ -197,14 +196,13 @@ def process_file(path):
     wb2 = load_workbook(out_xlsx)
     ws2 = wb2.active
     sample_n = min(1000, total_rows)
-    for col in tqdm(ws2.columns,
-                    desc="Auto-fitting cols", unit="col"):
-        vals = [cell.value for cell in col[:sample_n+1]]
-        maxl = max(len(str(v)) if v is not None else 0 for v in vals)
-        ws2.column_dimensions[col[0].column_letter].width = maxl + 2
+    for col in tqdm(ws2.columns, desc="Auto-fitting cols", unit="col"):
+        vals = [c.value for c in col[:sample_n+1]]
+        ml   = max(len(str(v)) if v is not None else 0 for v in vals)
+        ws2.column_dimensions[col[0].column_letter].width = ml + 2
     wb2.save(out_xlsx)
 
-    # 6) Build one-page PDF summary + hyperlink
+    # 6) Build PDF summary + embed Excel
     out_pdf = f"output_summary_{datefn}.pdf"
     logging.info(f"Building '{out_pdf}'…")
     doc = SimpleDocTemplate(
@@ -216,7 +214,7 @@ def process_file(path):
     styles = getSampleStyleSheet()
     elems = []
 
-    # Meta info
+    # Meta
     for lbl,val in [
         ("Uploaded by", user),
         ("Uploaded date", today),
@@ -226,16 +224,18 @@ def process_file(path):
         elems.append(Paragraph(f"<b>{lbl}:</b> {val}", styles["Normal"]))
     elems.append(Spacer(1,12))
 
-    # Summary table data
+    # Table data
     header_row = ["Statistic"] + var_names
     data = [header_row] + [
         [stat] + [f"{df_stats.at[stat,m]:,.2f}" for m in var_names]
         for stat in stats
     ]
-    last2 = len(data)-1
-    last1 = last2-1
 
-    # fix column widths
+    # Bold Rec Lower + Rec Upper threshold rows
+    rec_lower_idx = stats.index("Rec Lower Thresh") + 1
+    rec_upper_idx = stats.index("Rec Upper Thresh") + 1
+
+    # Column widths
     page_w,_ = landscape(A4)
     avail_w  = page_w - doc.leftMargin - doc.rightMargin
     cw       = avail_w / len(header_row)
@@ -246,8 +246,8 @@ def process_file(path):
         ("ALIGN",(1,0),(-1,-1),"RIGHT"),
         ("FONTSIZE",(0,0),(-1,0),10),
         ("FONTSIZE",(0,1),(-1,-1),8),
-        ("FONTNAME",(0,last1),(-1,last1),"Helvetica-Bold"),
-        ("FONTNAME",(0,last2),(-1,last2),"Helvetica-Bold"),
+        ("FONTNAME",(0,rec_lower_idx),(-1,rec_lower_idx),"Helvetica-Bold"),
+        ("FONTNAME",(0,rec_upper_idx),(-1,rec_upper_idx),"Helvetica-Bold"),
     ])
     elems.append(Table(
         data,
@@ -258,10 +258,9 @@ def process_file(path):
     ))
     elems.append(Spacer(1,12))
 
-    # hyperlink
-    link = f"file:///{os.path.abspath(out_xlsx)}"
     elems.append(Paragraph(
-        f'<a href="{link}">Download full variances Excel</a>',
+        "The variances Excel is embedded as an attachment in this PDF; "
+        "please use your PDF viewer’s Attachments panel to download it.",
         styles["Normal"]
     ))
 
@@ -272,27 +271,30 @@ def process_file(path):
             ProgressCanvas(fn, progress=pbar_pdf, **kw)
     )
 
-    # embed the Excel into PDF
+    # Embed the Excel into the PDF itself
     with open(out_xlsx, "rb") as xf, open(out_pdf, "rb") as pf:
-        reader = PdfReader(pf)
+        reader = PdfReader(pf)        # modern API
         writer = PdfWriter()
         writer.append_pages_from_reader(reader)
         writer.add_attachment(os.path.basename(out_xlsx), xf.read())
         with open(out_pdf, "wb") as outf:
             writer.write(outf)
 
-    # final UI update
+    # Final UI update
     def finish():
         elapsed = time.perf_counter() - t0
-        lbl_time .config(text=f"Process time: {elapsed:.2f}s")
-        lbl_rows .config(text=f"Processed rows: {total_rows}")
+        lbl_time.config(  text=f"Process time: {elapsed:.2f}s")
+        lbl_rows.config(  text=f"Processed rows: {total_rows}")
         messagebox.showinfo("Done",
-            f"Finished in {elapsed:.2f}s\nPDF → {out_pdf}\nExcel → {out_xlsx}"
+            f"Finished in {elapsed:.2f}s\n"
+            f"PDF → {out_pdf}\n"
+            f"Excel → {out_xlsx}"
         )
         btn.config(state="normal")
+
     root.after(0, finish)
 
-# ─── Hookup ────────────────────────────────────────────────────────────────
+# ─── Button hookup ─────────────────────────────────────────────────────────
 def on_upload():
     fn = filedialog.askopenfilename(
         title="Select Excel file",
