@@ -13,7 +13,6 @@ import pandas as pd
 from openpyxl import load_workbook
 import xlsxwriter
 from tqdm import tqdm
-from PyPDF2 import PdfReader, PdfWriter
 
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import (
@@ -72,7 +71,7 @@ def process_file(path):
     datefn   = datetime.date.today().strftime("%m-%d-%Y")
     input_nm = os.path.splitext(os.path.basename(path))[0]
 
-    root.after(0, lambda: lbl_by  .config(text=f"Uploaded by: {user}"))
+    root.after(0, lambda: lbl_by.config(text=f"Uploaded by: {user}"))
     root.after(0, lambda: lbl_date.config(text=f"Uploaded date: {today}"))
 
     # 1) Header row
@@ -89,13 +88,15 @@ def process_file(path):
     ws = wb.active
     total_rows = ws.max_row - 1
 
-    colA             = np.empty(total_rows, dtype="U50")
-    val_block        = np.full((total_rows,10), np.nan)
-    var_input_block  = np.full((total_rows,10), np.nan)
-    var_block        = np.full((total_rows,10), np.nan)
+    colA            = np.empty(total_rows, dtype="U50")
+    val_block       = np.full((total_rows,10), np.nan)
+    var_input_block = np.full((total_rows,10), np.nan)
+    var_block       = np.full((total_rows,10), np.nan)
 
-    it = ws.iter_rows(min_row=2, max_row=ws.max_row,
-                      min_col=1, max_col=22, values_only=True)
+    it = ws.iter_rows(
+        min_row=2, max_row=ws.max_row,
+        min_col=1, max_col=22, values_only=True
+    )
     for i, row in enumerate(tqdm(it, total=total_rows,
                                   desc="Reading Excel", unit="row")):
         a = row[0]
@@ -109,9 +110,11 @@ def process_file(path):
         elapsed = time.perf_counter() - t0
         root.after(0, update_progress, i+1, elapsed)
     wb.close()
+    logging.info(f"Read {total_rows:,} rows in {time.perf_counter()-t0:.2f}s")
 
-    # 3) Variance calc skipping nulls
+    # 3) Compute variances skipping nulls
     var_block[:] = var_input_block
+    logging.info("Computing variances skipping nulls…")
     for j in tqdm(range(10), desc="Variance calc", unit="metric"):
         v   = val_block[:,j]
         idx = np.where(~np.isnan(v))[0]
@@ -120,7 +123,7 @@ def process_file(path):
             if np.isnan(var_input_block[i0,j]):
                 var_block[i0,j] = v[i0] - v[i1]
 
-    # 4) Summary stats + count/mean/absmean
+    # 4) Summary stats + Count/Mean/AbsMean
     stats = [
         "Q0","Q1","Q2","Q3","Q4","IQR",
         "Lower 2SD","Upper 2SD",
@@ -131,6 +134,7 @@ def process_file(path):
     ]
     df_stats = pd.DataFrame(index=stats, columns=var_names, dtype=float)
 
+    logging.info("Computing summary statistics…")
     for j,mn in tqdm(enumerate(var_names), total=len(var_names),
                     desc="Summary stats", unit="metric"):
         inp = var_input_block[:,j]
@@ -147,7 +151,7 @@ def process_file(path):
             q  = np.percentile(vn,[0,25,50,75,100])
             sd = vn.std(ddof=1)
             df_stats.loc[["Q0","Q1","Q2","Q3","Q4"], mn] = q
-            df_stats.at["IQR", mn] = q[3]-q[1]
+            df_stats.at["IQR",mn] = q[3]-q[1]
             for k in (2,3,4):
                 df_stats.at[f"Lower {k}SD",mn] = meanv - k*sd
                 df_stats.at[f"Upper {k}SD",mn] = meanv + k*sd
@@ -160,6 +164,7 @@ def process_file(path):
 
     # 5) Write Excel
     out_xlsx = f"ThresholdAnalysis_output_{input_nm}_{datefn}.xlsx"
+    logging.info(f"Writing '{out_xlsx}'…")
     wb_x = xlsxwriter.Workbook(out_xlsx, {
         'constant_memory': True,
         'nan_inf_to_errors': True
@@ -169,7 +174,8 @@ def process_file(path):
     ws_x.set_row(0, None, hdr_fmt)
     ws_x.freeze_panes(1,1)
     ws_x.write_row(0,0,[colA_name]+var_names)
-    for i in tqdm(range(total_rows), desc="Writing Excel rows", unit="row"):
+    for i in tqdm(range(total_rows),
+                  desc="Writing Excel rows", unit="row"):
         rowv = [colA[i]] + [
             var_block[i,j] if not np.isnan(var_block[i,j]) else None
             for j in range(10)
@@ -177,7 +183,7 @@ def process_file(path):
         ws_x.write_row(i+1,0,rowv)
     wb_x.close()
 
-    # auto-fit
+    # Auto-fit
     wb2 = load_workbook(out_xlsx)
     ws2 = wb2.active
     sample_n = min(1000, total_rows)
@@ -187,9 +193,11 @@ def process_file(path):
         ws2.column_dimensions[col[0].column_letter].width = ml+2
     wb2.save(out_xlsx)
 
-    # 6) Build PDF
+    # 6) Build PDF summary
     out_pdf = f"output_summary_{datefn}.pdf"
-    doc = SimpleDocTemplate(out_pdf,
+    logging.info(f"Building '{out_pdf}'…")
+    doc = SimpleDocTemplate(
+        out_pdf,
         pagesize=landscape(A4),
         leftMargin=20, rightMargin=20,
         topMargin=20, bottomMargin=20
@@ -203,12 +211,12 @@ def process_file(path):
         ("Original file", os.path.basename(path)),
         ("Process time", f"{time.perf_counter()-t0:.2f}s")
     ]:
-        elems.append(Paragraph(f"<b>{lbl}:</b> {val}",styles["Normal"]))
+        elems.append(Paragraph(f"<b>{lbl}:</b> {val}", styles["Normal"]))
     elems.append(Spacer(1,12))
 
-    header_row = ["Statistic"]+var_names
-    data = [header_row]+[
-        [stat]+[f"{df_stats.at[stat,m]:,.2f}" for m in var_names]
+    header_row = ["Statistic"] + var_names
+    data = [header_row] + [
+        [stat] + [f"{df_stats.at[stat,m]:,.2f}" for m in var_names]
         for stat in stats
     ]
     idx_lower = stats.index("Rec Lower Thresh")+1
@@ -216,12 +224,14 @@ def process_file(path):
 
     page_w,_ = landscape(A4)
     avail_w  = page_w - doc.leftMargin - doc.rightMargin
-    cw       = avail_w/len(header_row)
+    cw       = avail_w / len(header_row)
 
-    style = TableStyle([
+    tbl_style = TableStyle([
         ("GRID",(0,0),(-1,-1),0.25,colors.black),
         ("BACKGROUND",(0,0),(-1,0),colors.lightgrey),
         ("ALIGN",(1,0),(-1,-1),"RIGHT"),
+        ("LEFTPADDING",(0,0),(-1,-1),4),       # add padding
+        ("RIGHTPADDING",(0,0),(-1,-1),4),
         ("FONTSIZE",(0,0),(-1,0),10),
         ("FONTSIZE",(0,1),(-1,-1),8),
         ("FONTNAME",(0,idx_lower),(-1,idx_lower),"Helvetica-Bold"),
@@ -232,14 +242,13 @@ def process_file(path):
         repeatRows=1,
         hAlign="LEFT",
         colWidths=[cw]*len(header_row),
-        style=style
+        style=tbl_style
     ))
     elems.append(Spacer(1,12))
 
     elems.append(Paragraph(
-        "The variances Excel is embedded in this PDF’s attachments. "
-        "In your PDF viewer (Edge shows a paperclip icon), open the "
-        "Attachments panel to download it.",
+        f"The variances Excel file has been saved to your working directory as "
+        f"<b>{out_xlsx}</b>.",
         styles["Normal"]
     ))
 
@@ -250,17 +259,9 @@ def process_file(path):
             ProgressCanvas(fn, progress=pbar_pdf, **kw)
     )
 
-    # embed
-    with open(out_xlsx,"rb") as xf, open(out_pdf,"rb") as pf:
-        reader = PdfReader(pf)
-        writer = PdfWriter()
-        writer.append_pages_from_reader(reader)
-        writer.add_attachment(os.path.basename(out_xlsx), xf.read())
-        with open(out_pdf,"wb") as outf:
-            writer.write(outf)
-
+    # Final UI update
     def finish():
-        elapsed = time.perf_counter()-t0
+        elapsed = time.perf_counter() - t0
         lbl_time.config(text=f"Process time: {elapsed:.2f}s")
         lbl_rows.config(text=f"Processed rows: {total_rows}")
         messagebox.showinfo("Done",
