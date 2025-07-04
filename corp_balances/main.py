@@ -73,7 +73,7 @@ def process_file(path):
     root.after(0, lambda: lbl_by.config(text=f"Uploaded by: {user}"))
     root.after(0, lambda: lbl_date.config(text=f"Uploaded date: {today}"))
 
-    # 1) Header
+    # 1) Read header
     wb_h = load_workbook(path, read_only=True)
     ws_h = wb_h.active
     hdr = [c.value for c in ws_h[1]][:22]
@@ -82,15 +82,15 @@ def process_file(path):
     val_names  = hdr[1:11]
     var_names  = hdr[12:22]
 
-    # 2) Read rows
+    # 2) Stream rows
     wb = load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
     total_rows = ws.max_row - 1
 
-    colA             = np.empty(total_rows, dtype="U50")
-    val_block        = np.full((total_rows,10), np.nan)
-    var_input_block  = np.full((total_rows,10), np.nan)
-    var_block        = np.full((total_rows,10), np.nan)
+    colA            = np.empty(total_rows, dtype="U50")
+    val_block       = np.full((total_rows,10), np.nan)
+    var_input_block = np.full((total_rows,10), np.nan)
+    var_block       = np.full((total_rows,10), np.nan)
 
     it = ws.iter_rows(min_row=2, max_row=ws.max_row,
                       min_col=1, max_col=22, values_only=True)
@@ -107,9 +107,11 @@ def process_file(path):
         elapsed = time.perf_counter() - t0
         root.after(0, update_progress, i+1, elapsed)
     wb.close()
+    logging.info(f"Read {total_rows:,} rows in {time.perf_counter()-t0:.2f}s")
 
-    # 3) Variances skipping nulls
+    # 3) Compute variances skipping nulls
     var_block[:] = var_input_block
+    logging.info("Computing variances skipping nulls…")
     for j in tqdm(range(10), desc="Variance calc", unit="metric"):
         v   = val_block[:,j]
         idx = np.where(~np.isnan(v))[0]
@@ -118,7 +120,7 @@ def process_file(path):
             if np.isnan(var_input_block[i0,j]):
                 var_block[i0,j] = v[i0] - v[i1]
 
-    # 4) Summary stats
+    # 4) Summary statistics with IQR‐based thresholds
     factors = {2:0.981481, 3:1.722222, 4:2.462963}
     stats = [
         "Q0","Q1","Q2","Q3","Q4","IQR",
@@ -130,9 +132,10 @@ def process_file(path):
     ]
     df_stats = pd.DataFrame(index=stats, columns=var_names, dtype=float)
 
-    for j,mn in tqdm(enumerate(var_names),
-                    total=len(var_names),
+    logging.info("Computing summary statistics…")
+    for j,mn in tqdm(enumerate(var_names), total=len(var_names),
                     desc="Summary stats", unit="metric"):
+        # input count series
         inp = var_input_block[:,j]
         if np.isnan(inp).all():
             inp = val_block[:,j]
@@ -141,55 +144,65 @@ def process_file(path):
         meanv  = nonnan.mean() if cnt else 0.0
         absm   = np.mean(np.abs(nonnan)) if cnt else 0.0
 
+        # quartiles & IQR
         vb = var_block[:,j]
         vn = vb[~np.isnan(vb)]
         if vn.size:
-            q  = np.percentile(vn, [0,25,50,75,100])
-            std= vn.std(ddof=1)
-            df_stats.loc[["Q0","Q1","Q2","Q3","Q4"], mn] = q
-            df_stats.at["IQR",mn] = q[3]-q[1]
+            q0,q1,q2,q3,q4 = np.percentile(vn, [0,25,50,75,100])
+            iqr = q3 - q1
+            df_stats.at["Q0",mn] = q0
+            df_stats.at["Q1",mn] = q1
+            df_stats.at["Q2",mn] = q2
+            df_stats.at["Q3",mn] = q3
+            df_stats.at["Q4",mn] = q4
+            df_stats.at["IQR",mn] = iqr
+            # IQR‐based thresholds
             for k,f in factors.items():
-                df_stats.at[f"Lower {k}SD", mn] = meanv - f*std
-                df_stats.at[f"Upper {k}SD", mn] = meanv + f*std
-            # rec thresholds still 3*std
-            df_stats.at["Rec Lower Thresh",mn] = round(meanv - 3*std, -3)
-            df_stats.at["Rec Upper Thresh",mn] = round(meanv + 3*std, -3)
+                df_stats.at[f"Lower {k}SD", mn] = q1 - f*iqr
+                df_stats.at[f"Upper {k}SD", mn] = q3 + f*iqr
+            # rec thresholds = 3*IQR‐based, rounded
+            lower3 = q1 - factors[3]*iqr
+            upper3 = q3 + factors[3]*iqr
+            df_stats.at["Rec Lower Thresh", mn] = round(lower3, -3)
+            df_stats.at["Rec Upper Thresh", mn] = round(upper3, -3)
 
-        df_stats.at["Record Count",mn]    = cnt
-        df_stats.at["Mean",mn]            = meanv
-        df_stats.at["Absolute Mean",mn]   = absm
+        df_stats.at["Record Count", mn]    = cnt
+        df_stats.at["Mean", mn]           = meanv
+        df_stats.at["Absolute Mean", mn]  = absm
 
-    # 5) Write Excel
+    # 5) Write out the variances Excel
     out_xlsx = f"ThresholdAnalysis_output_{input_nm}_{datefn}.xlsx"
+    logging.info(f"Writing '{out_xlsx}'…")
     wb_x = xlsxwriter.Workbook(out_xlsx, {
         'constant_memory': True,
         'nan_inf_to_errors': True
     })
     ws_x = wb_x.add_worksheet()
-    fmt_hdr = wb_x.add_format({'bold':True})
-    ws_x.set_row(0, None, fmt_hdr)
+    hdr_fmt = wb_x.add_format({'bold': True})
+    ws_x.set_row(0, None, hdr_fmt)
     ws_x.freeze_panes(1,1)
-    ws_x.write_row(0,0,[colA_name]+var_names)
+    ws_x.write_row(0,0, [colA_name] + var_names)
     for i in tqdm(range(total_rows), desc="Writing Excel rows", unit="row"):
         rowv = [colA[i]] + [
             var_block[i,j] if not np.isnan(var_block[i,j]) else None
             for j in range(10)
         ]
-        ws_x.write_row(i+1,0,rowv)
+        ws_x.write_row(i+1, 0, rowv)
     wb_x.close()
 
-    # Auto-fit
+    # auto-fit columns
     wb2 = load_workbook(out_xlsx)
     ws2 = wb2.active
     sample_n = min(1000, total_rows)
     for col in tqdm(ws2.columns, desc="Auto-fitting cols", unit="col"):
         vals = [c.value for c in col[:sample_n+1]]
         ml   = max(len(str(v)) if v is not None else 0 for v in vals)
-        ws2.column_dimensions[col[0].column_letter].width = ml+2
+        ws2.column_dimensions[col[0].column_letter].width = ml + 2
     wb2.save(out_xlsx)
 
-    # 6) Build PDF
+    # 6) Build PDF summary
     out_pdf = f"output_summary_{datefn}.pdf"
+    logging.info(f"Building '{out_pdf}'…")
     doc = SimpleDocTemplate(
         out_pdf,
         pagesize=landscape(A4),
@@ -213,13 +226,12 @@ def process_file(path):
         [stat] + [f"{df_stats.at[stat,m]:,.2f}" for m in var_names]
         for stat in stats
     ]
-    idx_lower = stats.index("Rec Lower Thresh") + 1
-    idx_upper = stats.index("Rec Upper Thresh") + 1
+    idx_lower = stats.index("Rec Lower Thresh")+1
+    idx_upper = stats.index("Rec Upper Thresh")+1
 
     page_w,_ = landscape(A4)
     avail_w  = page_w - doc.leftMargin - doc.rightMargin
     cw       = avail_w / len(header_row)
-
     tbl_style = TableStyle([
         ("GRID",(0,0),(-1,-1),0.25,colors.black),
         ("BACKGROUND",(0,0),(-1,0),colors.lightgrey),
@@ -241,7 +253,7 @@ def process_file(path):
     elems.append(Spacer(1,12))
 
     elems.append(Paragraph(
-        f"The variances Excel file has been saved to your directory as <b>{out_xlsx}</b>.",
+        f"The variances Excel has been saved as <b>{out_xlsx}</b> in your current directory.",
         styles["Normal"]
     ))
 
@@ -251,10 +263,11 @@ def process_file(path):
         canvasmaker=lambda fn, **kw: ProgressCanvas(fn, progress=pbar_pdf, **kw)
     )
 
+    # Final UI update
     def finish():
         elapsed = time.perf_counter() - t0
-        lbl_time.config(  text=f"Process time: {elapsed:.2f}s")
-        lbl_rows.config( text=f"Processed rows: {total_rows}")
+        lbl_time.config(text=f"Process time: {elapsed:.2f}s")
+        lbl_rows.config(text=f"Processed rows: {total_rows}")
         messagebox.showinfo("Done",
             f"Finished in {elapsed:.2f}s\nPDF → {out_pdf}\nExcel → {out_xlsx}"
         )
