@@ -1,40 +1,247 @@
-=COUNTIFS(
-  CREFedits!E8:E35000, 
-  "Syntax"
+Document Title	File-Folder Scanning App – User Guide
+Version	1.2
+Release Date	July 8, 2025
+Author	Technical Documentation Team
+Audience	IT Administrators, Analysts, Support Engineers
+Review Cycle	Annually or upon major application update
+
+
+⸻
+
+1. Introduction & Scope
+
+Screenshot 1: section1_doc_control_intro.png
+The File-Folder Scanning App is a cross-platform Python/Tkinter utility that automates deep folder traversal, extracts file metadata, generates Excel reports, and (on Windows) optionally emails results via Outlook. This guide covers installation, configuration, usage, internal architecture, troubleshooting, customization, and support processes.
+
+⸻
+
+2. Installation & Startup
+
+Screenshot 2: section2_installation_runner.png
+	1.	Optional Virtual Environment
+
+python -m venv venv
+# Activate:
+#  Windows: venv\Scripts\activate
+#  macOS/Linux: source venv/bin/activate
+pip install pandas openpyxl pywin32 tkcalendar
+
+
+	2.	Using runner.bat
+
+:: runner.bat
+pip install pandas openpyxl pywin32 tkcalendar
+python main.py
+
+
+	3.	Alternative via requirements.txt
+	•	Create requirements.txt with:
+
+pandas
+openpyxl
+pywin32
+tkcalendar
+
+
+	•	Then run:
+
+pip install -r requirements.txt
+python main.py
+
+
+
+⸻
+
+3. Configuration & Input Format
+
+Screenshot 3: section3_access_excel_format.png
+Additional Reference: access_excel_format_reference.png
+
+The app expects an Excel file with a sheet named Access Folder containing these columns:
+
+Column	Description
+Entitlement Owner	Owner name (populates dropdown)
+Entitlement Owner Email	“To:” addresses (semicolon-separated)
+Delegate Email	“CC:” addresses (semicolon-separated)
+Full Path	Absolute folder paths (one or more rows per owner)
+
+Notes:
+	•	Empty email cells skip mailing.
+	•	Multiple paths for one owner → multiple Excel rows.
+	•	UNC paths (e.g., \\server\share) are supported.
+
+⸻
+
+4. User Interface & Workflow
+
+Screenshot 4: section4_ui_workflow.png
+	1.	Browse Excel
+	•	Click Browse…, select your .xlsx.
+	•	Loads Entitlement Owner dropdown.
+	2.	Select Owner
+	•	Auto-fills To and CC fields.
+	3.	Edit Emails (optional)
+	•	Separate multiple addresses with ;.
+	4.	Select Cutoff Date
+	•	Choose day/month/year.
+	•	Includes files created on or before this date.
+	5.	Generate & Send
+	•	Click to start scan.
+	•	Live status: “Processed: X files | Elapsed: hh:mm:ss”.
+	•	Outputs <Owner>_report_YYYYMMDD_HHMMSS.xlsx.
+	6.	Email (Windows + Outlook only)
+	•	Automatically composes and sends; failures noted in status.
+
+⸻
+
+5. Scanning & Report Generation
+
+Screenshot 5: section5_traversal_logic.png
+	•	Recursive Scan via scan_dir() using os.scandir().
+	•	Filtering: st.st_ctime ≤ cutoff_ts.
+	•	Metadata Captured:
+	•	File Name, Path
+	•	Created/Modified/Accessed timestamps
+	•	Size (MB) and total size summary
+	•	Days since creation (“Days Ago”)
+	•	Error Handling: exceptions appended to Access Errors sheet.
+	•	Excel Output:
+	•	Sheet Entitlement Files: successful entries
+	•	Sheet Access Errors: I/O or permission failures
+	•	Auto-fit Columns: uses openpyxl to set column widths.
+
+Key Code Snippet:
+
+def scan_dir(path):
+    try:
+        with os.scandir(path) as it:
+            for ent in it:
+                if ent.is_dir(follow_symlinks=False):
+                    yield from scan_dir(ent.path)
+                elif ent.is_file(follow_symlinks=False):
+                    yield ent
+    except Exception as e:
+        errors.append({...})
+
+
+⸻
+
+6. Logging, Debugging & Error Handling
+
+Screenshot 6: section6_logging_debug.png
+	•	Info (default): high-level events (startup, completion, errors).
+	•	Debug (“Verbose”): detailed step logs for troubleshooting.
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(message)s'
 )
 
-=SUM(
-  COUNTIFS(
-    CREFedits!D8:D35000, 
-      {"105","CC88","276","313","81","73","CC39","309","23","13","70","260","21","279","26","242","235","42"},
-    CREFedits!E8:E35000, "<>Syntax"
-  )
+
+	•	Log to File (alternative):
+
+logging.basicConfig(
+    filename='file_report_app.log',
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(message)s'
 )
 
-=SUMPRODUCT(
-  --(ISNUMBER(SEARCH("Data Under Review", CREFedits!R8:R35000))),
-  --(CREFedits!E8:E35000 <> "Syntax"),
-  --(ISNA(
-      MATCH(
-        CREFedits!D8:D35000,
-        {"105","CC88","276","313","81","73","CC39","309","23","13","70","260","21","279","26","242","235","42"},
-        0
-      )
+
+
+Common Errors & Resolutions
+
+Issue	Symptom	Resolution / Code Change
+Missing “Access Folder”	Error dialog: could not read sheet	Verify sheet name; update sheet_name parameter
+KeyError on column name	Traceback referencing missing column	Use df.get('Column','') or add column in Excel
+Email send failure	Status shows “email failed”	Ensure pywin32 is installed; Outlook configured
+Permission denied on scan	Rows appear in Access Errors	Run as admin; adjust folder ACLs
+
+
+⸻
+
+7. Customization, Extensions & Maintenance
+
+Screenshot 7: section7_customization.png
+
+7.1 Disable Outlook Email
+
+- if win32:
+-    … Outlook logic …
++ # Outlook integration removed
+
+7.2 SMTP Mail Integration
+
+import smtplib
+from email.message import EmailMessage
+
+msg = EmailMessage()
+msg['Subject'] = f"File Report for {owner}"
+msg['From']    = 'noreply@company.com'
+msg['To']      = to_mail.split(';')
+msg.set_content("Please find attached the report.")
+with open(fn,'rb') as f:
+    msg.add_attachment(
+        f.read(), maintype='application',
+        subtype='vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        filename=fn
     )
-  )
-)
+with smtplib.SMTP('smtp.company.com') as server:
+    server.login('user','pass')
+    server.send_message(msg)
 
-=SUMPRODUCT(
-  --(CREFedits!E8:E35000 = "Validity"),
-  --(CREFedits!N8:N35000 = ""),
-  --(CREFedits!E8:E35000 <> "Syntax"),
-  --(ISNA(
-      MATCH(
-        CREFedits!D8:D35000,
-        {"105","CC88","276","313","81","73","CC39","309","23","13","70","260","21","279","26","242","235","42"},
-        0
-      )
-    )
-  ),
-  --(ISERROR(SEARCH("Data Under Review", CREFedits!R8:R35000)))
-)
+7.3 CSV Export Alternative
+
+- df_main.to_excel(writer, sheet_name='Entitlement Files', index=False)
++ df_main.to_csv(f"{owner}_report_{stamp}.csv", index=False)
+
+7.4 Adjust Cutoff-Year Range
+
+current_year = datetime.date.today().year
+years = [str(y) for y in range(2010, current_year+1)]
+
+
+⸻
+
+8. Appendices & FAQs
+
+Screenshot 8: section8_version_history_faq.png
+
+A. Version History
+
+Version	Date	Changes
+1.0	2025-07-01	Initial release
+1.1	2025-07-05	Added runner.bat, optional venv, FAQs
+1.2	2025-07-08	Expanded architecture, error matrix, appendices
+
+B. Frequently Asked Questions
+	1.	What is “verbose logging”?
+It’s the detailed (DEBUG-level) log output—shows every internal step.
+	2.	Why are there entries in “Access Errors”?
+Those are files/folders the app couldn’t read (permission issues, locks).
+	3.	Can I scan network drives?
+Yes—specify UNC paths (e.g., \\server\share\folder).
+	4.	How do I include files newer than the cutoff?
+Invert the cutoff check in _scan_and_report().
+	5.	Does it support Linux email?
+Built-in email is Windows-only; use the SMTP snippet above for cross-platform.
+	6.	Can I schedule scans to run automatically?
+Use OS schedulers (Windows Task Scheduler or cron) to invoke runner.bat or main.py.
+	7.	How do I update dependencies?
+Re-run pip install -r requirements.txt or runner.bat.
+	8.	What Python versions are supported?
+Python 3.7 and above.
+	9.	Is Excel required on the machine?
+No—reports are generated via openpyxl, no MS Excel install needed.
+	10.	Where do I report bugs or suggest features?
+Email dev-team@yourcompany.com with logs and screenshots.
+	11.	What is the license?
+Proprietary—internal use only.
+
+⸻
+
+C. Support & Contact
+	•	Email: support@yourcompany.com
+	•	Documentation Repo: \\docs\file-folder-scanning-app\
+	•	Issue Tracker: JIRA Project “FFS-APP”
+
+End of Document
