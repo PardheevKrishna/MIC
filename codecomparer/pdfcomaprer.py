@@ -1,138 +1,174 @@
-import fitz              # PyMuPDF
+#!/usr/bin/env python3
+"""
+pdf_diff_highlight_fixed.py
+
+Compare two PDF files in-place and highlight diffs, then render a side-by-side PDF.
+All settings (file names, colors, thresholds) are hard-coded.
+"""
+
+import fitz                  # PyMuPDF
 import difflib
 from PIL import Image, ImageChops
 import logging
 from tqdm import tqdm
 
-# ─── 1. SETUP LOGGER ─────────────────────────────────────────────────────────────
+# ─── CONFIGURATION (hard-coded) ────────────────────────────────────────────────
+OLD_PATH     = "old.pdf"
+NEW_PATH     = "new.pdf"
+OUTPUT_PATH  = "diff_output.pdf"
+
+PIXEL_THRESH = 20           # sensitivity for image diffs
+HIGHLIGHT_OP = 0.2          # opacity for all highlights
+
+# Colors: (r, g, b) with values in [0,1]
+COLORS_OLD   = {
+    "delete": (1, 0, 0),    # red highlights on old = deletions
+    "insert": (0, 0, 0),    # (unused on old)
+    "change": (0, 0, 1),    # blue highlights on both = replacements
+}
+COLORS_NEW   = {
+    "delete": (0, 0, 0),    # (unused on new)
+    "insert": (0, 1, 0),    # green highlights on new = insertions
+    "change": (0, 0, 1),    # blue for replacements
+}
+
+# ─── Logging setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
-    level=logging.INFO,
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ─── 2. TEXT EXTRACTION ─────────────────────────────────────────────────────────
+
 def extract_text_blocks(doc):
-    """
-    Returns a list (per page) of [(Rect, text), …] for all non-empty text blocks.
-    """
-    logger.info("Extracting text blocks from %d pages…", len(doc))
-    all_blocks = []
+    """Extract (Rect, text) for every non-empty text block, per page."""
+    pages = []
+    logger.info("Extracting text from %d pages…", doc.page_count)
     for page in tqdm(doc, desc="Extract text"):
         blocks = []
         for b in page.get_text("blocks"):
-            # PyMuPDF v1.x/v2.x both work with star-unpack
             x0, y0, x1, y1, text, *rest = b
             if text.strip():
                 blocks.append((fitz.Rect(x0, y0, x1, y1), text))
-        all_blocks.append(blocks)
-    logger.info("Done extracting text.")
-    return all_blocks
+        pages.append(blocks)
+    logger.info("Text extraction done.")
+    return pages
 
-# ─── 3. TEXT DIFF ────────────────────────────────────────────────────────────────
-def diff_text_blocks(old_blocks, new_blocks):
+
+def diff_text_blocks(old_blks, new_blks):
     """
-    Given two lists of (Rect, text), returns dict of 
-    { 'delete': [Rects], 'insert': [Rects], 'change': [Rects] }.
+    Diff two lists of (Rect, text), return dict of lists of Rects:
+    'delete', 'insert', 'change'
     """
-    logger.info("Diffing text blocks…")
-    old_texts = [t for _, t in old_blocks]
-    new_texts = [t for _, t in new_blocks]
-    sm = difflib.SequenceMatcher(None, old_texts, new_texts)
-    
+    old_txt = [t for _, t in old_blks]
+    new_txt = [t for _, t in new_blks]
+    sm = difflib.SequenceMatcher(None, old_txt, new_txt)
+
     ann = {"delete": [], "insert": [], "change": []}
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "delete":
-            ann["delete"].extend(old_blocks[i][0] for i in range(i1, i2))
+            ann["delete"].extend(old_blks[i][0] for i in range(i1, i2))
         elif tag == "insert":
-            ann["insert"].extend(new_blocks[j][0] for j in range(j1, j2))
+            ann["insert"].extend(new_blks[j][0] for j in range(j1, j2))
         elif tag == "replace":
-            ann["change"].extend(old_blocks[i][0] for i in range(i1, i2))
-            ann["change"].extend(new_blocks[j][0] for j in range(j1, j2))
-    logger.info("Text diff done.")
+            ann["change"].extend(old_blks[i][0] for i in range(i1, i2))
+            ann["change"].extend(new_blks[j][0] for j in range(j1, j2))
     return ann
 
-# ─── 4. IMAGE DIFF ───────────────────────────────────────────────────────────────
-def diff_page_images(old_page, new_page, thresh=10):
-    """
-    Returns a list of bounding‐boxes where the two page bitmaps differ.
-    """
-    logger.info("Image‐diffing a page…")
-    pm1 = old_page.get_pixmap(alpha=False)
-    pm2 = new_page.get_pixmap(alpha=False)
+
+def diff_page_images(p_old, p_new):
+    """Return list of Rects where rendered pages differ beyond PIXEL_THRESH."""
+    pm1 = p_old.get_pixmap(alpha=False)
+    pm2 = p_new.get_pixmap(alpha=False)
     im1 = Image.frombytes("RGB", [pm1.width, pm1.height], pm1.samples)
     im2 = Image.frombytes("RGB", [pm2.width, pm2.height], pm2.samples)
 
     diff = ImageChops.difference(im1, im2).convert("L")
-    bw = diff.point(lambda x: 255 if x > thresh else 0)
+    bw   = diff.point(lambda x: 255 if x > PIXEL_THRESH else 0)
     bbox = bw.getbbox()
-    boxes = [bbox] if bbox else []
-    logger.info("Image‐diff done.")
-    return boxes
+    return [fitz.Rect(bbox)] if bbox else []
 
-# ─── 5. ANNOTATION ───────────────────────────────────────────────────────────────
-def annotate_pages(doc, per_page_rects, color, alpha=0.25):
-    """
-    Draw translucent rectangles (color as (r,g,b)) on each page.
-    per_page_rects is a list of lists of Rects.
-    """
-    logger.info("Annotating %d pages…", len(doc))
-    for page, rects in tqdm(zip(doc, per_page_rects),
-                            total=len(doc),
-                            desc="Annotate"):
-        shape = page.new_shape()
-        for r in rects:
-            shape.draw_rect(r)
-            shape.finish(fill=color + (alpha,))
-        shape.commit()
-    logger.info("Annotation complete.")
 
-# ─── 6. SIDE-BY-SIDE RENDER ──────────────────────────────────────────────────────
-def render_side_by_side(old_doc, new_doc, out_path):
+def annotate_doc(doc, delete_ann, insert_ann, change_ann, colors):
     """
-    Creates a new PDF where each page is old|new side by side.
+    Apply real PDF highlight annots on each page of `doc`:
+      • delete_ann[i] = list of Rects to highlight as deletions
+      • insert_ann[i] = list for insertions
+      • change_ann[i] = list for replacements
+      • colors: dict mapping those tags → (r,g,b)
     """
-    logger.info("Starting side-by-side render…")
-    out = fitz.open()
-    n = min(len(old_doc), len(new_doc))
-    for i in tqdm(range(n), desc="Rendering pages"):
+    logger.info("Annotating %d-page PDF…", doc.page_count)
+    for page_idx, page in enumerate(tqdm(doc, desc="Annotate")):
+        for tag, rect_list in (
+            ("delete", delete_ann),
+            ("insert", insert_ann),
+            ("change", change_ann),
+        ):
+            for r in rect_list[page_idx]:
+                # highlight annotation preserves underlying content
+                annot = page.add_highlight_annot(r)
+                annot.set_colors(fill=colors[tag])
+                annot.set_opacity(HIGHLIGHT_OP)
+                annot.update()
+
+
+def render_side_by_side(old_doc, new_doc):
+    """
+    Create a new PDF with each page laid out as [old | new] and save it.
+    """
+    logger.info("Rendering side-by-side PDF…")
+    combo = fitz.open()
+    page_count = min(old_doc.page_count, new_doc.page_count)
+
+    for i in tqdm(range(page_count), desc="Render pages"):
         p1, p2 = old_doc[i], new_doc[i]
         w1, h1 = p1.rect.width, p1.rect.height
         w2, h2 = p2.rect.width, p2.rect.height
         H = max(h1, h2)
-        newp = out.new_page(width=w1 + w2, height=H)
 
+        newp = combo.new_page(width=w1 + w2, height=H)
         pix1 = p1.get_pixmap(alpha=False)
         pix2 = p2.get_pixmap(alpha=False)
-        # place old at left, new at right, aligned to bottom
-        newp.insert_image(fitz.Rect(0, H - h1, w1, H), pixmap=pix1)
-        newp.insert_image(fitz.Rect(w1, H - h2, w1 + w2, H), pixmap=pix2)
 
-    out.save(out_path)
-    logger.info(f"Side-by-side PDF written to {out_path!r}")
+        newp.insert_image(fitz.Rect(0,   H - h1, w1,       H), pixmap=pix1)
+        newp.insert_image(fitz.Rect(w1,  H - h2, w1 + w2,  H), pixmap=pix2)
 
-# ─── 7. PUTTING IT ALL TOGETHER ─────────────────────────────────────────────────
+    combo.save(OUTPUT_PATH)
+    logger.info("Saved combined PDF: %r", OUTPUT_PATH)
+
+
+def main():
+    logger.info("Opening PDFs…")
+    old_doc = fitz.open(OLD_PATH)
+    new_doc = fitz.open(NEW_PATH)
+    pages   = min(old_doc.page_count, new_doc.page_count)
+
+    # 1) extract text blocks
+    old_blocks = extract_text_blocks(old_doc)
+    new_blocks = extract_text_blocks(new_doc)
+
+    # Prepare per-page lists
+    del_ann = [[] for _ in range(pages)]
+    ins_ann = [[] for _ in range(pages)]
+    chg_ann = [[] for _ in range(pages)]
+
+    # 2) compute diffs
+    logger.info("Computing diffs on %d pages…", pages)
+    for i in tqdm(range(pages), desc="Compute diffs"):
+        txt = diff_text_blocks(old_blocks[i], new_blocks[i])
+        img = diff_page_images(old_doc[i], new_doc[i])
+
+        del_ann[i] = txt["delete"]
+        ins_ann[i] = txt["insert"]
+        chg_ann[i] = txt["change"] + img
+
+    # 3) annotate PDFs
+    annotate_doc(old_doc, del_ann, ins_ann, chg_ann, COLORS_OLD)
+    annotate_doc(new_doc, del_ann, ins_ann, chg_ann, COLORS_NEW)
+
+    # 4) render side-by-side and save
+    render_side_by_side(old_doc, new_doc)
+
+
 if __name__ == "__main__":
-    old_pdf = fitz.open("old.pdf")
-    new_pdf = fitz.open("new.pdf")
-
-    # 1) extract
-    old_blocks = extract_text_blocks(old_pdf)
-    new_blocks = extract_text_blocks(new_pdf)
-
-    # 2) per-page diffs
-    per_page_rects = []
-    for ob, nb, p1, p2 in zip(old_blocks, new_blocks, old_pdf, new_pdf):
-        txt_ann = diff_text_blocks(ob, nb)
-        img_boxes = diff_page_images(p1, p2)
-        # merge all rects for this page
-        rects = txt_ann["delete"] + txt_ann["insert"] + txt_ann["change"] + img_boxes
-        per_page_rects.append(rects)
-
-    # 3) annotate old vs. new (you can choose different colors or even 
-    #    produce two separate docs if you like)
-    annotate_pages(old_pdf, per_page_rects, color=(1,0,0))  # red = deletions/old
-    annotate_pages(new_pdf, per_page_rects, color=(0,1,0))  # green = inserts/new
-
-    # 4) render side-by-side
-    render_side_by_side(old_pdf, new_pdf, "diff_output.pdf")
+    main()
