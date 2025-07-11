@@ -1,66 +1,45 @@
+#!/usr/bin/env python3
+"""
+pdf_diff_global.py
+
+0) Hard-codes old/new PDF paths and all parameters.
+1) Uses pdf-diff’s compute_changes() to get a list of change‐boxes.
+2) Writes those boxes out as diff.json.
+3) Uses pdf-diff’s render_changes() to draw red outlines on a PNG.
+"""
+
 import json
-import fitz            # PyMuPDF
-from tqdm import tqdm
+from pdf_diff import command_line  # pdf-diff’s Python API  [oai_citation:0‡Stack Overflow](https://stackoverflow.com/questions/64951531/using-a-python-module-in-spyder-rather-than-command-line?utm_source=chatgpt.com)
 
-# hard-coded paths
-OLD, NEW = "old.pdf", "new.pdf"
-OLD_OUT, NEW_OUT, SXS = "old_annotated.pdf", "new_annotated.pdf", "diff_output.pdf"
+# ─── Configuration ─────────────────────────────────────────────────────────────
+OLD_PDF     = "old.pdf"
+NEW_PDF     = "new.pdf"
+JSON_OUT    = "diff.json"
+PNG_OUT     = "comparison_output.png"
 
-# highlight colors & opacity
-COLORS = {
-    "delete":  (1, 0, 0),   # red
-    "insert":  (0, 1, 0),   # green
-    "replace": (1, 1, 0),   # yellow
-}
-ALPHA = 0.3
+# pdf-diff parameters (hard-coded)
+TOP_MARGIN    = 0      # percent
+BOTTOM_MARGIN = 100    # percent
+STYLE         = ["underline", "strike"]  # default styles
+WIDTH         = 900    # output image width
 
-# 1) Load the diff JSON
-with open("diff.json") as f:
-    data = json.load(f)
+# ─── 1) Compute the raw changes ─────────────────────────────────────────────────
+# returns a mixed list of dicts (boxes) and "*" markers  [oai_citation:1‡GitHub](https://raw.githubusercontent.com/JoshData/pdf-diff/primary/pdf_diff/command_line.py)
+changes = command_line.compute_changes(
+    OLD_PDF, NEW_PDF,
+    top_margin=TOP_MARGIN,
+    bottom_margin=BOTTOM_MARGIN
+)
 
-# 2) Open PDFs
-old_doc = fitz.open(OLD)
-new_doc = fitz.open(NEW)
+# ─── 2) Write out JSON of just the box‐dicts ────────────────────────────────────
+# filter out the "*" markers and serialize
+boxes = [c for c in changes if isinstance(c, dict)]
+with open(JSON_OUT, "w") as f:
+    json.dump(boxes, f, indent=2)
+print(f"Wrote {len(boxes)} change‐boxes to {JSON_OUT!r}")
 
-# 3) Annotate each hunk
-for h in tqdm(data["hunks"], desc="Applying highlights"):
-    action = h["action"]
-    pno     = h["page_num"]
-    rect    = fitz.Rect(*h["bbox"])
-    color   = COLORS[action]
-
-    if action == "delete":
-        page = old_doc[pno]
-        a    = page.add_highlight_annot(rect)
-        a.set_colors(fill=color); a.set_opacity(ALPHA); a.update()
-
-    elif action == "insert":
-        page = new_doc[pno]
-        a    = page.add_highlight_annot(rect)
-        a.set_colors(fill=color); a.set_opacity(ALPHA); a.update()
-
-    else:  # replace
-        for doc in (old_doc, new_doc):
-            page = doc[pno]
-            a    = page.add_highlight_annot(rect)
-            a.set_colors(fill=color); a.set_opacity(ALPHA); a.update()
-
-# 4) Save annotated PDFs
-old_doc.save(OLD_OUT)
-new_doc.save(NEW_OUT)
-
-# 5) (Optional) render side-by-side
-out = fitz.open()
-pages = min(old_doc.page_count, new_doc.page_count)
-for i in range(pages):
-    po, pn = old_doc[i], new_doc[i]
-    w1, h1 = po.rect.width, po.rect.height
-    w2, h2 = pn.rect.width, pn.rect.height
-    H = max(h1, h2)
-    newp = out.new_page(width=w1 + w2, height=H)
-    p1 = po.get_pixmap(alpha=False)
-    p2 = pn.get_pixmap(alpha=False)
-    newp.insert_image(fitz.Rect(0,    H-h1, w1,      H), pixmap=p1)
-    newp.insert_image(fitz.Rect(w1,   H-h2, w1+w2,   H), pixmap=p2)
-out.save(SXS)
-print("Done →", OLD_OUT, NEW_OUT, SXS)
+# ─── 3) Render a side-by-side PNG with red outlines ─────────────────────────────
+# note: render_changes() returns a PIL Image  [oai_citation:2‡GitHub](https://raw.githubusercontent.com/JoshData/pdf-diff/primary/pdf_diff/command_line.py)
+img = command_line.render_changes(changes, STYLE, width=WIDTH)
+img.save(PNG_OUT, "PNG")
+print(f"Saved visual diff to {PNG_OUT!r}")
