@@ -1,37 +1,29 @@
 #!/usr/bin/env python3
 """
-pdf_diff_text_only.py
+pdf_diff_flatten.py
 
-Compare two PDFs on text alone (including table text).
-Highlight only the blocks that differ:
-  • Red   = deletions (old.pdf)
-  • Green = insertions (new.pdf)
-  • Yellow= replacements (both)
-Produce:
-  - old_annotated.pdf
-  - new_annotated.pdf
-  - diff_output.pdf (side-by-side)
+Document-level PDF text diff & highlight.  No CLI args—all paths/colors hard-coded.
 """
 
-import fitz                  # PyMuPDF
+import fitz        # PyMuPDF
 import difflib
 import logging
 from tqdm import tqdm
 
-# ─── Configuration (hard-coded) ────────────────────────────────────────────────
-OLD_PATH      = "old.pdf"
-NEW_PATH      = "new.pdf"
-OLD_ANNOT     = "old_annotated.pdf"
-NEW_ANNOT     = "new_annotated.pdf"
-OUT_SIDEBYSIDE= "diff_output.pdf"
+# ─── CONFIG ─────────────────────────────────────────────────────────────────────
+OLD_PATH       = "old.pdf"
+NEW_PATH       = "new.pdf"
+OLD_ANNOT      = "old_annotated.pdf"
+NEW_ANNOT      = "new_annotated.pdf"
+OUT_SIDEBYSIDE = "diff_output.pdf"
 
-# Highlight colors (r,g,b) in [0,1], and opacity
-COLOR_DEL = (1, 0, 0)   # red for deletions
-COLOR_INS = (0, 1, 0)   # green for insertions
-COLOR_REP = (1, 1, 0)   # yellow for replacements
-ALPHA     = 0.3
+# RGB tuples in [0,1]
+COLOR_DELETE  = (1, 0, 0)    # red
+COLOR_INSERT  = (0, 1, 0)    # green
+COLOR_REPLACE = (1, 1, 0)    # yellow
+ALPHA         = 0.3          # transparency for all
 
-# ─── Logging setup ─────────────────────────────────────────────────────────────
+# ─── LOGGING SETUP ──────────────────────────────────────────────────────────────
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     level=logging.INFO
@@ -39,137 +31,152 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ─── 1) Extract text blocks per page ────────────────────────────────────────────
+# ─── 1) FLATTEN TEXT BLOCKS ─────────────────────────────────────────────────────
 def extract_text_blocks(path):
     """
-    Return a list-of-pages, each page a list of (Rect, text)
-    for every non-empty text block in reading order.
+    Flatten all non-empty text blocks across the document.
+    Returns a list of dicts: {
+      'page': int,
+      'rect': fitz.Rect,
+      'text': str
+    }
     """
+    logger.info("Opening %r and extracting text blocks…", path)
     doc = fitz.open(path)
-    pages = []
-    logger.info("Extracting text blocks from %r (%d pages)…", path, doc.page_count)
-    for page in tqdm(doc, desc="Extract blocks"):
-        blks = []
+    blocks = []
+    for page_no in tqdm(range(doc.page_count), desc="Extracting blocks"):
+        page = doc[page_no]
         for b in page.get_text("blocks"):
             x0, y0, x1, y1, text, *rest = b
-            if text.strip():
-                blks.append((fitz.Rect(x0, y0, x1, y1), text.strip()))
-        # sort top→bottom, left→right
-        blks.sort(key=lambda bt: (bt[0].y0, bt[0].x0))
-        pages.append(blks)
+            txt = text.strip()
+            if not txt:
+                continue
+            blocks.append({
+                "page": page_no,
+                "rect": fitz.Rect(x0, y0, x1, y1),
+                "text": txt
+            })
     doc.close()
-    return pages
+    logger.info("Extracted %d text blocks from %r", len(blocks), path)
+    return blocks
 
 
-# ─── 2) Diff two pages' text blocks ─────────────────────────────────────────────
-def diff_text_blocks(old_blks, new_blks):
+# ─── 2) RUN A DOCUMENT-LEVEL DIFF ───────────────────────────────────────────────
+def compute_diff(old_blocks, new_blocks):
     """
-    Given lists of (Rect,text) for old & new, return four lists of Rect:
-      - deleted (in old not in new)
-      - inserted
-      - replaced_old
-      - replaced_new
+    Given two lists of block-dicts, compute diff ops on their .['text'].
+    Returns four dicts: delete_map, replace_old_map, insert_map, replace_new_map,
+    each mapping page_no → list of fitz.Rect to highlight.
     """
-    old_texts = [t for _, t in old_blks]
-    new_texts = [t for _, t in new_blks]
+    old_texts = [b["text"] for b in old_blocks]
+    new_texts = [b["text"] for b in new_blocks]
+
+    logger.info("Running SequenceMatcher on %d old vs %d new blocks…",
+                len(old_texts), len(new_texts))
     sm = difflib.SequenceMatcher(None, old_texts, new_texts)
+    ops = sm.get_opcodes()
 
-    deleted, inserted, rep_o, rep_n = [], [], [], []
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if   tag == "delete":
-            deleted.extend(old_blks[i][0] for i in range(i1, i2))
+    delete_map      = {}
+    replace_old_map = {}
+    insert_map      = {}
+    replace_new_map = {}
+
+    for tag, i1, i2, j1, j2 in ops:
+        if tag == "delete":
+            for idx in range(i1, i2):
+                blk = old_blocks[idx]
+                delete_map.setdefault(blk["page"], []).append(blk["rect"])
         elif tag == "insert":
-            inserted.extend(new_blks[j][0] for j in range(j1, j2))
+            for idx in range(j1, j2):
+                blk = new_blocks[idx]
+                insert_map.setdefault(blk["page"], []).append(blk["rect"])
         elif tag == "replace":
-            rep_o.extend(old_blks[i][0] for i in range(i1, i2))
-            rep_n.extend(new_blks[j][0] for j in range(j1, j2))
-    return deleted, inserted, rep_o, rep_n
+            for idx in range(i1, i2):
+                blk = old_blocks[idx]
+                replace_old_map.setdefault(blk["page"], []).append(blk["rect"])
+            for idx in range(j1, j2):
+                blk = new_blocks[idx]
+                replace_new_map.setdefault(blk["page"], []).append(blk["rect"])
+        # “equal” we ignore
+
+    return delete_map, replace_old_map, insert_map, replace_new_map
 
 
-# ─── 3) Annotate two PDFs in place ─────────────────────────────────────────────
-def annotate_pdfs(old_doc, new_doc, deletions, insertions, rep_old, rep_new):
+# ─── 3) ANNOTATE PDFs ────────────────────────────────────────────────────────────
+def annotate_docs(delete_map, replace_old_map,
+                  insert_map, replace_new_map):
     """
-    Apply highlight-annotations:
-      • deletions (list-of-lists of Rect) on old_doc in RED  
-      • insertions on new_doc in GREEN  
-      • replacements on both in YELLOW  
+    Opens both PDFs, applies real highlight annotations,
+    then saves out old_annotated.pdf and new_annotated.pdf.
     """
-    logger.info("Annotating OLD PDF…")
-    for page_no, page in enumerate(tqdm(old_doc, desc="Old")):
-        # deletions + replacements
-        for r in deletions[page_no] + rep_old[page_no]:
+    logger.info("Annotating OLD PDF with deletions & replacements…")
+    old_doc = fitz.open(OLD_PATH)
+    for pno, page in enumerate(tqdm(old_doc, desc="Annotate OLD")):
+        # deletions (red)
+        for r in delete_map.get(pno, []):
             a = page.add_highlight_annot(r)
-            a.set_colors(fill=COLOR_DEL if r in deletions[page_no] else COLOR_REP)
-            a.set_opacity(ALPHA)
-            a.update()
+            a.set_colors(fill=COLOR_DELETE)
+            a.set_opacity(ALPHA); a.update()
+        # replacements (yellow)
+        for r in replace_old_map.get(pno, []):
+            a = page.add_highlight_annot(r)
+            a.set_colors(fill=COLOR_REPLACE)
+            a.set_opacity(ALPHA); a.update()
     old_doc.save(OLD_ANNOT)
+    logger.info("Saved %r", OLD_ANNOT)
 
-    logger.info("Annotating NEW PDF…")
-    for page_no, page in enumerate(tqdm(new_doc, desc="New")):
-        for r in insertions[page_no] + rep_new[page_no]:
+    logger.info("Annotating NEW PDF with insertions & replacements…")
+    new_doc = fitz.open(NEW_PATH)
+    for pno, page in enumerate(tqdm(new_doc, desc="Annotate NEW")):
+        # insertions (green)
+        for r in insert_map.get(pno, []):
             a = page.add_highlight_annot(r)
-            a.set_colors(fill=COLOR_INS if r in insertions[page_no] else COLOR_REP)
-            a.set_opacity(ALPHA)
-            a.update()
+            a.set_colors(fill=COLOR_INSERT)
+            a.set_opacity(ALPHA); a.update()
+        # replacements (yellow)
+        for r in replace_new_map.get(pno, []):
+            a = page.add_highlight_annot(r)
+            a.set_colors(fill=COLOR_REPLACE)
+            a.set_opacity(ALPHA); a.update()
     new_doc.save(NEW_ANNOT)
+    logger.info("Saved %r", NEW_ANNOT)
+
+    return old_doc, new_doc
 
 
-# ─── 4) Render side-by-side ────────────────────────────────────────────────────
+# ─── 4) RENDER SIDE-BY-SIDE ──────────────────────────────────────────────────────
 def render_side_by_side(old_doc, new_doc):
-    """
-    Create OUT_SIDEBYSIDE with old|new pages next to each other.
-    """
     logger.info("Rendering side-by-side PDF…")
-    combo = fitz.open()
+    out = fitz.open()
     pages = min(old_doc.page_count, new_doc.page_count)
 
     for i in tqdm(range(pages), desc="Render SxS"):
-        p_old, p_new = old_doc[i], new_doc[i]
-        w1, h1 = p_old.rect.width, p_old.rect.height
-        w2, h2 = p_new.rect.width, p_new.rect.height
+        po = old_doc[i]; pn = new_doc[i]
+        w1, h1 = po.rect.width, po.rect.height
+        w2, h2 = pn.rect.width, pn.rect.height
         H = max(h1, h2)
 
-        newp = combo.new_page(width=w1 + w2, height=H)
-        pix1 = p_old.get_pixmap(alpha=False)
-        pix2 = p_new.get_pixmap(alpha=False)
+        newp = out.new_page(width=w1 + w2, height=H)
+        pix1 = po.get_pixmap(alpha=False)
+        pix2 = pn.get_pixmap(alpha=False)
 
-        newp.insert_image(fitz.Rect(0,    H - h1, w1,      H), pixmap=pix1)
-        newp.insert_image(fitz.Rect(w1,   H - h2, w1 + w2, H), pixmap=pix2)
+        # old on left, new on right
+        newp.insert_image(fitz.Rect(0,    H-h1,   w1,      H), pixmap=pix1)
+        newp.insert_image(fitz.Rect(w1,   H-h2,   w1+w2,   H), pixmap=pix2)
 
-    combo.save(OUT_SIDEBYSIDE)
+    out.save(OUT_SIDEBYSIDE)
     logger.info("Saved side-by-side PDF to %r", OUT_SIDEBYSIDE)
 
 
-# ─── Main Workflow ─────────────────────────────────────────────────────────────
+# ─── MAIN WORKFLOW ──────────────────────────────────────────────────────────────
 def main():
-    # 1) extract text blocks
-    old_pages = extract_text_blocks(OLD_PATH)
-    new_pages = extract_text_blocks(NEW_PATH)
-    assert len(old_pages) == len(new_pages), "Page counts differ!"
+    old_blocks = extract_text_blocks(OLD_PATH)
+    new_blocks = extract_text_blocks(NEW_PATH)
 
-    pages = len(old_pages)
-    del_ann, ins_ann, ro_ann, rn_ann = ([] for _ in range(4))
-
-    # 2) diff each page
-    logger.info("Diffing text blocks on %d pages…", pages)
-    for i in tqdm(range(pages), desc="Diff pages"):
-        d, ins, ro, rn = diff_text_blocks(old_pages[i], new_pages[i])
-        del_ann.append(d)
-        ins_ann.append(ins)
-        ro_ann.append(ro)
-        rn_ann.append(rn)
-
-    # 3) open docs and annotate
-    old_doc = fitz.open(OLD_PATH)
-    new_doc = fitz.open(NEW_PATH)
-    annotate_pdfs(old_doc, new_doc, del_ann, ins_ann, ro_ann, rn_ann)
-
-    # 4) render side-by-side
+    delete_map, rep_o_map, insert_map, rep_n_map = compute_diff(old_blocks, new_blocks)
+    old_doc, new_doc = annotate_docs(delete_map, rep_o_map, insert_map, rep_n_map)
     render_side_by_side(old_doc, new_doc)
-
-    logger.info("All done! → %r, %r, %r",
-                OLD_ANNOT, NEW_ANNOT, OUT_SIDEBYSIDE)
-
+    logger.info("All done!")
 
 if __name__ == "__main__":
     main()
