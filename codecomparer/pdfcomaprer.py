@@ -1,172 +1,240 @@
 #!/usr/bin/env python3
 """
-pdf_diff_exact.py
+pdf_diff_text_tables.py
 
-Hard-coded paths; only true diffs get highlighted.
+Compare two PDFs *only* on text (including tables).  
+Highlight deleted lines/cells in RED on the OLD PDF,  
+inserted in GREEN on the NEW PDF,  
+and replaced lines/cells in YELLOW on *both*.
+
+Produces:
+  - old_annotated.pdf
+  - new_annotated.pdf
+  - diff_output.pdf   (side-by-side)
 """
 
 import fitz                  # PyMuPDF
+import pdfplumber
 import difflib
-from PIL import Image, ImageChops
+import pandas as pd
 import logging
 from tqdm import tqdm
 
-# ─── CONFIGURATION ─────────────────────────────────────────────────────────────
-OLD_PATH    = "old.pdf"
-NEW_PATH    = "new.pdf"
-OUT_PATH    = "diff_output.pdf"
+# ─── CONFIG ─────────────────────────────────────────────────────────────────────
+OLD_PATH       = "old.pdf"
+NEW_PATH       = "new.pdf"
+OUT_SIDEBYSIDE = "diff_output.pdf"
+OLD_ANNOT      = "old_annotated.pdf"
+NEW_ANNOT      = "new_annotated.pdf"
 
-PIXEL_THRESH = 20    # image-diff sensitivity
-ALPHA        = 0.2   # annotation opacity
+ALPHA         = 0.3    # transparency of highlights
+COLOR_DEL     = (1, 0, 0)   # red   = deletions
+COLOR_INS     = (0, 1, 0)   # green = insertions
+COLOR_REP     = (1, 1, 0)   # yellow= replacements
 
-COLORS_OLD = {
-    "delete": (1, 0, 0),  # red
-    "replace": (0, 0, 1)  # blue
-}
-COLORS_NEW = {
-    "insert": (0, 1, 0),  # green
-    "replace": (0, 0, 1)  # blue
-}
-
-# ─── LOGGER SETUP ───────────────────────────────────────────────────────────────
-logging.basicConfig(
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# ─── TEXT EXTRACTION ────────────────────────────────────────────────────────────
-def extract_text_blocks(doc):
+
+# ─── 1) EXTRACT TEXT LINES ─────────────────────────────────────────────────────
+def extract_text_lines(path):
+    """
+    Returns list-of-pages, each a list of (Rect, text)
+    for every non-empty line on that page.
+    """
+    doc = fitz.open(path)
     pages = []
-    logger.info("Extracting text from %d pages…", doc.page_count)
-    for page in tqdm(doc, desc="Extract text"):
-        blks = []
-        for b in page.get_text("blocks"):
-            x0, y0, x1, y1, text, *rest = b
-            if text.strip():
-                blks.append((fitz.Rect(x0, y0, x1, y1), text))
-        pages.append(blks)
+    logger.info(f"Extracting text lines from {path!r} (%d pages)…", doc.page_count)
+    for page in tqdm(doc, desc="Text→lines"):
+        lines = []
+        d = page.get_text("dict")
+        for blk in d["blocks"]:
+            if blk["type"] != 0:          # 0 = text block
+                continue
+            for ln in blk["lines"]:
+                text = "".join(span["text"] for span in ln["spans"]).strip()
+                if not text:
+                    continue
+                # compute the bounding box of the whole line
+                x0 = min(span["bbox"][0] for span in ln["spans"])
+                y0 = min(span["bbox"][1] for span in ln["spans"])
+                x1 = max(span["bbox"][2] for span in ln["spans"])
+                y1 = max(span["bbox"][3] for span in ln["spans"])
+                lines.append((fitz.Rect(x0, y0, x1, y1), text))
+        pages.append(lines)
     return pages
 
-# ─── TEXT DIFF (separate old/new replace rects) ─────────────────────────────────
-def diff_text_blocks(old_blks, new_blks):
-    old_texts = [t for _, t in old_blks]
-    new_texts = [t for _, t in new_blks]
-    sm = difflib.SequenceMatcher(None, old_texts, new_texts)
 
-    delete_rects = []
-    insert_rects = []
-    replace_old = []
-    replace_new = []
+# ─── 2) EXTRACT TABLE CELLS ─────────────────────────────────────────────────────
+def extract_table_cells(path):
+    """
+    Returns list-of-pages, each a list of tables;
+    each table is (DataFrame, list-of-cell-dicts)
+    where each cell-dict has keys: row_idx, col_idx, bbox (as fitz.Rect), text.
+    """
+    tables_per_page = []
+    logger.info(f"Extracting tables from {path!r}…")
+    with pdfplumber.open(path) as pdf:
+        for page in tqdm(pdf.pages, desc="PDF→tables"):
+            page_tables = []
+            for tbl in page.find_tables():
+                # 1) get the table data as DataFrame
+                raw = tbl.extract_table()
+                if not raw or len(raw) < 2:
+                    continue
+                df = pd.DataFrame(raw[1:], columns=raw[0])
+                # 2) gather each cell’s bbox & its row/col index
+                cells = []
+                for cell in tbl.cells:
+                    # pdfplumber Cell: cell.row_index, cell.col_index, cell.bbox, cell.text
+                    cells.append({
+                        "row":      cell["row_idx"],
+                        "col":      cell["col_idx"],
+                        "bbox":     fitz.Rect(cell["bbox"]),
+                        "text":     cell["text"] or ""
+                    })
+                page_tables.append((df, cells))
+            tables_per_page.append(page_tables)
+    return tables_per_page
 
+
+# ─── 3) DIFF TEXT LINES ─────────────────────────────────────────────────────────
+def diff_lines(old_lines, new_lines):
+    """
+    Given two lists of (Rect, text), produce four lists of Rects:
+      - deleted (in old not in new)
+      - inserted
+      - replaced_old
+      - replaced_new
+    """
+    o_txt = [t for _, t in old_lines]
+    n_txt = [t for _, t in new_lines]
+    sm = difflib.SequenceMatcher(None, o_txt, n_txt)
+    del_, ins, rep_o, rep_n = [], [], [], []
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "delete":
-            delete_rects.extend(old_blks[i][0] for i in range(i1, i2))
+            del_.extend(old_lines[i][0] for i in range(i1, i2))
         elif tag == "insert":
-            insert_rects.extend(new_blks[j][0] for j in range(j1, j2))
+            ins .extend(new_lines[j][0] for j in range(j1, j2))
         elif tag == "replace":
-            replace_old.extend(old_blks[i][0] for i in range(i1, i2))
-            replace_new.extend(new_blks[j][0] for j in range(j1, j2))
+            rep_o.extend(old_lines[i][0] for i in range(i1, i2))
+            rep_n.extend(new_lines[j][0] for j in range(j1, j2))
+    return del_, ins, rep_o, rep_n
 
-    return delete_rects, insert_rects, replace_old, replace_new
 
-# ─── IMAGE DIFF ─────────────────────────────────────────────────────────────────
-def diff_page_images(old_page, new_page):
-    pm1 = old_page.get_pixmap(alpha=False)
-    pm2 = new_page.get_pixmap(alpha=False)
-    im1 = Image.frombytes("RGB", [pm1.width, pm1.height], pm1.samples)
-    im2 = Image.frombytes("RGB", [pm2.width, pm2.height], pm2.samples)
-
-    diff = ImageChops.difference(im1, im2).convert("L")
-    bw   = diff.point(lambda x: 255 if x > PIXEL_THRESH else 0)
-    bbox = bw.getbbox()
-    return [fitz.Rect(bbox)] if bbox else []
-
-# ─── ANNOTATION ────────────────────────────────────────────────────────────────
-def annotate_exact(old_doc, new_doc,
-                   del_ann, ins_ann, rep_old, rep_new, img_boxes):
+# ─── 4) DIFF TABLE CELLS ─────────────────────────────────────────────────────────
+def diff_table_cells(tbl_old, tbl_new):
     """
-    del_ann[i], rep_old[i]: old-page rects
-    ins_ann[i], rep_new[i]: new-page rects
-    img_boxes[i]: rects to mark on both
+    tbl_old/tbl_new = (DataFrame, list-of-cell-dicts).
+    Returns four lists of Rect:
+      - deleted_cells (in old only)
+      - inserted_cells
+      - changed_old
+      - changed_new
     """
-    logger.info("Annotating old PDF…")
-    for page, dels, reps, imgs in tqdm(zip(old_doc, del_ann, rep_old, img_boxes),
-                                       total=len(old_doc), desc="Old annots"):
-        for r in dels:
-            a = page.add_highlight_annot(r)
-            a.set_colors(fill=COLORS_OLD["delete"])
-            a.set_opacity(ALPHA); a.update()
-        for r in reps + imgs:
-            a = page.add_highlight_annot(r)
-            a.set_colors(fill=COLORS_OLD["replace"])
-            a.set_opacity(ALPHA); a.update()
+    df_o, cells_o = tbl_old
+    df_n, cells_n = tbl_new
 
-    logger.info("Annotating new PDF…")
-    for page, ins, reps, imgs in tqdm(zip(new_doc, ins_ann, rep_new, img_boxes),
-                                      total=len(new_doc), desc="New annots"):
-        for r in ins:
-            a = page.add_highlight_annot(r)
-            a.set_colors(fill=COLORS_NEW["insert"])
-            a.set_opacity(ALPHA); a.update()
-        for r in reps + imgs:
-            a = page.add_highlight_annot(r)
-            a.set_colors(fill=COLORS_NEW["replace"])
-            a.set_opacity(ALPHA); a.update()
+    # unify shapes
+    idxs = df_o.index.union(df_n.index)
+    cols  = df_o.columns.union(df_n.columns)
+    o2 = df_o.reindex(index=idxs, columns=cols, fill_value="")
+    n2 = df_n.reindex(index=idxs, columns=cols, fill_value="")
 
-# ─── SIDE-BY-SIDE RENDER ────────────────────────────────────────────────────────
-def render_side_by_side(old_doc, new_doc):
-    out = fitz.open()
-    pages = min(old_doc.page_count, new_doc.page_count)
-    logger.info("Rendering %d pages side-by-side…", pages)
+    del_c, ins_c, co, cn = [], [], [], []
+    # old cells
+    for c in cells_o:
+        ro, coo = c["row"], c["col"]
+        t_o, t_n = o2.iat[ro, coo], n2.iat[ro, coo]
+        if t_o and not t_n:
+            del_c.append(c["bbox"])
+        elif t_o and t_n and t_o != t_n:
+            co.append(c["bbox"])
+    # new cells
+    for c in cells_n:
+        ro, coo = c["row"], c["col"]
+        t_o, t_n = o2.iat[ro, coo], n2.iat[ro, coo]
+        if t_n and not t_o:
+            ins_c.append(c["bbox"])
+        elif t_o and t_n and t_o != t_n:
+            cn.append(c["bbox"])
+    return del_c, ins_c, co, cn
 
-    for i in tqdm(range(pages), desc="Render"):
+
+# ─── 5) ANNOTATE AND SAVE ───────────────────────────────────────────────────────
+def annotate_and_save(old_path, new_path):
+    # extract everything
+    old_lines = extract_text_lines(old_path)
+    new_lines = extract_text_lines(new_path)
+    old_tabs  = extract_table_cells(old_path)
+    new_tabs  = extract_table_cells(new_path)
+
+    old_doc = fitz.open(old_path)
+    new_doc = fitz.open(new_path)
+    pages   = min(old_doc.page_count, new_doc.page_count)
+
+    # prepare per‐page buckets
+    del_l, ins_l, rep_lo, rep_ln = ([] for _ in range(4))
+    del_c, ins_c, rep_co, rep_cn = ([] for _ in range(4))
+
+    # diff page by page
+    logger.info(f"Diffing text & tables across {pages} pages…")
+    for i in tqdm(range(pages), desc="Diff pages"):
+        # text
+        dL, iL, rLo, rLn = diff_lines(old_lines[i], new_lines[i])
+        del_l.append(dL); ins_l.append(iL)
+        rep_lo.append(rLo); rep_ln.append(rLn)
+        # tables: zip same‐index tables; extras ignored
+        dC,iC,rCo,rCn = [], [], [], []
+        for (to, co), (tn, cn) in zip(old_tabs[i], new_tabs[i]):
+            x0,x1,x2,x3 = diff_table_cells((to, co), (tn, cn))
+            dC.extend(x0); iC.extend(x1)
+            rCo.extend(x2); rCn.extend(x3)
+        del_c.append(dC); ins_c.append(iC)
+        rep_co.append(rCo); rep_cn.append(rCn)
+
+    # annotate OLD
+    logger.info("Annotating OLD PDF…")
+    for p in tqdm(range(pages), desc="Annot old"):
+        page = old_doc[p]
+        for r in del_l[p]   + del_c[p]:
+            a = page.add_highlight_annot(r)
+            a.set_colors(fill=COLOR_DEL); a.set_opacity(ALPHA); a.update()
+        for r in rep_lo[p]  + rep_co[p]:
+            a = page.add_highlight_annot(r)
+            a.set_colors(fill=COLOR_REP); a.set_opacity(ALPHA); a.update()
+    old_doc.save(OLD_ANNOT)
+
+    # annotate NEW
+    logger.info("Annotating NEW PDF…")
+    for p in tqdm(range(pages), desc="Annot new"):
+        page = new_doc[p]
+        for r in ins_l[p]   + ins_c[p]:
+            a = page.add_highlight_annot(r)
+            a.set_colors(fill=COLOR_INS); a.set_opacity(ALPHA); a.update()
+        for r in rep_ln[p]  + rep_cn[p]:
+            a = page.add_highlight_annot(r)
+            a.set_colors(fill=COLOR_REP); a.set_opacity(ALPHA); a.update()
+    new_doc.save(NEW_ANNOT)
+
+    # side-by-side
+    logger.info("Rendering side-by-side output…")
+    combo = fitz.open()
+    for i in tqdm(range(pages), desc="Render SxS"):
         p1, p2 = old_doc[i], new_doc[i]
         w1,h1 = p1.rect.width, p1.rect.height
         w2,h2 = p2.rect.width, p2.rect.height
         H = max(h1,h2)
-
-        newp = out.new_page(width=w1+w2, height=H)
+        newp = combo.new_page(width=w1+w2, height=H)
         pix1 = p1.get_pixmap(alpha=False)
         pix2 = p2.get_pixmap(alpha=False)
-        newp.insert_image(fitz.Rect(0,    H-h1,   w1,     H),    pixmap=pix1)
-        newp.insert_image(fitz.Rect(w1,   H-h2,   w1+w2,  H),    pixmap=pix2)
+        newp.insert_image(fitz.Rect(0,   H-h1,  w1,     H),    pixmap=pix1)
+        newp.insert_image(fitz.Rect(w1,  H-h2,  w1+w2,  H),    pixmap=pix2)
+    combo.save(OUT_SIDEBYSIDE)
 
-    out.save(OUT_PATH)
-    logger.info("Saved %r", OUT_PATH)
-
-# ─── MAIN WORKFLOW ─────────────────────────────────────────────────────────────
-def main():
-    old = fitz.open(OLD_PATH)
-    new = fitz.open(NEW_PATH)
-    pages = min(old.page_count, new.page_count)
-
-    # 1) extract
-    old_blocks = extract_text_blocks(old)
-    new_blocks = extract_text_blocks(new)
-
-    # prepare per-page lists
-    del_ann, ins_ann = [], []
-    rep_old, rep_new = [], []
-    img_boxes        = []
-
-    # 2) diff each page
-    logger.info("Computing diffs on %d pages…", pages)
-    for i in tqdm(range(pages), desc="Diffing"):
-        d, ins, ro, rn = diff_text_blocks(old_blocks[i], new_blocks[i])
-        imgs = diff_page_images(old[i], new[i])
-        del_ann.append(d)
-        ins_ann.append(ins)
-        rep_old.append(ro)
-        rep_new.append(rn)
-        img_boxes.append(imgs)
-
-    # 3) annotate only those rects
-    annotate_exact(old, new, del_ann, ins_ann, rep_old, rep_new, img_boxes)
-
-    # 4) side-by-side
-    render_side_by_side(old, new)
+    logger.info(f"Done. → {OLD_ANNOT}, {NEW_ANNOT}, {OUT_SIDEBYSIDE}")
 
 
 if __name__ == "__main__":
-    main()
+    annotate_and_save(OLD_PATH, NEW_PATH)
