@@ -5,6 +5,7 @@ if sys.platform == "win32":
     ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
 
 import os
+import re
 import time
 import datetime
 import threading
@@ -19,6 +20,8 @@ try:
     import win32com.client as win32
 except ImportError:
     win32 = None
+
+from openpyxl import load_workbook
 
 # --- Logging configuration ---
 logging.basicConfig(
@@ -67,28 +70,34 @@ class FileReportApp:
 
         # --- Cutoff Date picker via Comboboxes ---
         ttk.Label(frm, text='Select Cutoff Date:').grid(row=4, column=0, pady=(10,0), sticky='w')
+        # Day
         self.day_var = tk.StringVar()
         self.day_cb = ttk.Combobox(frm, textvariable=self.day_var, state='readonly', width=4)
         self.day_cb.grid(row=4, column=1, sticky='w', padx=(0,5))
+        # Month
         self.month_var = tk.StringVar()
         months = list(calendar.month_name)[1:]
         self.month_cb = ttk.Combobox(frm, textvariable=self.month_var, state='readonly', values=months, width=10)
         self.month_cb.grid(row=4, column=2, sticky='w', padx=(0,5))
+        # Year
         self.year_var = tk.StringVar()
         current_year = datetime.date.today().year
         years = [str(y) for y in range(2000, current_year + 1)]
         self.year_cb = ttk.Combobox(frm, textvariable=self.year_var, state='readonly', values=years, width=6)
         self.year_cb.grid(row=4, column=3, sticky='w')
 
+        # helper text
         ttk.Label(
             frm,
             text='(Includes all files created on or before this date)',
             font=("TkDefaultFont", 8)
         ).grid(row=5, column=1, columnspan=3, sticky='w', pady=(0,10))
 
+        # bind to update days when month or year changes
         self.month_cb.bind('<<ComboboxSelected>>', self._update_days)
         self.year_cb.bind('<<ComboboxSelected>>', self._update_days)
 
+        # initialize to today's date
         today = datetime.date.today()
         self.year_var.set(str(today.year))
         self.month_var.set(today.strftime('%B'))
@@ -144,6 +153,7 @@ class FileReportApp:
         self.cc_var.set(row.get('Delegate Email','') or '')
 
     def _update_days(self, event=None):
+        """Re-populate the days Combobox according to selected month & year."""
         try:
             year = int(self.year_var.get())
             month = list(calendar.month_name).index(self.month_var.get())
@@ -153,7 +163,10 @@ class FileReportApp:
         days = [str(d) for d in range(1, num_days+1)]
         current = self.day_var.get()
         self.day_cb['values'] = days
-        self.day_var.set(current if current in days else '1')
+        if current in days:
+            self.day_var.set(current)
+        else:
+            self.day_var.set('1')
 
     def _format_size(self, size_bytes):
         for unit in ['B','KB','MB','GB','TB']:
@@ -163,124 +176,122 @@ class FileReportApp:
         return f"{size_bytes:.2f} PB"
 
     def _on_run(self):
+        # disable the button & start spinner
         self.run_btn.config(state='disabled')
         self.status.config(text='')
         self.progress.start(10)
         threading.Thread(target=self._scan_and_report, daemon=True).start()
 
     def _scan_and_report(self):
-        owner   = self.person_var.get().strip()
-        to_mail = self.email_var.get().strip()
-        cc_mail = self.cc_var.get().strip()
+        owner     = self.person_var.get().strip()
+        to_mail   = self.email_var.get().strip()
+        cc_mail   = self.cc_var.get().strip()
 
-        # build cutoff timestamp
+        # build cutoff datetime from our comboboxes
         day   = int(self.day_var.get())
         month = list(calendar.month_name).index(self.month_var.get())
         year  = int(self.year_var.get())
-        cutoff_dt = datetime.datetime.combine(
-            datetime.date(year, month, day), datetime.time.max
-        )
-        cutoff_ts = cutoff_dt.timestamp()
+        cutoff_d  = datetime.date(year, month, day)
+        cutoff_ts = datetime.datetime.combine(cutoff_d, datetime.time.max).timestamp()
         now_ts    = time.time()
 
-        bases = self.df_access[
-            self.df_access['Entitlement Owner'] == owner
-        ]['Full Path'].dropna().tolist()
-
+        bases      = self.df_access[self.df_access['Entitlement Owner']==owner]['Full Path'].dropna().tolist()
         rows, errors = [], []
-        idx = 0
-        start = time.time()
+        idx        = 0
+        start_time = time.time()
         total_size = 0
 
-        def onerror(e):
-            errors.append({
-                'Entitlement Owner': owner,
-                'File Path': getattr(e, 'filename', str(e)),
-                'Error Message': str(e)
-            })
+        def scan_dir(path):
+            try:
+                with os.scandir(path) as it:
+                    for ent in it:
+                        if ent.is_dir(follow_symlinks=False):
+                            yield from scan_dir(ent.path)
+                        elif ent.is_file(follow_symlinks=False):
+                            yield ent
+            except Exception as e:
+                errors.append({
+                    'Entitlement Owner': owner,
+                    'File Path': path,
+                    'Error Message': str(e)
+                })
 
         for base in bases:
-            for root, dirs, files in os.walk(base, followlinks=False, onerror=onerror):
-                for fname in files:
-                    idx += 1
-                    elapsed = time.time() - start
-                    self.queue.put((
-                        'update', idx,
-                        time.strftime('%H:%M:%S', time.gmtime(elapsed))
-                    ))
-                    path = os.path.join(root, fname)
-                    try:
-                        st = os.stat(path, follow_symlinks=False)
-                        if st.st_ctime > cutoff_ts:
-                            continue
+            for ent in scan_dir(base):
+                idx += 1
+                elapsed = time.time() - start_time
+                elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
+                self.queue.put(('update', idx, elapsed_str))
 
-                        size_b = st.st_size
-                        total_size += size_b
-                        days_old = int((now_ts - st.st_ctime) // 86400)
+                try:
+                    st = ent.stat(follow_symlinks=False)
+                    if st.st_ctime > cutoff_ts:
+                        continue
+                    size_b = st.st_size
+                    total_size += size_b
+                    days_old = int((now_ts - st.st_ctime) // 86400)
+                    rows.append({
+                        'Entitlement Owner': owner,
+                        'File Name':         ent.name,
+                        'File Path':         ent.path,
+                        'Created':           datetime.datetime.fromtimestamp(st.st_ctime)
+                                                   .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Last Modified':     datetime.datetime.fromtimestamp(st.st_mtime)
+                                                   .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Last Accessed':     datetime.datetime.fromtimestamp(st.st_atime)
+                                                   .strftime('%Y-%m-%d %H:%M:%S'),
+                        'Days Ago':          days_old,
+                        'Size (MB)':         round(size_b/(1024*1024), 2)
+                    })
+                except Exception as e:
+                    errors.append({
+                        'Entitlement Owner': owner,
+                        'File Name':         getattr(ent, 'name', None),
+                        'File Path':         getattr(ent, 'path', base),
+                        'Error Message':     str(e)
+                    })
 
-                        norm = path.replace('\\', '/')
-                        segs = norm.split('/')
+        # finalize timing & counts
+        total_elapsed = time.time() - start_time
+        elapsed_str   = time.strftime('%H:%M:%S', time.gmtime(total_elapsed))
+        total_files   = len(rows)
 
-                        row = {
-                            'Entitlement Owner': owner,
-                            'File Name':         fname,
-                            'File Path':         path,
-                            'Created':           datetime.datetime.fromtimestamp(st.st_ctime)
-                                                       .strftime('%Y-%m-%d %H:%M:%S'),
-                            'Last Modified':     datetime.datetime.fromtimestamp(st.st_mtime)
-                                                       .strftime('%Y-%m-%d %H:%M:%S'),
-                            'Last Accessed':     datetime.datetime.fromtimestamp(st.st_atime)
-                                                       .strftime('%Y-%m-%d %H:%M:%S'),
-                            'Days Ago':          days_old,
-                            'Size (MB)':         round(size_b/(1024*1024), 2)
-                        }
-                        # embed path‐level columns immediately
-                        for i in range(len(segs)):
-                            row[f'Path Level {i+1}'] = '/'.join(segs[:i+1])
-
-                        rows.append(row)
-
-                    except Exception as e:
-                        errors.append({
-                            'Entitlement Owner': owner,
-                            'File Name':         fname,
-                            'File Path':         path,
-                            'Error Message':     str(e)
-                        })
-
-        # finalize
-        elapsed = time.time() - start
-        elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
-        total_files = len(rows)
-
-        # build DataFrames
+        # write results to Excel
         df_main = pd.DataFrame(rows)
+
+        # ─── INSERTED: Build cumulative Path Level columns ───────────────────
+        # 1. Normalize all separators to forward-slash
+        df_main['_normalized_path'] = df_main['File Path'].str.replace(r'\\', '/', regex=True)
+        # 2. Split into segments
+        df_main['_segments'] = df_main['_normalized_path'].str.split('/')
+        # 3. Find the maximum number of segments any path has
+        max_depth = df_main['_segments'].str.len().max() or 0
+        # 4. For each level, build a cumulative path column
+        for level in range(1, max_depth + 1):
+            col_name = f'Path Level {level}'
+            df_main[col_name] = df_main['_segments'].apply(
+                lambda segs: '/'.join(segs[:level]) if len(segs) >= level else ''
+            )
+        # 5. Drop helper columns
+        df_main.drop(columns=['_normalized_path', '_segments'], inplace=True)
+        # ──────────────────────────────────────────────────────────────────────
+
         df_err  = pd.DataFrame(errors)
         stamp   = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         fn      = f"{owner.replace(' ','_')}_report_{stamp}.xlsx"
 
-        # write Excel with xlsxwriter for speed & auto‐fit columns
-        with pd.ExcelWriter(fn, engine='xlsxwriter') as writer:
+        with pd.ExcelWriter(fn, engine='openpyxl') as writer:
             df_main.to_excel(writer, sheet_name='Entitlement Files', index=False)
-            ws = writer.sheets['Entitlement Files']
-            for idx_col, col in enumerate(df_main.columns):
-                max_len = max(
-                    df_main[col].astype(str).map(len).max(),
-                    len(col)
-                )
-                ws.set_column(idx_col, idx_col, max_len + 2)
-
             if not df_err.empty:
                 df_err.to_excel(writer, sheet_name='Access Errors', index=False)
-                we = writer.sheets['Access Errors']
-                for idx_col, col in enumerate(df_err.columns):
-                    max_len = max(
-                        df_err[col].astype(str).map(len).max(),
-                        len(col)
-                    )
-                    we.set_column(idx_col, idx_col, max_len + 2)
 
-            writer.save()
+        # auto-fit columns
+        wb = load_workbook(fn)
+        for ws in wb.worksheets:
+            for col in ws.columns:
+                max_len = max((len(str(c.value)) for c in col if c.value), default=0)
+                ws.column_dimensions[col[0].column_letter].width = max_len + 2
+        wb.save(fn)
 
         # optionally send via Outlook
         status = f"Report saved: {fn}"
@@ -299,7 +310,7 @@ class FileReportApp:
                     f"<li>Base folders searched: {', '.join(bases)}</li>"
                     f"<li>Number of files found: {total_files}</li>"
                     f"<li>Total size: {self._format_size(total_size)}</li>"
-                    f"<li>Cutoff date: {cutoff_dt.date()}</li>"
+                    f"<li>Cutoff date: {cutoff_d}</li>"
                     f"<li>Scan duration: {elapsed_str}</li>"
                     "</ul><p>Regards,</p>"
                 )
