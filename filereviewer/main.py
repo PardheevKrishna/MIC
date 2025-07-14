@@ -5,6 +5,7 @@ if sys.platform == "win32":
     ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
 
 import os
+import re
 import time
 import datetime
 import threading
@@ -257,6 +258,24 @@ class FileReportApp:
 
         # write results to Excel
         df_main = pd.DataFrame(rows)
+
+        # ─── INSERTED: Build cumulative Path Level columns ───────────────────
+        # 1. Normalize all separators to forward-slash
+        df_main['_normalized_path'] = df_main['File Path'].str.replace(r'\\', '/', regex=True)
+        # 2. Split into segments
+        df_main['_segments'] = df_main['_normalized_path'].str.split('/')
+        # 3. Find the maximum number of segments any path has
+        max_depth = df_main['_segments'].str.len().max() or 0
+        # 4. For each level, build a cumulative path column
+        for level in range(1, max_depth + 1):
+            col_name = f'Path Level {level}'
+            df_main[col_name] = df_main['_segments'].apply(
+                lambda segs: '/'.join(segs[:level]) if len(segs) >= level else ''
+            )
+        # 5. Drop helper columns
+        df_main.drop(columns=['_normalized_path', '_segments'], inplace=True)
+        # ──────────────────────────────────────────────────────────────────────
+
         df_err  = pd.DataFrame(errors)
         stamp   = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         fn      = f"{owner.replace(' ','_')}_report_{stamp}.xlsx"
