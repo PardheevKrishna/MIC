@@ -4,7 +4,9 @@ import pandas as pd
 # ——— Helpers —————————————————————————————————————————————————
 
 def split_fields(select_list: str) -> list:
-    """Split by top-level commas, ignoring any inside parentheses."""
+    """
+    Split a SELECT list string by commas at top‐level (ignore commas inside parentheses).
+    """
     out, buf, depth = [], '', 0
     for c in select_list:
         if c == '(':
@@ -15,178 +17,116 @@ def split_fields(select_list: str) -> list:
             out.append(buf.strip()); buf = ''
         else:
             buf += c
-    if buf.strip(): out.append(buf.strip())
+    if buf.strip(): 
+        out.append(buf.strip())
     return out
 
 def extract_pass_thru_inner(segment: str) -> str:
     """
-    If segment uses "SELECT * FROM CONNECTION TO ...(...)",
-    return the inner SQL.
+    If segment has "FROM CONNECTION TO ...(...)", return the inner SQL.
     """
     m = re.search(r'connection\s+to\s+\w+\s*\((.*)\)\s*;', 
-                  segment, re.IGNORECASE|re.DOTALL)
+                  segment, re.IGNORECASE | re.DOTALL)
     return m.group(1).strip() if m else ""
 
 
-# ——— Build per-table column mapping ——————————————————————————————
+# ——— Core parsing of one PROC SQL block ——————————————————————————————
 
-def build_table_columns(segment: str,
-                        existing_map: dict[str,list[str]]) -> list[str]:
-    """
-    Given one PROC SQL block, return the explicit field list for
-    its target table.  If it’s a pass-through, we parse the inner SELECT;
-    if it lists wildcards, we expand them from `existing_map`.
-    """
-    # 1) find target dataset
-    m_ds = re.search(r'create\s+table\s+(\w+)\s+as\s+select',
-                     segment, re.IGNORECASE)
-    if not m_ds:
-        return []
-    ds = m_ds.group(1)
-
-    # 2) if it’s a pass-thru wildcard, unwrap it
-    if re.search(r'select\s*\*\s*from\s*connection\s+to', 
-                 segment, re.IGNORECASE):
-        inner = extract_pass_thru_inner(segment)
-        if inner:
-            # rebuild as a plain SELECT for parsing:
-            segment = f"create table {ds} as {inner};"
-
-    # 3) get the SELECT list text
-    m_sel = re.search(
-        rf'create\s+table\s+{ds}\s+as\s+select\s+(.*?)\s+from\b',
-        segment, re.IGNORECASE|re.DOTALL
-    )
-    select_list = m_sel.group(1) if m_sel else ""
-    frags = split_fields(select_list)
-
-    cols = []
-    for frag in frags:
-        frag = frag.strip()
-        # explicit alias "X as Y"
-        m_as = re.match(r'(.+?)\s+as\s+([A-Za-z0-9_]+)$', frag,
-                        re.IGNORECASE)
-        if m_as:
-            expr, alias = m_as.group(1).strip(), m_as.group(2).strip()
-            cols.append(alias)
-            continue
-
-        # wildcard "alias.*" or just "*"
-        if frag.endswith('.*') or frag == '*':
-            alias = frag.split('.')[0] if '.' in frag else ''
-            if alias in existing_map:
-                cols.extend(existing_map[alias])
-            continue
-
-        # simple column reference tX.colname
-        m_col = re.match(r'\b\w+\.(\w+)$', frag)
-        if m_col:
-            cols.append(m_col.group(1))
-            continue
-
-        # otherwise it’s some expression; we can’t name it
-        # so skip it for building the table’s column map
-        # (we’ll still capture it later in the metadata)
-    return cols
-
-
-# ——— Parse metadata rows for one PROC SQL block ————————————————————
-
-def parse_proc_sql_segment(segment: str,
-                           table_map: dict[str,list[str]]) -> pd.DataFrame:
-    """
-    Returns the 7-column metadata for one PROC SQL…QUIT; block,
-    expanding any tX.* using `table_map`.
-    """
-    # 1) dataset name
+def parse_proc_sql_segment(segment: str) -> pd.DataFrame:
+    # 1) target dataset
     m_ds = re.search(r'create\s+table\s+(\w+)\s+as\s+select',
                      segment, re.IGNORECASE)
     if not m_ds:
         return pd.DataFrame()
     ds = m_ds.group(1)
 
-    # 2) unwrap pass-thru if needed
-    if re.search(r'select\s*\*\s*from\s*connection\s+to',
+    # 2) unwrap pass‐thru if needed
+    if re.search(r'select\s*\*\s*from\s*connection\s+to', 
                  segment, re.IGNORECASE):
         inner = extract_pass_thru_inner(segment)
         if inner:
             segment = f"create table {ds} as {inner};"
 
-    # 3) discover all source aliases → table names
+    # 3) gather source aliases → tables and subqueries
     sources = {}
-    # any "from X as alias" or "join X as alias"
+    # any FROM or JOIN alias
     for m in re.finditer(r'\b(?:from|join)\s+([^\s]+)\s+as\s+(\w+)\b',
                          segment, re.IGNORECASE):
-        tbl, alias = m.group(1), m.group(2)
-        sources[alias.lower()] = {'table':tbl, 'logic': '', 'fields': []}
-
-    # subqueries: LEFT JOIN ( SELECT … ) AS alias
-    for m in re.finditer(r'left\s+join\s*\(\s*(select\b.*?\))\s+as\s+(\w+)',
-                         segment, re.IGNORECASE|re.DOTALL):
+        sources[m.group(2).lower()] = {'table': m.group(1),
+                                       'fields': [], 'logic': ''}
+    # subquery LEFT JOIN
+    for m in re.finditer(
+        r'left\s+join\s*\(\s*(select\b.*?\))\s+as\s+(\w+)',
+        segment, re.IGNORECASE | re.DOTALL
+    ):
         subq, alias = m.group(1).strip(), m.group(2).lower()
-        # overwrite table with the real table inside subq
-        tblm = re.search(r'from\s+([^\s]+)', subq,
-                         re.IGNORECASE)
+        tblm = re.search(r'from\s+([^\s]+)', subq, re.IGNORECASE)
         flm = re.search(r'select\s+(?:distinct\s+)?(.*?)\s+from',
-                        subq, re.IGNORECASE|re.DOTALL)
+                        subq, re.IGNORECASE | re.DOTALL)
         sources[alias] = {
             'table': tblm.group(1) if tblm else '',
-            'logic': subq,
-            'fields': split_fields(flm.group(1)) if flm else []
+            'fields': split_fields(flm.group(1)) if flm else [],
+            'logic': subq
         }
 
-    # 4) get SELECT list
+    # 4) pull out the SELECT list
     m_sel = re.search(
         rf'create\s+table\s+{ds}\s+as\s+select\s+(.*?)\s+from\b',
-        segment, re.IGNORECASE|re.DOTALL
+        segment, re.IGNORECASE | re.DOTALL
     )
-    bits = split_fields(m_sel.group(1)) if m_sel else []
+    selects = m_sel.group(1) if m_sel else ''
+    fragments = split_fields(selects)
 
-    rows = []
-    for frag in bits:
-        frag = frag.strip()
-        # alias?
-        m_as = re.match(r'(.+?)\s+as\s+([A-Za-z0-9_]+)$', frag,
-                        re.IGNORECASE)
+    # 5) parse each fragment
+    records = []
+    for frag in fragments:
+        # flatten all whitespace to single spaces for easy alias matching
+        flat = re.sub(r'\s+', ' ', frag).strip()
+
+        # detect "expr AS alias"
+        m_as = re.match(r'(.+?)\s+as\s+([A-Za-z0-9_]+)$',
+                        flat, re.IGNORECASE)
         if m_as:
-            expr, fname = m_as.group(1), m_as.group(2)
+            expr, fname = m_as.group(1).strip(), m_as.group(2).strip()
         else:
-            expr = frag
-            # wildcard?
+            expr = flat
+            # wildcard expansion (handled elsewhere)
             if expr.endswith('.*') or expr == '*':
                 alias = expr.split('.')[0] if '.' in expr else ''
-                for col in table_map.get(sources.get(alias,{}).get('table',''), []):
-                    rows.append({
+                tbl   = sources.get(alias,{}).get('table','')
+                for col in sources.get(alias,{}).get('fields',[]):
+                    records.append({
                         'dataset_name': ds,
                         'field_name'  : col,
                         'logic_type'  : 'straight pull',
-                        'expression'  : f"{alias}.{col}" if alias else col,
-                        'table'       : sources.get(alias,{}).get('table',''),
+                        'expression'  : f"{alias}.{col}",
+                        'table'       : tbl,
                         'fields'      : '',
                         'logic'       : ''
                     })
                 continue
-            # simple tX.col
-            m_col = re.match(r'\b(t\d+)\.(\w+)$', expr, re.IGNORECASE)
+            # simple alias.col
+            m_col = re.match(r'^(\w+)\.(\w+)$', expr)
             if m_col:
                 fname = m_col.group(2)
             else:
                 fname = expr
 
-        # logic type
-        logic_type = ('straight pull'
-                      if re.match(r'\b(t\d+)\.\w+', expr, re.IGNORECASE)
-                         and not m_as
-                      else 'derived')
+        # classify straight vs derived
+        sp = re.match(r'^(\w+)\.(\w+)$', expr)
+        if sp and sp.group(1).lower() in sources:
+            logic_type = 'straight pull'
+        else:
+            logic_type = 'derived'
 
-        # find all aliases used
-        aliases = list(dict.fromkeys(
-            re.findall(r'\b(t\d+)\.', expr, re.IGNORECASE)
+        # which aliases drive this expression?
+        used = list(dict.fromkeys(
+            re.findall(r'\b(\w+)\.', expr)
         ))
-        if aliases:
-            for a in aliases:
+        if used:
+            for a in used:
                 info = sources.get(a.lower(), {})
-                rows.append({
+                records.append({
                     'dataset_name': ds,
                     'field_name'  : fname,
                     'logic_type'  : logic_type,
@@ -196,7 +136,7 @@ def parse_proc_sql_segment(segment: str,
                     'logic'       : info.get('logic','')
                 })
         else:
-            rows.append({
+            records.append({
                 'dataset_name': ds,
                 'field_name'  : fname,
                 'logic_type'  : logic_type,
@@ -206,46 +146,24 @@ def parse_proc_sql_segment(segment: str,
                 'logic'       : ''
             })
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(records)
 
 
-# ——— Walk the entire SAS file —————————————————————————————————
+# ——— Parse the entire .sas file —————————————————————————————————
 
 def parse_sas_file(path: str) -> pd.DataFrame:
-    txt = open(path).read()
-    # strip /* ... */ and * ... ;
+    txt = open(path, 'r').read()
+    # strip block comments and star-comments
     txt = re.sub(r'/\*.*?\*/', '', txt, flags=re.DOTALL)
     txt = re.sub(r'^\s*\*.*?;', '', txt, flags=re.MULTILINE)
 
-    # find all PROC SQL…QUIT; segments in order
+    # grab every PROC SQL…QUIT; segment
     segments = re.findall(r'(?is)proc\s+sql\b.*?\bquit\b\s*;', txt)
-
-    table_map = {}
-    all_rows = []
-
-    # first pass: build table_map in file order
-    for seg in segments:
-        # discover dataset name
-        m_ds = re.search(r'create\s+table\s+(\w+)', seg,
-                         re.IGNORECASE)
-        if not m_ds:
-            continue
-        ds = m_ds.group(1)
-        cols = build_table_columns(seg, table_map)
-        table_map[ds] = cols
-
-        # parse metadata rows for this segment
-        df_seg = parse_proc_sql_segment(seg, table_map)
-        if not df_seg.empty:
-            all_rows.append(df_seg)
-
-    if all_rows:
-        return pd.concat(all_rows, ignore_index=True)
-    else:
-        return pd.DataFrame()
+    dfs = [parse_proc_sql_segment(seg) for seg in segments]
+    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
 
-# ——— Main (hard-coded paths) ————————————————————————————————
+# ——— Main (hard-coded paths) —————————————————————————————————
 
 if __name__ == '__main__':
     input_sas    = '/mnt/data/code.sas'
@@ -253,4 +171,4 @@ if __name__ == '__main__':
 
     df = parse_sas_file(input_sas)
     df.to_excel(output_excel, index=False)
-    print(f"Saved {len(df)} rows → {output_excel}")
+    print(f"Extracted {len(df)} rows → {output_excel}")
