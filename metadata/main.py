@@ -1,11 +1,11 @@
 import re
 import pandas as pd
 
-# ——— Helpers —————————————————————————————————————————————————
+# —— Helpers —— #
 
 def split_fields(select_list: str) -> list:
     """
-    Split a SELECT list string by commas at top-level (ignoring commas inside parentheses).
+    Split a SELECT list string by commas at top‐level (ignoring commas inside parentheses).
     """
     out, buf, depth = [], '', 0
     for c in select_list:
@@ -22,18 +22,21 @@ def split_fields(select_list: str) -> list:
 
 def extract_pass_thru_inner(segment: str) -> str:
     """
-    If segment has "FROM CONNECTION TO ... ( ... )", return the inner SQL.
+    If segment has "FROM CONNECTION TO ...(...)", return the inner SQL.
     """
     m = re.search(
-        r'connection\s+to\s+\w+\s*\((.*)\)\s*;',
+        r'connection\s+to\s+\w+\s*\((.*)\)\s*;', 
         segment, re.IGNORECASE|re.DOTALL
     )
     return m.group(1).strip() if m else ""
 
-
-# ——— Core parsing of one PROC SQL block ——————————————————————————————
+# —— Core parsing for one PROC SQL block —— #
 
 def parse_proc_sql_segment(segment: str) -> pd.DataFrame:
+    """
+    Parse one PROC SQL...QUIT segment to extract:
+      - dataset_name, field_name, logic_type, expression
+    """
     # 1) target dataset
     m_ds = re.search(r'create\s+table\s+(\w+)\s+as\s+select',
                      segment, re.IGNORECASE)
@@ -41,59 +44,23 @@ def parse_proc_sql_segment(segment: str) -> pd.DataFrame:
         return pd.DataFrame()
     ds = m_ds.group(1)
 
-    # 2) unwrap pass-thru if needed
+    # 2) handle pass-through SELECT * FROM CONNECTION to ...
     if re.search(r'select\s*\*\s*from\s*connection\s+to',
                  segment, re.IGNORECASE):
         inner = extract_pass_thru_inner(segment)
         if inner:
             segment = f"create table {ds} as {inner};"
 
-    # 3) gather source aliases → table, fields, logic
-    sources = {}
+    # 3) gather source aliases for straight-pull detection
+    sources = set()
+    for m in re.finditer(r'\b(?:from|join)\s+[^\s]+\s+as\s+(\w+)\b',
+                         segment, re.IGNORECASE):
+        sources.add(m.group(1).lower())
+    # also catch subqueries without 'AS': ") t2 on"
+    for m in re.finditer(r'\)\s*(\w+)\s+on\b', segment, re.IGNORECASE):
+        sources.add(m.group(1).lower())
 
-    # 3a) any "FROM X AS alias" or "JOIN X AS alias"
-    for m in re.finditer(
-        r'\b(?:from|join)\s+([^\s]+)\s+as\s+(\w+)\b',
-        segment, re.IGNORECASE
-    ):
-        tbl, alias = m.group(1), m.group(2).lower()
-        sources[alias] = {'table': tbl, 'fields': [], 'logic': ''}
-
-    # 3b) LEFT JOIN (sub-query) AS alias
-    for m in re.finditer(
-        r'left\s+join\s*\(\s*(select\b.*?\))\s+as\s+(\w+)',
-        segment, re.IGNORECASE|re.DOTALL
-    ):
-        subq, alias = m.group(1).strip(), m.group(2).lower()
-        tblm = re.search(r'from\s+([^\s]+)', subq, re.IGNORECASE)
-        flm = re.search(
-            r'select\s+(?:distinct\s+)?(.*?)\s+from',
-            subq, re.IGNORECASE|re.DOTALL
-        )
-        sources[alias] = {
-            'table' : tblm.group(1) if tblm else '',
-            'fields': split_fields(flm.group(1)) if flm else [],
-            'logic' : subq
-        }
-
-    # 3c) INNER JOIN (sub-query) alias ON ...  (no "AS")
-    for m in re.finditer(
-        r'inner\s+join\s*\(\s*(select\b.*?\))\s*\)\s*(\w+)\s+on\b',
-        segment, re.IGNORECASE|re.DOTALL
-    ):
-        subq, alias = m.group(1).strip(), m.group(2).lower()
-        tblm = re.search(r'from\s+([^\s]+)', subq, re.IGNORECASE)
-        flm = re.search(
-            r'select\s+(?:distinct\s+)?(.*?)\s+from',
-            subq, re.IGNORECASE|re.DOTALL
-        )
-        sources[alias] = {
-            'table' : tblm.group(1) if tblm else '',
-            'fields': split_fields(flm.group(1)) if flm else [],
-            'logic' : subq
-        }
-
-    # 4) pull out the SELECT list for ds
+    # 4) extract SELECT list
     m_sel = re.search(
         rf'create\s+table\s+{ds}\s+as\s+select\s+(.*?)\s+from\b',
         segment, re.IGNORECASE|re.DOTALL
@@ -101,12 +68,10 @@ def parse_proc_sql_segment(segment: str) -> pd.DataFrame:
     selects = m_sel.group(1) if m_sel else ""
     fragments = split_fields(selects)
 
-    # 5) parse each fragment
+    # 5) build rows
     records = []
     for frag in fragments:
-        # flatten to one line for alias detection
         flat = re.sub(r'\s+', ' ', frag).strip()
-
         # detect "expr AS alias"
         m_as = re.match(r'(.+?)\s+as\s+([A-Za-z0-9_]+)$',
                         flat, re.IGNORECASE)
@@ -114,63 +79,46 @@ def parse_proc_sql_segment(segment: str) -> pd.DataFrame:
             expr, fname = m_as.group(1), m_as.group(2)
         else:
             expr = flat
-            # simple alias.col
-            m_col = re.match(r'^(\w+)\.(\w+)$', expr)
-            fname = m_col.group(2) if m_col else expr
+            # simple alias.col or bare column
+            m_col = re.match(r'^(\w+\.\w+|\w+)$', expr)
+            fname = m_col.group(1) if m_col else expr
 
-        # classify straight-pull if exactly alias.col and alias known
+        # classify straight vs derived
         sp = re.match(r'^(\w+)\.(\w+)$', expr)
-        if sp and sp.group(1).lower() in sources:
-            logic_type = 'straight pull'
-        else:
-            logic_type = 'derived'
+        logic_type = 'straight pull' if sp and sp.group(1).lower() in sources else 'derived'
 
-        # find all aliases used in expr
-        used = list(dict.fromkeys(
-            re.findall(r'\b(\w+)\.', expr)
-        ))
-        if used:
-            for a in used:
-                info = sources.get(a.lower(), {})
-                records.append({
-                    'dataset_name': ds,
-                    'field_name'  : fname,
-                    'logic_type'  : logic_type,
-                    'expression'  : expr,
-                    'table'       : info.get('table',''),
-                    'fields'      : ', '.join(info.get('fields',[])),
-                    'logic'       : info.get('logic','')
-                })
-        else:
-            # e.g. a literal, a constant, or an expression without table refs
-            records.append({
-                'dataset_name': ds,
-                'field_name'  : fname,
-                'logic_type'  : logic_type,
-                'expression'  : expr,
-                'table'       : '',
-                'fields'      : '',
-                'logic'       : ''
-            })
+        records.append({
+            'dataset_name': ds,
+            'field_name'  : fname,
+            'logic_type'  : logic_type,
+            'expression'  : expr
+        })
 
     return pd.DataFrame(records)
 
-
-# ——— Parse a full SAS file ——————————————————————————————————————
+# —— Parse full SAS file and explode F column —— #
 
 def parse_sas_file(path: str) -> pd.DataFrame:
     txt = open(path, 'r').read()
-    # strip out /* … */ and * … ;
+    # strip comments
     txt = re.sub(r'/\*.*?\*/', '', txt, flags=re.DOTALL)
     txt = re.sub(r'^\s*\*.*?;', '', txt, flags=re.MULTILINE)
 
-    # find all PROC SQL…QUIT; segments
+    # find each PROC SQL...QUIT
     segments = re.findall(r'(?is)proc\s+sql\b.*?\bquit\b\s*;', txt)
     dfs = [parse_proc_sql_segment(seg) for seg in segments]
-    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+    df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
+    # extract all tX.col occurrences from expression into 'f'
+    df['f'] = df['expression'].apply(
+        lambda expr: [m.group(2) for m in re.finditer(r'\b(t\d+)\.(\w+)\b', expr)]
+    )
+    # explode so each row has exactly one f
+    df = df.explode('f').reset_index(drop=True)
 
-# ——— Main: hard-coded paths —————————————————————————————————
+    return df[['dataset_name','field_name','logic_type','expression','f']]
+
+# ——— Main (hard-coded) —————————————————————————————————————————
 
 if __name__ == '__main__':
     input_sas    = '/mnt/data/code.sas'
@@ -178,4 +126,4 @@ if __name__ == '__main__':
 
     df = parse_sas_file(input_sas)
     df.to_excel(output_excel, index=False)
-    print(f"Extracted {len(df)} rows → {output_excel}")
+    print(f"Saved {len(df)} rows → {output_excel}")
