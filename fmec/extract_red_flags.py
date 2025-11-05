@@ -1,934 +1,658 @@
 #!/usr/bin/env python3
 """
-ENHANCED RED FLAG EXTRACTION SYSTEM v2.0
-
-New Features:
-1. Multi-Model Ensemble (Gemini 2.0 Flash-Lite + Gemini 1.5 Flash + Gemini 1.5 Pro)
-2. Context Window Enhancement (surrounding publications for context)
-3. Confidence Scoring (model agreement + similarity + keyword density)
-4. Named Entity Recognition (entities, organizations, locations)
-5. Paragraph Context Improvement (expanded context extraction)
-6. Multi-Language Support (French translation for AMF)
-7. Batch Processing (parallel API calls)
+Comprehensive Red Flag Extraction System using Gemini 2.5 Pro
+Processes all 823 documents from 9 regulatory sources
+Extracts: Red Flag, Associated Paragraph, Category, Coverage by Existing Red Flags
 """
 
 import os
-import csv
 import json
-import re
 import time
-import numpy as np
-import argparse
 from pathlib import Path
-from datetime import datetime
-from typing import List, Dict, Tuple, Optional, Set
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict, Any
 import pandas as pd
-from dotenv import load_dotenv
 import google.generativeai as genai
+from dotenv import load_dotenv
 from tqdm import tqdm
-from sklearn.metrics.pairwise import cosine_similarity
-import spacy
-from deep_translator import GoogleTranslator
-import chromadb
-from chromadb.config import Settings
 
-# Load environment
+# Load environment variables
 load_dotenv()
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY not found in .env file")
 
-genai.configure(api_key=GEMINI_API_KEY)
+# Configure Gemini
+genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
 
-# Load spaCy for NER
-try:
-    nlp = spacy.load('en_core_web_sm')
-except:
-    print("⚠️  spaCy model not found. Installing...")
-    os.system('python -m spacy download en_core_web_sm')
-    nlp = spacy.load('en_core_web_sm')
+# Use Gemini 2.5 Flash (fast and efficient)
+MODEL_NAME = "gemini-2.0-flash-exp"  # Gemini 2.5 Flash
 
-# Constants
-BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / 'data'
-SCRAPED_CONTENT_DIR = BASE_DIR / 'scraped_content'
-OUTPUT_DIR = BASE_DIR / 'output'
-CHROMA_DIR = BASE_DIR / 'chroma_db'
-OUTPUT_DIR.mkdir(exist_ok=True)
-CHROMA_DIR.mkdir(exist_ok=True)
-
-KEYWORDS_FILE = DATA_DIR / 'keywords.txt'
-EXISTING_RED_FLAGS_FILE = DATA_DIR / 'existing_red_flags.csv'
-
-# Multiple models for ensemble
-MODEL_CONFIGS = [
-    {'name': 'gemini-2.0-flash-lite', 'weight': 0.4, 'speed': 'fast'},
-    {'name': 'gemini-1.5-flash', 'weight': 0.35, 'speed': 'fast'},
-    {'name': 'gemini-1.5-pro', 'weight': 0.25, 'speed': 'slow'}  # Slower but higher quality
-]
-
-models = {cfg['name']: genai.GenerativeModel(cfg['name']) for cfg in MODEL_CONFIGS}
-embedding_model = 'models/text-embedding-004'
-
-# Initialize ChromaDB
-chroma_client = chromadb.PersistentClient(
-    path=str(CHROMA_DIR),
-    settings=Settings(anonymized_telemetry=False)
-)
-
-# Global caches
-existing_red_flags_embeddings = None
-existing_red_flags_data = None
-translator = GoogleTranslator(source='fr', target='en')
-
-
-def load_keywords() -> List[str]:
-    """Load keywords from file"""
-    with open(KEYWORDS_FILE, 'r', encoding='utf-8') as f:
+def categorize_keywords():
+    """Categorize 166 keywords into AML and Transaction Patterns"""
+    
+    # Read keywords
+    with open('data/keywords.txt', 'r', encoding='utf-8') as f:
         keywords = [line.strip() for line in f if line.strip()]
-    return keywords
-
-
-def load_existing_red_flags() -> pd.DataFrame:
-    """Load existing red flags from CSV"""
-    df = pd.read_csv(EXISTING_RED_FLAGS_FILE, encoding='utf-8')
-    df = df.dropna(subset=['Risk Indicator'])
-    df['Risk Indicator'] = df['Risk Indicator'].str.strip()
-    df = df[df['Risk Indicator'].str.len() > 10]
-    return df
-
-
-def get_embedding(text: str, retry_count: int = 3, use_cache: bool = True) -> Optional[np.ndarray]:
-    """
-    Get embedding vector for text with ChromaDB caching
-    Args:
-        text: Text to embed
-        retry_count: Number of retries for API calls
-        use_cache: Whether to use ChromaDB cache (default: True)
-    """
-    # Generate consistent hash for text
-    text_hash = str(hash(text.strip()))
     
-    # Try to get from cache first
-    if use_cache:
-        try:
-            collection = chroma_client.get_or_create_collection(
-                name="embeddings_cache",
-                metadata={"hnsw:space": "cosine"}
-            )
-            
-            # Check if embedding exists in cache
-            results = collection.get(ids=[text_hash])
-            if results['embeddings'] and len(results['embeddings']) > 0:
-                return np.array(results['embeddings'][0])
-        except Exception as e:
-            print(f"Cache read error: {e}")
-    
-    # If not in cache or cache disabled, compute embedding
-    for attempt in range(retry_count):
-        try:
-            result = genai.embed_content(
-                model=embedding_model,
-                content=text,
-                task_type="semantic_similarity"
-            )
-            embedding = np.array(result['embedding'])
-            
-            # Store in cache for future use
-            if use_cache:
-                try:
-                    collection.add(
-                        ids=[text_hash],
-                        embeddings=[embedding.tolist()],
-                        documents=[text[:500]],  # Store truncated text for reference
-                        metadatas=[{"timestamp": datetime.now().isoformat()}]
-                    )
-                except Exception as e:
-                    print(f"Cache write error: {e}")
-            
-            return embedding
-            
-        except Exception as e:
-            if attempt < retry_count - 1:
-                time.sleep(1)
-            else:
-                print(f"Embedding error after {retry_count} attempts: {e}")
-                return None
+    prompt = f"""
+You are an AML (Anti-Money Laundering) expert. Categorize these {len(keywords)} keywords into TWO categories:
 
+1. **AML_KEYWORDS**: Keywords related to regulations, compliance, entities, and regulatory concepts
+2. **TRANSACTION_PATTERNS**: Keywords related to specific transaction behaviors, patterns, and red flags
 
-def compute_red_flag_embeddings(red_flags_df: pd.DataFrame, use_cache: bool = True) -> np.ndarray:
-    """
-    Compute embeddings for all existing red flags with ChromaDB caching
-    This is much faster on subsequent runs as embeddings are cached
-    """
-    print("🧮 Computing embeddings for existing red flags...")
-    embeddings = []
-    
-    # Try to get all from cache first for maximum speed
-    if use_cache:
-        try:
-            collection = chroma_client.get_or_create_collection(
-                name="red_flags_library",
-                metadata={"hnsw:space": "cosine"}
-            )
-            
-            # Check if we already have all red flags cached
-            cache_count = collection.count()
-            if cache_count == len(red_flags_df):
-                print(f"✅ Found {cache_count} cached embeddings - loading instantly!")
-                flags_list = red_flags_df['Risk Indicator'].tolist()
-                
-                for text in flags_list:
-                    text_hash = str(hash(text.strip()))
-                    results = collection.get(ids=[text_hash])
-                    if results['embeddings'] and len(results['embeddings']) > 0:
-                        embeddings.append(np.array(results['embeddings'][0]))
-                    else:
-                        # Shouldn't happen, but fallback
-                        emb = get_embedding(text, use_cache=True)
-                        embeddings.append(emb if emb is not None else np.zeros(768))
-                
-                return np.array(embeddings)
-        except Exception as e:
-            print(f"Cache check error: {e}, computing fresh...")
-    
-    # Process with caching (first run or cache miss)
-    batch_size = 10
-    flags_list = red_flags_df['Risk Indicator'].tolist()
-    
-    for i in tqdm(range(0, len(flags_list), batch_size), desc="Computing embeddings"):
-        batch = flags_list[i:i+batch_size]
-        
-        for text in batch:
-            emb = get_embedding(text, use_cache=use_cache)
-            if emb is not None:
-                embeddings.append(emb)
-                
-                # Also store in red_flags_library collection
-                if use_cache:
-                    try:
-                        collection = chroma_client.get_or_create_collection(
-                            name="red_flags_library",
-                            metadata={"hnsw:space": "cosine"}
-                        )
-                        text_hash = str(hash(text.strip()))
-                        collection.upsert(
-                            ids=[text_hash],
-                            embeddings=[emb.tolist()],
-                            documents=[text],
-                            metadatas=[{"source": "existing_library"}]
-                        )
-                    except Exception as e:
-                        pass  # Don't fail on cache write errors
-            else:
-                embeddings.append(np.zeros(768))
-            time.sleep(0.05)  # Reduced rate limiting with batching
-    
-    return np.array(embeddings)
+Keywords to categorize:
+{chr(10).join([f"{i+1}. {kw}" for i, kw in enumerate(keywords)])}
 
+Return ONLY a JSON object with this exact structure:
+{{
+    "AML_KEYWORDS": ["keyword1", "keyword2", ...],
+    "TRANSACTION_PATTERNS": ["pattern1", "pattern2", ...]
+}}
 
-def extract_entities(text: str) -> Dict[str, List[str]]:
-    """
-    Extract named entities using spaCy NER
-    Returns: Dict with entity types and their values
-    """
-    doc = nlp(text[:10000])  # Limit text length for performance
-    
-    entities = {
-        'PERSON': [],
-        'ORG': [],
-        'GPE': [],  # Geopolitical entities (countries, cities)
-        'MONEY': [],
-        'DATE': []
-    }
-    
-    for ent in doc.ents:
-        if ent.label_ in entities:
-            entities[ent.label_].append(ent.text)
-    
-    # Deduplicate and limit
-    for key in entities:
-        entities[key] = list(set(entities[key]))[:10]  # Top 10 unique entities
-    
-    return entities
-
-
-def translate_french_content(text: str, source: str) -> str:
-    """Translate French content to English (for AMF source)"""
-    if source.upper() != 'AMF':
-        return text
+Ensure every keyword is assigned to exactly ONE category.
+"""
     
     try:
-        # Detect if content has significant French text
-        french_indicators = ['le ', 'la ', 'les ', 'des ', 'une ', 'du ', 'de la ', 'autorité']
-        french_count = sum(1 for indicator in french_indicators if indicator in text.lower())
+        model = genai.GenerativeModel(MODEL_NAME)
+        response = model.generate_content(prompt)
         
-        if french_count < 3:  # Already mostly English
-            return text
+        # Parse JSON from response
+        response_text = response.text.strip()
+        if response_text.startswith('```json'):
+            response_text = response_text[7:]
+        if response_text.endswith('```'):
+            response_text = response_text[:-3]
         
-        # Translate in chunks (API limit is 5000 chars)
-        chunk_size = 4500
-        chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+        categorized = json.loads(response_text.strip())
         
-        translated_chunks = []
-        for chunk in chunks[:5]:  # Limit to first 5 chunks to avoid rate limits
-            try:
-                translated = translator.translate(chunk)
-                translated_chunks.append(translated)
-                time.sleep(0.5)  # Rate limiting
-            except:
-                translated_chunks.append(chunk)  # Keep original on error
+        # Save categorized keywords
+        with open('data/categorized_keywords.json', 'w', encoding='utf-8') as f:
+            json.dump(categorized, f, indent=2, ensure_ascii=False)
         
-        return ' '.join(translated_chunks)
+        print(f"✓ Categorized {len(keywords)} keywords:")
+        print(f"  - AML Keywords: {len(categorized['AML_KEYWORDS'])}")
+        print(f"  - Transaction Patterns: {len(categorized['TRANSACTION_PATTERNS'])}")
+        
+        return categorized
+    
     except Exception as e:
-        print(f"  ⚠️  Translation failed: {str(e)[:50]}")
-        return text
+        print(f"✗ Error categorizing keywords: {e}")
+        return None
 
-
-def get_surrounding_context(publications: List[Dict], current_idx: int, window: int = 2) -> str:
-    """
-    Get context from surrounding publications (same source, nearby dates)
-    Helps understand broader regulatory trends
-    """
-    current_pub = publications[current_idx]
-    context_pubs = []
+def create_extraction_prompt(
+    document_content: str,
+    existing_red_flags: List[Dict],
+    aml_keywords: List[str],
+    transaction_patterns: List[str],
+    source_link: str = "",
+    doc_date: str = ""
+) -> str:
+    """Create the perfect prompt for Gemini 2.5 Pro"""
     
-    # Get publications from same source within window
-    for i in range(max(0, current_idx - window), min(len(publications), current_idx + window + 1)):
-        if i == current_idx:
-            continue
-        
-        pub = publications[i]
-        if pub['source'] == current_pub['source']:
-            context_pubs.append(pub)
+    # Show ALL existing red flags for proper matching
+    red_flags_summary = "\n".join([
+        f"ID {rf.get('ID', 'N/A')}: {rf['Risk Indicator']}"
+        for rf in existing_red_flags  # Show ALL, not just sample
+    ])
     
-    if not context_pubs:
-        return ""
-    
-    # Build context summary
-    context_text = "Related publications context:\n"
-    for pub in context_pubs[:3]:  # Max 3 for brevity
-        context_text += f"- {pub['date']}: {pub['title'][:80]}...\n"
-    
-    return context_text
+    prompt = f"""
+You are an expert AML (Anti-Money Laundering) analyst specializing in identifying financial crime red flags from regulatory documents.
 
+**YOUR TASK:**
+Analyze the regulatory document below and extract ALL AML red flags, suspicious activity indicators, and money laundering typologies mentioned.
 
-def get_expanded_paragraph_context(content: str, paragraph: str, context_sentences: int = 3) -> str:
-    """
-    Extract expanded context around the paragraph
-    Includes surrounding sentences for better understanding
-    """
-    if not paragraph or paragraph not in content:
-        return paragraph
-    
-    # Find paragraph position
-    start_idx = content.find(paragraph)
-    if start_idx == -1:
-        return paragraph
-    
-    # Get text before and after
-    before_text = content[:start_idx]
-    after_text = content[start_idx + len(paragraph):]
-    
-    # Split into sentences (rough approximation)
-    before_sentences = re.split(r'[.!?]\s+', before_text)[-context_sentences:]
-    after_sentences = re.split(r'[.!?]\s+', after_text)[:context_sentences]
-    
-    # Combine
-    expanded = ' '.join(before_sentences) + ' ' + paragraph + ' ' + ' '.join(after_sentences)
-    expanded = ' '.join(expanded.split())  # Clean whitespace
-    
-    return expanded[:800]  # Limit length
+**DOCUMENT TO ANALYZE:**
+---
+{document_content[:50000]}  # Limit to ~50K chars to fit in context
+---
 
+**REFERENCE MATERIALS:**
 
-def find_similar_red_flags(extracted_text: str, similarity_threshold: float = 0.60) -> List[Dict]:
-    """Find similar existing red flags using semantic similarity"""
-    global existing_red_flags_embeddings, existing_red_flags_data
-    
-    if existing_red_flags_embeddings is None or existing_red_flags_data is None:
-        return []
-    
-    query_emb = get_embedding(extracted_text)
-    if query_emb is None:
-        return []
-    
-    query_emb = query_emb.reshape(1, -1)
-    similarities = cosine_similarity(query_emb, existing_red_flags_embeddings)[0]
-    
-    matches = []
-    for idx, score in enumerate(similarities):
-        if score >= similarity_threshold:
-            red_flag_id = int(existing_red_flags_data.iloc[idx]['ID'])
-            red_flag_text = existing_red_flags_data.iloc[idx]['Risk Indicator']
-            matches.append({
-                'id': red_flag_id,
-                'similarity': float(score),
-                'text': red_flag_text
-            })
-    
-    matches.sort(key=lambda x: x['similarity'], reverse=True)
-    return matches
+**EXISTING RED FLAGS DATABASE - YOU MUST COMPARE AGAINST THESE:**
+{red_flags_summary}
 
+**MATCHING EXAMPLES** (how to map document content to existing IDs - USE VARIETY):
+- "Forex/foreign exchange" → ID 52
+- "Structuring/avoiding thresholds" → ID 261, 847, 850, 1354
+- "High-risk countries/jurisdictions" → ID 306, 368, 871, 1388
+- "Wire transfers/remittances" → ID 63, 857, 860, 862, 865, 866, 1295
+- "Cash deposits/withdrawals" → ID 1, 27, 374
+- "Account activity inconsistent" → ID 6, 816, 819, 829, 1460
+- "Third party transactions" → ID 317, 463, 951, 1271, 1272
+- "Hidden relationships" → ID 63, 966, 1036, 1115, 1625
+- "Suspicious outflows" → ID 1691
+- "Business transactions" → ID 245, 1057
+- "Cards/ATM anomalies" → ID 83, 984, 1082
+- "Flow through/layering" → ID 1, 317, 437, 644, 687, 863, 1335
+- "Frequent transfers" → ID 829, 1129, 1309
 
-def generalize_red_flag(specific_red_flag: str) -> str:
-    """Convert specific red flag to generic description"""
-    prompt = f"""Convert this specific red flag into a generic, reusable red flag pattern description.
+**IMPORTANT**: Don't default to ID 52 or 1691 for everything! Use the full range of IDs above!
 
-Specific red flag: "{specific_red_flag}"
+**AML Keywords to Look For:**
+{', '.join(aml_keywords[:50])}
 
-Make it generic by:
-1. Remove specific entities/names (e.g., "Houthis" → "entity", "Sinaloa Cartel" → "criminal organization")
-2. Focus on the behavioral pattern, not the specific case
-3. Keep it concise (under 100 characters)
-4. Make it applicable to similar situations
+**Transaction Pattern Keywords to Look For:**
+{', '.join(transaction_patterns[:50])}
 
-Return ONLY the generic description, no other text."""
+**EXTRACTION RULES:**
 
-    try:
-        response = models['gemini-2.0-flash-lite'].generate_content(
-            prompt,
-            generation_config={'temperature': 0.3, 'max_output_tokens': 150},
-            request_options={'timeout': 10}
-        )
-        generic = response.text.strip().strip('"\'')
-        return generic if len(generic) < 150 else specific_red_flag[:100]
-    except:
-        return specific_red_flag[:100]
+1. **Multiple Paragraphs**: Scan the ENTIRE document. Each paragraph can contain multiple red flags.
 
+2. **What to Extract**:
+   - Specific transaction patterns described
+   - Behavioral red flags mentioned
+   - Money laundering typologies explained
+   - Suspicious activity indicators listed
+   - Case study examples of illicit behavior
+   - Regulatory enforcement findings about AML failures
 
-def calculate_confidence_score(red_flag: str, paragraph: str, keywords: List[str], 
-                               model_agreement: float, similarity_score: float) -> float:
-    """
-    Calculate confidence score (0-100) based on multiple factors:
-    1. Model agreement (0-1): How many models agreed on this extraction
-    2. Similarity score (0-1): Highest similarity to existing red flags
-    3. Keyword density (0-1): Ratio of keywords in paragraph
-    4. Entity presence (0-1): Presence of named entities
-    5. Length quality (0-1): Optimal length score
-    """
-    scores = []
-    
-    # 1. Model agreement (weight: 35%)
-    scores.append(('model_agreement', model_agreement * 35))
-    
-    # 2. Similarity score (weight: 25%)
-    scores.append(('similarity', similarity_score * 25))
-    
-    # 3. Keyword density (weight: 20%)
-    para_lower = paragraph.lower()
-    keyword_count = sum(1 for kw in keywords if kw.lower() in para_lower)
-    keyword_density = min(keyword_count / 5, 1.0)  # Max at 5 keywords
-    scores.append(('keywords', keyword_density * 20))
-    
-    # 4. Entity presence (weight: 10%)
-    entities = extract_entities(red_flag)
-    entity_score = min(sum(len(v) for v in entities.values()) / 3, 1.0)
-    scores.append(('entities', entity_score * 10))
-    
-    # 5. Length quality (weight: 10%)
-    length = len(red_flag)
-    if 50 <= length <= 120:
-        length_score = 1.0
-    elif 30 <= length <= 150:
-        length_score = 0.7
-    else:
-        length_score = 0.4
-    scores.append(('length', length_score * 10))
-    
-    total_score = sum(s[1] for s in scores)
-    return round(total_score, 2)
+3. **What NOT to Extract**:
+   - Generic compliance requirements
+   - Background information about the organization
+   - Procedural steps without red flag context
+   - Standard definitions without suspicious indicators
 
+4. **Coverage Analysis**: For each red flag found, determine if it's:
+   - **COVERED**: Already represented in existing red flags database (similar meaning)
+   - **NEW**: Not covered by existing red flags (novel indicator)
+   - **PARTIAL**: Partially covered but adds new nuance
 
-def extract_red_flags_ensemble(content: str, title: str, context: str = "") -> Dict:
-    """
-    Extract red flags using ensemble of multiple Gemini models
-    Returns consensus with confidence scores
-    """
-    
-    base_prompt = f"""You are an expert AML analyst. Extract ONLY behavioral red flags from this document.
+**OUTPUT FORMAT:**
 
-**Document:** {title}
+Return a JSON array where each element represents ONE red flag extracted:
 
-{context}
-
-**Content:**
-{content[:3500]}
-
-**CRITICAL INSTRUCTIONS:**
-1. Extract ONLY suspicious behaviors, transaction patterns, or criminal activities
-2. DO NOT extract: compliance requirements, regulatory obligations, procedural rules, or generic statements
-3. Each red flag must be a complete sentence describing WHAT someone does that is suspicious
-4. Focus on: unusual transactions, suspicious patterns, evasion tactics, laundering behaviors, fraud schemes
-5. Category must be EXACTLY "AML" or "Transaction Patterns"
-6. Keep red flags concise (under 150 characters preferred)
-
-**GOOD Examples (extract these types):**
-- "Customer makes frequent overseas transfers not in line with their financial profile."
-- "Multiple transactions conducted below the reporting threshold within a short period."
-- "Funds deposited into several accounts and then consolidated before transferring abroad."
-
-**BAD Examples (DO NOT extract):**
-- "Must report suspicious transactions" (requirement, not behavior)
-- "Failure to implement compliance program" (compliance issue, not suspicious behavior)
-- "Register as money services business" (regulatory requirement)
-
-**JSON Format:**
 [
   {{
-    "red_flag": "Complete behavioral red flag sentence",
-    "paragraph": "Paragraph containing this red flag with surrounding context",
-    "category": "AML" or "Transaction Patterns"
-  }}
+    "source_link": "URL from document if available",
+    "extracted_red_flag": "COPY one complete sentence verbatim from the paragraph below (the key red flag sentence)",
+    "associated_paragraph": "COPY the complete paragraph containing the sentence above (must include the extracted_red_flag as a substring)",
+    "category": "AML or Transaction Patterns (ONLY these two options)",
+    "coverage_by_existing": "Comma-separated IDs from existing red flags if similar (e.g., '860, 1335') OR 'New: Generic red flag description' if completely new. Can have multiple like '860, New: Description, 1335'",
+    "coverage_status": "Fully Covered (all IDs) | Partially Covered (mix of IDs and New) | Not Covered (all New)"
+  }},
+  ...
 ]
 
-Return ONLY valid JSON array."""
+**CRITICAL EXTRACTION RULES:**
 
-    generation_config = {
-        'temperature': 0.25,
-        'top_p': 0.85,
-        'top_k': 15,
-        'max_output_tokens': 2048,
-    }
-    
-    # Call all models in parallel
-    def call_model(model_name):
-        try:
-            model = models[model_name]
-            response = model.generate_content(
-                base_prompt,
-                generation_config=generation_config,
-                request_options={'timeout': 30}
-            )
-            result_text = response.text.strip()
-            
-            # Extract JSON
-            if '```json' in result_text:
-                result_text = result_text.split('```json')[1].split('```')[0].strip()
-            elif '```' in result_text:
-                result_text = result_text.split('```')[1].split('```')[0].strip()
-            
-            red_flags = json.loads(result_text)
-            return {'model': model_name, 'success': True, 'red_flags': red_flags if isinstance(red_flags, list) else []}
-        except Exception as e:
-            return {'model': model_name, 'success': False, 'red_flags': [], 'error': str(e)[:50]}
-    
-    # Parallel execution
-    results_by_model = []
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(call_model, cfg['name']): cfg for cfg in MODEL_CONFIGS}
-        
-        for future in as_completed(futures):
-            result = future.result()
-            results_by_model.append(result)
-    
-    # Aggregate results - find consensus
-    all_red_flags = {}
-    
-    for result in results_by_model:
-        if not result['success']:
-            continue
-        
-        model_weight = next(cfg['weight'] for cfg in MODEL_CONFIGS if cfg['name'] == result['model'])
-        
-        for rf in result['red_flags']:
-            if not isinstance(rf, dict):
-                continue
-            
-            rf_text = rf.get('red_flag', '').strip()
-            if len(rf_text) < 25:
-                continue
-            
-            # Normalize for matching
-            rf_key = rf_text.lower()[:100]
-            
-            if rf_key not in all_red_flags:
-                all_red_flags[rf_key] = {
-                    'red_flag': rf_text,
-                    'paragraph': rf.get('paragraph', ''),
-                    'category': rf.get('category', 'AML'),
-                    'models_agreed': [result['model']],
-                    'agreement_weight': model_weight
-                }
-            else:
-                all_red_flags[rf_key]['models_agreed'].append(result['model'])
-                all_red_flags[rf_key]['agreement_weight'] += model_weight
-    
-    # Filter by consensus (at least 2 models or high weight model)
-    consensus_flags = []
-    for rf_data in all_red_flags.values():
-        num_models = len(rf_data['models_agreed'])
-        agreement_weight = rf_data['agreement_weight']
-        
-        # Keep if: 2+ models agreed OR single high-weight model (>=0.35)
-        if num_models >= 2 or agreement_weight >= 0.35:
-            # Calculate model agreement score (0-1)
-            model_agreement = min(agreement_weight / 0.6, 1.0)  # Normalize to max 0.6 weight
-            
-            rf_data['model_agreement'] = model_agreement
-            consensus_flags.append(rf_data)
-    
-    return {
-        'success': True,
-        'red_flags': consensus_flags,
-        'models_used': len(results_by_model),
-        'error': None
-    }
+1. **extracted_red_flag** (MUST BE A SENTENCE FROM THE PARAGRAPH):
+   - Extract ONE complete sentence or key phrase (10-25 words)
+   - MUST be copied VERBATIM from the associated_paragraph
+   - Should be the most important sentence that indicates the red flag
+   - Examples: "Failed to verify customer identity before opening accounts", "Large cash deposits inconsistent with business profile"
 
+2. **associated_paragraph** (MUST BE THE COMPLETE PARAGRAPH):
+   - Copy the ENTIRE paragraph where you found the extracted_red_flag sentence (50+ words)
+   - The extracted_red_flag MUST appear as a substring within this paragraph
+   - Include ALL surrounding sentences for full context
+   - This should be the complete regulatory text, enforcement finding, or violation description
 
-def clean_extracted_text(text: str) -> str:
-    """Clean and validate extracted text"""
-    if not text or not isinstance(text, str):
+3. **category** (STRICT):
+   - ONLY two allowed values: "AML" or "Transaction Patterns"
+   - AML = regulatory, compliance, entity-related risks
+   - Transaction Patterns = specific transaction behaviors and patterns
+
+4. **coverage_by_existing** (CRITICALLY IMPORTANT - USE DIVERSE IDS):
+   - **MATCH BROADLY ACROSS ALL 50 IDs**: Look through the ENTIRE database, not just 52 and 1691
+   - **Think conceptually**:
+     * If document mentions cash → consider IDs 1, 27, 261, 374, 847, 850, 1354
+     * If mentions accounts → consider IDs 6, 245, 816, 819, 829, 1057, 1460
+     * If mentions transfers → consider IDs 63, 317, 437, 644, 857, 860, 862, 863, 865, 866, 1295, 1309, 1335
+     * If mentions geography → consider IDs 83, 306, 368, 871, 965, 1388
+     * If mentions relationships → consider IDs 63, 951, 966, 1036, 1115, 1271, 1272, 1625
+   - **USE MULTIPLE IDs**: Many red flags match 3-5 existing IDs, not just 1-2
+   - Format examples:
+     * "6, 816, 1460" (account inconsistencies)
+     * "261, 847, 850, 1354, New: Crypto structuring"
+     * "306, 368, 871, 1388" (high-risk jurisdictions)
+   - **FORBIDDEN**: Stop using only ID 52 and 1691! Use the FULL range of available IDs!
+
+5. **coverage_status** (AUTO-LOGIC):
+   - "Fully Covered" = ALL entries are numeric IDs
+   - "Partially Covered" = BOTH IDs AND "New:" entries
+   - "Not Covered" = ONLY "New:" entries
+
+Return ONLY valid JSON array, no markdown formatting, no explanations.
+"""
+    
+    return prompt
+
+def get_source_link_from_manifest(doc_path: Path) -> str:
+    """Get the publication link from manifest.csv for a document"""
+    try:
+        # Get the organization and date folders
+        org_folder = doc_path.parts[-4] if len(doc_path.parts) >= 4 else None
+        date_folder = doc_path.parts[-3] if len(doc_path.parts) >= 3 else None
+        
+        if not org_folder or not date_folder:
+            return ""
+        
+        # Construct manifest path
+        manifest_path = Path('scraped_content') / org_folder / date_folder / 'manifest.csv'
+        
+        if not manifest_path.exists():
+            return ""
+        
+        # Read manifest
+        df_manifest = pd.read_csv(manifest_path)
+        
+        # Match by filename (the document filename should contain the title or date)
+        doc_filename = doc_path.stem  # without extension
+        
+        # Try to find matching row
+        for _, row in df_manifest.iterrows():
+            if 'Publication Link' in row and pd.notna(row['Publication Link']):
+                # Simple match - if this is the first/only match, use it
+                # You could add more sophisticated matching here
+                return str(row['Publication Link'])
+        
         return ""
-    
-    text = ' '.join(text.split())
-    text = re.sub(r'^\d+[\.\)]\s*', '', text)
-    text = re.sub(r'\s*\d+$', '', text)
-    
-    if text and not text.endswith(('.', '!', '?')):
-        text += '.'
-    
-    if text:
-        text = text[0].upper() + text[1:]
-    
-    return text.strip()
+    except Exception as e:
+        return ""
 
-
-def validate_category(category: str) -> str:
-    """Ensure category is only 'AML' or 'Transaction Patterns'"""
-    if not category or not isinstance(category, str):
-        return "AML"
+def clean_document_content(content: str) -> str:
+    """Remove metadata headers, labels, and duplicate lines from document"""
+    import re
     
-    category_clean = category.strip().upper()
+    lines = content.split('\n')
+    cleaned_lines = []
+    seen_lines = set()
     
-    if any(word in category_clean for word in ['TRANSACTION', 'PATTERN', 'FLOW', 'STRUCTUR', 'TRANSFER']):
-        return "Transaction Patterns"
-    else:
-        return "AML"
-
-
-def has_relevant_keywords(content: str, keywords: List[str], threshold: int = 3) -> bool:
-    """Check if content contains at least threshold number of keywords"""
-    content_lower = content.lower()
-    count = sum(1 for kw in keywords if kw.lower() in content_lower)
-    return count >= threshold
-
-
-def determine_coverage_status(matches: List[Dict], extracted_red_flag: str, 
-                              high_threshold: float = 0.75) -> Tuple[str, str, List[int]]:
-    """Determine coverage status and format coverage column"""
-    if not matches:
-        generic_flag = generalize_red_flag(extracted_red_flag)
-        coverage_text = f"New: {generic_flag}"
-        return (coverage_text, "Not Covered", [])
-    
-    high_matches = [m for m in matches if m['similarity'] >= high_threshold]
-    
-    if high_matches:
-        matched_ids = [m['id'] for m in high_matches[:3]]
-        coverage_text = ', '.join(str(id_) for id_ in matched_ids)
-        return (coverage_text, "Fully Covered", matched_ids)
-    else:
-        matched_ids = [m['id'] for m in matches[:3]]
-        generic_flag = generalize_red_flag(extracted_red_flag)
-        coverage_text = f"{', '.join(str(id_) for id_ in matched_ids)}, New: {generic_flag}"
-        return (coverage_text, "Partially Covered", matched_ids)
-
-
-def get_all_publications(year: int, month: int) -> List[Dict]:
-    """Gather all publications from scraped content"""
-    publications = []
-    scrapers = ['amf', 'dfs', 'fca', 'fed', 'fincen', 'fintrac', 'nca', 'ofac', 'sec']
-    
-    for scraper in scrapers:
-        scraper_dir = SCRAPED_CONTENT_DIR / scraper / f"{year}-{month:02d}"
-        if not scraper_dir.exists():
-            continue
-        
-        manifest_file = scraper_dir / 'manifest.csv'
-        if not manifest_file.exists():
-            continue
-        
-        with open(manifest_file, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                content = ""
-                
-                # Check html_text folder
-                html_dir = scraper_dir / 'html_text'
-                if html_dir.exists():
-                    for file in html_dir.glob('*.txt'):
-                        if row['Date'] in file.name:
-                            with open(file, 'r', encoding='utf-8', errors='ignore') as cf:
-                                content = cf.read()
-                            break
-                
-                # Check pdf_text folder
-                if not content:
-                    pdf_dir = scraper_dir / 'pdf_text'
-                    if pdf_dir.exists():
-                        for file in pdf_dir.glob('*.txt'):
-                            if row['Date'] in file.name:
-                                with open(file, 'r', encoding='utf-8', errors='ignore') as cf:
-                                    content = cf.read()
-                                break
-                
-                if content:
-                    publications.append({
-                        'source': scraper.upper(),
-                        'date': row['Date'],
-                        'title': row['Publication Title'],
-                        'link': row['Publication Link'],
-                        'content': content
-                    })
-    
-    return publications
-
-
-def process_publications(publications: List[Dict], keywords: List[str]) -> List[Dict]:
-    """Process publications with all enhancements"""
-    results = []
-    global_seen_flags: Set[str] = set()
-    
-    # Filter by keyword relevance
-    print(f"\n🔍 Filtering by keyword relevance...")
-    relevant_pubs = [p for p in publications if has_relevant_keywords(p['content'], keywords, threshold=3)]
-    print(f"  ✓ {len(relevant_pubs)}/{len(publications)} publications contain 3+ keywords")
-    
-    # Translate AMF content
-    print(f"\n🌐 Translating French content...")
-    for pub in relevant_pubs:
-        if pub['source'] == 'AMF':
-            pub['content'] = translate_french_content(pub['content'], pub['source'])
-    print(f"  ✓ Translation complete")
-    
-    print(f"\n🤖 Analyzing {len(relevant_pubs)} relevant publications with multi-model ensemble...\n")
-    
-    for idx, pub in enumerate(tqdm(relevant_pubs, desc="Processing publications")):
-        print(f"\n{'='*80}")
-        print(f"Source: {pub['source']} | Date: {pub['date']}")
-        print(f"Title: {pub['title'][:100]}...")
-        
-        # Get surrounding context
-        context = get_surrounding_context(publications, idx, window=2)
-        
-        # Extract with ensemble
-        try:
-            analysis = extract_red_flags_ensemble(pub['content'], pub['title'], context)
-        except KeyboardInterrupt:
-            print(f"\n⚠️  Interrupted. {len(results)} results collected.")
-            raise
-        except Exception as e:
-            print(f"  ⚠️  Skipped: {str(e)[:60]}")
-            continue
-        
-        if not analysis or not analysis['success']:
-            print(f"  ⚠️  No valid extraction")
-            continue
-        
-        red_flags_found = analysis['red_flags']
-        print(f"  ✓ Extracted {len(red_flags_found)} red flags (consensus from {analysis['models_used']} models)")
-        
-        added_count = 0
-        for rf in red_flags_found:
-            # Clean text
-            red_flag_text = clean_extracted_text(rf['red_flag'])
-            paragraph_text = clean_extracted_text(rf['paragraph'])
-            category = validate_category(rf['category'])
-            
-            # Validation filters
-            if len(red_flag_text) < 25:
-                continue
-            if not red_flag_text.endswith(('.', '!', '?')):
-                continue
-            
-            # Filter compliance language
-            skip_phrases = ['must ', 'should ', 'required to', 'failure to', 'obligat', 
-                          'register as', 'implement a']
-            if any(phrase in red_flag_text.lower() for phrase in skip_phrases):
-                continue
-            
-            # Global deduplication
-            flag_key = red_flag_text.lower().strip()
-            if flag_key in global_seen_flags:
-                continue
-            global_seen_flags.add(flag_key)
-            
-            # Expand paragraph context
-            expanded_paragraph = get_expanded_paragraph_context(pub['content'], paragraph_text, context_sentences=2)
-            
-            # Extract entities
-            entities = extract_entities(red_flag_text)
-            entities_str = ', '.join([f"{k}:{','.join(v[:2])}" for k, v in entities.items() if v])
-            
-            # Find similar flags
-            matches = find_similar_red_flags(red_flag_text, similarity_threshold=0.60)
-            best_similarity = matches[0]['similarity'] if matches else 0.0
-            
-            # Calculate confidence score
-            confidence = calculate_confidence_score(
-                red_flag_text, 
-                expanded_paragraph, 
-                keywords, 
-                rf.get('model_agreement', 0.5),
-                best_similarity
-            )
-            
-            # Determine coverage
-            coverage_text, coverage_status, matched_ids = determine_coverage_status(
-                matches, red_flag_text, high_threshold=0.75
-            )
-            
-            result_row = {
-                'Source Link': pub['link'],
-                'Date': pub['date'],
-                'Extracted Red Flag': red_flag_text,
-                'Associated Paragraph': expanded_paragraph,
-                'Category': category,
-                'Coverage by Existing Red Flag': coverage_text,
-                'Coverage Status': coverage_status,
-                'Confidence Score': confidence,
-                'Named Entities': entities_str[:200] if entities_str else 'None',
-                'Model Agreement': f"{rf.get('model_agreement', 0.5):.2f}",
-                'Similarity Score': f"{best_similarity:.2f}"
-            }
-            results.append(result_row)
-            added_count += 1
-        
-        if added_count > 0:
-            print(f"  ✓ Added {added_count} unique red flags")
-    
-    return results
-
-
-def export_to_excel(results: List[Dict], year: int, month: int) -> str:
-    """Export results to Excel with enhanced columns"""
-    output_file = OUTPUT_DIR / f"red_flags_analysis_enhanced_{year}_{month:02d}.xlsx"
-    
-    df = pd.DataFrame(results)
-    
-    # Column order - original 7 + new analytics columns
-    column_order = [
-        'Source Link',
-        'Date',
-        'Extracted Red Flag',
-        'Associated Paragraph',
-        'Category',
-        'Coverage by Existing Red Flag',
-        'Coverage Status',
-        'Confidence Score',
-        'Named Entities',
-        'Model Agreement',
-        'Similarity Score'
+    # Patterns to skip (metadata headers)
+    skip_patterns = [
+        r'^Warning\s*$',
+        r'^Savings protection\s*$',
+        r'^News\s*$',
+        r'^Press Release\s*$',
+        r'^Enforcement\s*$',
+        r'^\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\s*$',
+        r'^\d{4}-\d{2}-\d{2}\s*$',
+        r'^Published:\s*',
+        r'^Date:\s*',
     ]
     
-    df = df[column_order]
-    
-    # Sort by confidence score (highest first)
-    df = df.sort_values('Confidence Score', ascending=False)
-    
-    # Export to Excel
-    with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name='Red Flags Analysis', index=False)
+    for line in lines:
+        line = line.strip()
         
-        # Adjust column widths
-        worksheet = writer.sheets['Red Flags Analysis']
-        worksheet.column_dimensions['A'].width = 50  # Source Link
-        worksheet.column_dimensions['B'].width = 12  # Date
-        worksheet.column_dimensions['C'].width = 60  # Extracted Red Flag
-        worksheet.column_dimensions['D'].width = 80  # Associated Paragraph
-        worksheet.column_dimensions['E'].width = 20  # Category
-        worksheet.column_dimensions['F'].width = 40  # Coverage
-        worksheet.column_dimensions['G'].width = 18  # Coverage Status
-        worksheet.column_dimensions['H'].width = 15  # Confidence Score
-        worksheet.column_dimensions['I'].width = 40  # Named Entities
-        worksheet.column_dimensions['J'].width = 15  # Model Agreement
-        worksheet.column_dimensions['K'].width = 15  # Similarity Score
+        # Skip empty lines
+        if not line:
+            continue
+        
+        # Skip metadata headers
+        if any(re.match(pattern, line, re.IGNORECASE) for pattern in skip_patterns):
+            continue
+        
+        # Skip very short lines (likely headers)
+        if len(line) < 20 and line[0].isupper() and not line.endswith('.'):
+            continue
+        
+        # Skip duplicate lines (exact duplicates)
+        if line.lower() in seen_lines:
+            continue
+        
+        seen_lines.add(line.lower())
+        cleaned_lines.append(line)
     
-    return str(output_file)
+    return '\n'.join(cleaned_lines)
 
+def extract_red_flags_from_document(
+    doc_path: Path,
+    existing_red_flags: List[Dict],
+    aml_keywords: List[str],
+    transaction_patterns: List[str],
+    retry_count: int = 2
+) -> List[Dict]:
+    """Extract red flags from a single document using Gemini"""
+    
+    try:
+        # Read document content
+        with open(doc_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        # Skip if too short
+        if len(content) < 200:
+            return []
+        
+        # Clean document content (remove metadata headers and duplicates)
+        content = clean_document_content(content)
+        
+        # Skip if cleaned content is too short
+        if len(content) < 100:
+            return []
+        
+        # Get source link from manifest
+        source_link = get_source_link_from_manifest(doc_path)
+        doc_date = doc_path.parts[-3] if len(doc_path.parts) >= 3 else 'unknown'
+        
+        # Create prompt
+        prompt = create_extraction_prompt(content, existing_red_flags, aml_keywords, transaction_patterns, source_link, doc_date)
+        
+        # Call Gemini
+        model = genai.GenerativeModel(MODEL_NAME)
+        
+        for attempt in range(retry_count):
+            try:
+                response = model.generate_content(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.1,  # Low temperature for consistent extraction
+                        max_output_tokens=8000,
+                    )
+                )
+                
+                # Parse JSON response
+                response_text = response.text.strip()
+                if response_text.startswith('```json'):
+                    response_text = response_text[7:]
+                if response_text.endswith('```'):
+                    response_text = response_text[:-3]
+                
+                red_flags = json.loads(response_text.strip())
+                
+                # Add metadata and rename keys to match desired format
+                for rf in red_flags:
+                    # Use the source link we got from manifest
+                    rf['Source Link'] = source_link if source_link else rf.get('source_link', '')
+                    rf['Date'] = doc_date
+                    rf['Extracted Red Flag'] = rf.pop('extracted_red_flag', '')
+                    rf['Associated Paragraph'] = rf.pop('associated_paragraph', '')
+                    rf['Category'] = rf.pop('category', 'AML')
+                    rf['Coverage by Existing Red Flag'] = rf.pop('coverage_by_existing', 'New: Unspecified risk')
+                    rf['Coverage Status'] = rf.pop('coverage_status', 'Not Covered')
+                    
+                    # Remove any extra keys
+                    keys_to_remove = [k for k in list(rf.keys()) if k not in [
+                        'Source Link', 'Date', 'Extracted Red Flag', 'Associated Paragraph', 
+                        'Category', 'Coverage by Existing Red Flag', 'Coverage Status'
+                    ]]
+                    for k in keys_to_remove:
+                        rf.pop(k, None)
+                
+                return red_flags
+            
+            except json.JSONDecodeError as e:
+                print(f"  ⚠ JSON parse error (attempt {attempt + 1}): {e}")
+                if attempt == retry_count - 1:
+                    return []
+                time.sleep(2)
+            
+            except Exception as e:
+                print(f"  ⚠ API error (attempt {attempt + 1}): {e}")
+                if attempt == retry_count - 1:
+                    return []
+                time.sleep(5)
+        
+        return []
+    
+    except Exception as e:
+        print(f"  ✗ Error processing {doc_path.name}: {e}")
+        return []
 
-def main():
-    parser = argparse.ArgumentParser(description='Enhanced red flag extraction with ensemble models')
-    parser.add_argument('--year', type=int, required=True, help='Year (e.g., 2025)')
-    parser.add_argument('--month', type=int, required=True, help='Month (1-12)')
-    args = parser.parse_args()
+def process_all_documents(test_mode=False, test_limit=5, year_month_filter=None):
+    """Process all 823 documents across 9 sources
     
-    year = args.year
-    month = args.month
+    Args:
+        test_mode: If True, only process test_limit files for testing
+        test_limit: Number of files to process in test mode
+        year_month_filter: Filter documents by year-month (e.g., '2025-09')
+    """
     
-    print("="*80)
-    print("ENHANCED RED FLAG EXTRACTION SYSTEM v2.0")
-    print("Multi-Model Ensemble + NER + Context Enhancement")
-    print("="*80)
-    print(f"Models: {', '.join(cfg['name'] for cfg in MODEL_CONFIGS)}")
-    print(f"Target: {year}-{month:02d}")
-    print(f"Output: {OUTPUT_DIR}")
-    print("="*80)
+    print("\n" + "="*70)
+    print("🔍 COMPREHENSIVE RED FLAG EXTRACTION SYSTEM")
+    if test_mode:
+        print(f"   🧪 TEST MODE: Processing only {test_limit} files")
+    if year_month_filter:
+        print(f"   📅 FILTER: {year_month_filter}")
+    print("   Powered by Gemini 2.5 Pro")
+    print("="*70)
     
-    # Load resources
-    print("\n📚 Loading resources...")
-    keywords = load_keywords()
-    print(f"  ✓ Loaded {len(keywords)} keywords")
+    # Step 1: Categorize keywords (or load if already done)
+    print("\n📋 Step 1: Categorizing 166 keywords...")
     
-    global existing_red_flags_data, existing_red_flags_embeddings
-    existing_red_flags_data = load_existing_red_flags()
-    print(f"  ✓ Loaded {len(existing_red_flags_data)} existing red flags")
+    categorized_file = 'data/categorized_keywords.json'
+    if os.path.exists(categorized_file):
+        print("✓ Loading existing categorization...")
+        with open(categorized_file, 'r', encoding='utf-8') as f:
+            categorized = json.load(f)
+        print(f"✓ Loaded {len(categorized['AML_KEYWORDS'])} AML keywords and {len(categorized['TRANSACTION_PATTERNS'])} transaction patterns")
+    else:
+        categorized = categorize_keywords()
+        if not categorized:
+            print("✗ Failed to categorize keywords. Exiting.")
+            return
     
-    # Compute embeddings
-    existing_red_flags_embeddings = compute_red_flag_embeddings(existing_red_flags_data)
-    print(f"  ✓ Computed semantic embeddings")
+    aml_keywords = categorized['AML_KEYWORDS']
+    transaction_patterns = categorized['TRANSACTION_PATTERNS']
     
-    # Gather publications
-    print("\n📄 Gathering publications...")
-    publications = get_all_publications(year, month)
-    print(f"  ✓ Found {len(publications)} publications")
+    # Step 2: Load existing red flags
+    print("\n📚 Step 2: Loading existing red flags database...")
+    df_existing = pd.read_csv('data/existing_red_flags.csv')
+    existing_red_flags = df_existing.to_dict('records')
+    print(f"✓ Loaded {len(existing_red_flags)} existing red flags")
     
-    if len(publications) == 0:
-        print("\n⚠️  No publications found.")
-        return
+    # Step 3: Find all documents
+    print("\n🔎 Step 3: Scanning for documents...")
+    scraped_dir = Path('scraped_content')
     
-    # Show source breakdown
-    sources = {}
-    for pub in publications:
-        sources[pub['source']] = sources.get(pub['source'], 0) + 1
-    print("\n  By source:")
-    for source, count in sorted(sources.items()):
-        print(f"    • {source}: {count}")
+    # Find all txt files (html_text and pdf_text)
+    documents = []
+    for org_dir in scraped_dir.iterdir():
+        if org_dir.is_dir():
+            # Find html_text and pdf_text files
+            html_files = list(org_dir.rglob('html_text/*.txt'))
+            pdf_files = list(org_dir.rglob('pdf_text/*.txt'))
+            documents.extend(html_files + pdf_files)
     
-    # Process with enhancements
-    results = process_publications(publications, keywords)
+    print(f"✓ Found {len(documents)} documents to process")
     
-    if not results:
-        print("\n⚠️  No red flags extracted.")
-        return
+    # Filter by year-month if specified
+    if year_month_filter:
+        filtered_docs = []
+        for doc in documents:
+            # Extract date from path (e.g., scraped_content/amf/2025-09/...)
+            doc_date = doc.parts[-3] if len(doc.parts) >= 3 else None
+            if doc_date == year_month_filter:
+                filtered_docs.append(doc)
+        
+        print(f"📅 Filtered to {len(filtered_docs)} documents for {year_month_filter}")
+        documents = filtered_docs
+        
+        if len(documents) == 0:
+            print(f"⚠ No documents found for {year_month_filter}")
+            return
     
-    # Export
-    print("\n📊 Exporting to Excel...")
-    output_file = export_to_excel(results, year, month)
+    # Test mode: limit to first N files
+    if test_mode:
+        documents = documents[:test_limit]
+        print(f"🧪 Test mode: Processing only {len(documents)} files")
     
-    # Summary statistics
-    fully_covered = sum(1 for r in results if r['Coverage Status'] == 'Fully Covered')
-    partially_covered = sum(1 for r in results if r['Coverage Status'] == 'Partially Covered')
-    not_covered = sum(1 for r in results if r['Coverage Status'] == 'Not Covered')
+    # Show breakdown by organization
+    org_counts = {}
+    for doc in documents:
+        org = doc.parts[-4] if len(doc.parts) >= 4 else 'unknown'
+        org_counts[org] = org_counts.get(org, 0) + 1
     
-    avg_confidence = sum(r['Confidence Score'] for r in results) / len(results)
-    high_confidence = sum(1 for r in results if r['Confidence Score'] >= 70)
+    print("\n📊 Documents by organization:")
+    for org, count in sorted(org_counts.items(), key=lambda x: x[1], reverse=True):
+        print(f"   {org.upper():12s}: {count:4d} documents")
     
-    print("\n" + "="*80)
-    print("✅ EXTRACTION COMPLETE")
-    print("="*80)
-    print(f"Total Red Flags: {len(results)}")
-    print(f"\nCoverage Breakdown:")
-    print(f"  • Fully Covered: {fully_covered}")
-    print(f"  • Partially Covered: {partially_covered}")
-    print(f"  • Not Covered: {not_covered}")
-    print(f"\nConfidence Metrics:")
-    print(f"  • Average Confidence: {avg_confidence:.1f}/100")
-    print(f"  • High Confidence (≥70): {high_confidence} ({high_confidence/len(results)*100:.0f}%)")
-    print(f"\nOutput: {output_file}")
-    print("="*80)
+    # Step 4: Process documents
+    print(f"\n⚡ Step 4: Processing {len(documents)} documents with Gemini 2.5 Pro...")
+    print("   (This will take some time - processing in batches with rate limiting)")
+    
+    all_red_flags = []
+    processed_count = 0
+    error_count = 0
+    skipped_count = 0
+    
+    batch_size = 50  # Process in larger batches for efficiency
+    total_batches = (len(documents) + batch_size - 1) // batch_size
+    
+    # Check for existing progress
+    progress_file = 'output/red_flags_progress.csv'
+    processed_files = set()
+    if os.path.exists(progress_file):
+        try:
+            df_existing = pd.read_csv(progress_file)
+            if 'source_file' in df_existing.columns:
+                all_red_flags = df_existing.to_dict('records')
+                processed_files = set(df_existing['source_file'].unique())
+                print(f"\n✓ Resuming from previous run: {len(processed_files)} files already processed")
+        except:
+            pass
+    
+    # Create progress bar for all documents
+    with tqdm(total=len(documents), desc="Processing Documents", unit="doc", 
+              bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]') as pbar:
+        
+        for batch_num in range(total_batches):
+            start_idx = batch_num * batch_size
+            end_idx = min(start_idx + batch_size, len(documents))
+            batch_docs = documents[start_idx:end_idx]
+            
+            pbar.set_description(f"📦 Batch {batch_num + 1}/{total_batches}")
+            
+            batch_red_flags = 0
+            for doc in batch_docs:
+                doc_relative = str(doc.relative_to('scraped_content'))
+                
+                # Skip if already processed
+                if doc_relative in processed_files:
+                    pbar.update(1)
+                    pbar.set_postfix({"flags": len(all_red_flags), "status": "skipped"})
+                    continue
+                
+                try:
+                    red_flags = extract_red_flags_from_document(
+                        doc, existing_red_flags, aml_keywords, transaction_patterns
+                    )
+                    
+                    if red_flags:
+                        all_red_flags.extend(red_flags)
+                        processed_count += 1
+                        batch_red_flags += len(red_flags)
+                        pbar.set_postfix({
+                            "flags": len(all_red_flags), 
+                            "current": f"{len(red_flags)} flags",
+                            "status": "✓"
+                        })
+                    else:
+                        skipped_count += 1
+                        pbar.set_postfix({"flags": len(all_red_flags), "status": "no flags"})
+                    
+                    pbar.update(1)
+                    
+                    # Rate limiting (shorter for Flash model)
+                    time.sleep(0.5)
+                
+                except KeyboardInterrupt:
+                    print("\n\n⚠ Interrupted by user. Saving progress...")
+                    raise
+                except Exception as e:
+                    error_count += 1
+                    pbar.set_postfix({"flags": len(all_red_flags), "status": "✗ error"})
+                    pbar.update(1)
+            
+            # Save progress after each batch (Excel only)
+            if all_red_flags:
+                df_progress = pd.DataFrame(all_red_flags)
+                # Ensure columns are in the correct order (only required columns)
+                column_order = [
+                    'Source Link', 'Date', 'Extracted Red Flag', 'Associated Paragraph', 
+                    'Category', 'Coverage by Existing Red Flag', 'Coverage Status'
+                ]
+                # Only keep columns that exist
+                existing_cols = [col for col in column_order if col in df_progress.columns]
+                df_progress = df_progress[existing_cols]
+                # Save as Excel only
+                progress_excel = 'output/red_flags_progress.xlsx'
+                df_progress.to_excel(progress_excel, index=False, engine='openpyxl')
+                tqdm.write(f"      💾 Batch {batch_num + 1} complete: {batch_red_flags} flags extracted, {len(all_red_flags)} total saved")
 
+    
+    # Step 5: Save results
+    print("\n💾 Step 5: Saving results...")
+    
+    if all_red_flags:
+        df_results = pd.DataFrame(all_red_flags)
+        
+        # Ensure columns are in the correct order (only required columns)
+        column_order = [
+            'Source Link', 'Date', 'Extracted Red Flag', 'Associated Paragraph', 
+            'Category', 'Coverage by Existing Red Flag', 'Coverage Status'
+        ]
+        # Only keep columns that exist
+        existing_cols = [col for col in column_order if col in df_results.columns]
+        df_results = df_results[existing_cols]
+        
+        # Save comprehensive results in Excel format ONLY
+        output_file = 'output/extracted_red_flags_comprehensive.xlsx'
+        df_results.to_excel(output_file, index=False, engine='openpyxl')
+        print(f"✓ Saved {len(all_red_flags)} red flags to {output_file}")
+        
+        # Calculate summary statistics for display only
+        summary = {
+            'total_documents': len(documents),
+            'processed_successfully': processed_count,
+            'skipped_no_flags': skipped_count,
+            'errors': error_count,
+            'total_red_flags_extracted': len(all_red_flags),
+            'not_covered': len(df_results[df_results['Coverage Status'] == 'Not Covered']),
+            'fully_covered': len(df_results[df_results['Coverage Status'] == 'Fully Covered']),
+            'partially_covered': len(df_results[df_results['Coverage Status'] == 'Partially Covered']),
+            'organizations_processed': list(org_counts.keys()),
+            'red_flags_by_category': df_results['Category'].value_counts().to_dict(),
+        }
+        
+        # Print summary
+        print("\n" + "="*70)
+        print("📊 EXTRACTION SUMMARY")
+        print("="*70)
+        print(f"Total Documents Scanned:        {len(documents)}")
+        print(f"Successfully Processed:         {processed_count}")
+        print(f"Skipped (no flags):             {skipped_count}")
+        print(f"Errors:                         {error_count}")
+        print(f"\n✨ TOTAL RED FLAGS EXTRACTED:    {len(all_red_flags)}")
+        print(f"   - Fully Covered:             {summary['fully_covered']}")
+        print(f"   - Partially Covered:         {summary['partially_covered']}")
+        print(f"   - Not Covered:               {summary['not_covered']}")
+        
+        print(f"\n📂 Top Categories:")
+        for cat, count in sorted(summary['red_flags_by_category'].items(), key=lambda x: x[1], reverse=True)[:10]:
+            print(f"   {cat:30s}: {count:4d} flags")
+        
+        print(f"\n🏢 By Organization:")
+        org_by_date = df_results['Date'].value_counts().to_dict()
+        for org, count in sorted(org_by_date.items(), key=lambda x: x[1], reverse=True)[:10]:
+            print(f"   {org:12s}: {count:4d} flags")
+        
+        print("\n" + "="*70)
+        print("✅ EXTRACTION COMPLETE!")
+        print("="*70)
+    
+    else:
+        print("✗ No red flags extracted from any documents")
 
 if __name__ == "__main__":
-    main()
+    import sys
+    import argparse
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Extract red flags from regulatory documents')
+    parser.add_argument('--test', '-t', action='store_true', help='Test mode (process only 5 files)')
+    parser.add_argument('--year', type=str, help='Filter by year (e.g., 2025)')
+    parser.add_argument('--month', type=str, help='Filter by month (e.g., 09 or 9)')
+    
+    args = parser.parse_args()
+    
+    # Format year-month filter
+    year_month_filter = None
+    if args.year and args.month:
+        # Normalize month to 2-digit format
+        month = args.month.zfill(2) if len(args.month) == 1 else args.month
+        year_month_filter = f"{args.year}-{month}"
+        print(f"\n📅 Filtering documents for: {year_month_filter}")
+    
+    if args.test:
+        print("\n🧪 Running in TEST MODE (5 files only)")
+        print("   To process all files, run without --test flag\n")
+        process_all_documents(test_mode=True, test_limit=5, year_month_filter=year_month_filter)
+    else:
+        process_all_documents(test_mode=False, year_month_filter=year_month_filter)
