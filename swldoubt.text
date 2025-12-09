@@ -1,14 +1,83 @@
-Here’s the full table reconstructed in text form:
+[STRIDE]
 
-Test Case ID	Input	Expected Output	Category / Reason
-TC_001	Identify and retrieve the most recent publications or updates (for current month).	Latest guidance for current month.	Direct match with recent updates.
-TC_002	Search for AML advisories, press releases, guidance, enforcement actions, recommendations.	Relevant AML advisories, press releases, guidance, enforcement actions, and recommendations retrieved.	Common user query.
-TC_003	Search for curated keyword list (provided in Excel) across AML / Transaction Monitoring / Transaction Pattern / sanctions frameworks (with semantic similarity for terms like “structuring”, “smurfing”).	Results mapped to AML topics, transaction monitoring themes, transaction patterns, and sanctions frameworks using semantic similarity to the given keywords.	Requires multi-topic synthesis and semantic / NLP-based retrieval.
-TC_004	Search results are in an unsupported language.	“No results” or “language not supported” message.	Unsupported language input.
-TC_005	Search results are for non-existent publication codes.	“No matching documents found.”	Invalid or unsupported query.
-TC_006	Extract red flags from the latest publications on the Federal Reserve website (/newsevents/pressreleases.htm) into Excel.	Structured list of red flags exported into an Excel sheet with columns such as: Publication Title, Source Link, Date, Extracted Red Flag, Associated Paragraph, Category (e.g., Transaction Patterns or AML). Examples include: transaction patterns (repeated flow/structure like structuring, layering) and AML themes (overall financial crime risks, due diligence, fraud detection, monitoring illicit activities) extracted from the most recent Federal Reserve publications.	Validates GenAI’s ability to target a specific regulatory source and extract relevant AML and transaction patterns using NLP and keyword matching; outputs red flags in a structured sheet.
-TC_007	New Red Flag: “Unusual cash deposits in multiple accounts within short time frame”. Existing Library: RF001 “Structuring or smurfing through multiple deposits”; RF062 “Rapid movement of funds between accounts”.	Coverage Number: RF001. Coverage Status: Fully Covered. Rationale: Exact match in concept (structuring/smurfing pattern).	Transaction Pattern – Matches existing structuring indicator.
-TC_008	New Red Flag: “Transactions routed through high-risk jurisdictions using shell companies”. Existing Library: RF020 “Payments to sanctioned countries”; RF021 “Use of shell companies for layering”.	Coverage Number: RF021. Coverage Status: Partially Covered. Rationale: Covers shell company aspect but not high-risk jurisdiction routing.	Cross-Border Risk / Layering – Indicates a gap in the current red flag library; candidate for enhancement.
-TC_009	New Red Flag description (e.g., “Unusual use of cryptocurrency mixers”). Existing Red Flag Library for comparison.	Coverage Number: N/A. Coverage Status: Not Covered. Rationale: No semantic or exact match found in existing library.	Identifies emerging risks not yet documented; requires review for potential addition.
+1) Threat Modeling: A Summary of Available Methods – CMU SEI (2018)
+   PDF: https://www.sei.cmu.edu/documents/569/2018_019_001_524597.pdf
+   HTML landing page: https://resources.sei.cmu.edu/library/asset-view.cfm?assetid=524448
 
-If you’re wiring this into automated tests, we can convert this straight into a CSV/JSON fixture or assertion set next.
+2) Conducting a STRIDE-based Threat Analysis – UK Government (Secure Connected Places Playbook)
+   PDF: https://assets.publishing.service.gov.uk/media/65e732717bc3290adab8c234/Conducting_a_STRIDE-based_threat_analysis_2.0.pdf
+   HTML: https://www.gov.uk/guidance/secure-connected-places-playbook
+
+3) Chapter 6 – Microsoft Threat Modeling and SDL
+   PDF: https://research.cs.wisc.edu/mist/SoftwareSecurityCourse/Chapters/06-MicrosoftSDL-ThreatModeling.pdf
+
+4) Practical Threat Modeling – Whiteboard Hacking (Toreon)
+   PDF: https://handouts.secappdev.org/handouts/2018/Seba%20Deleersnyder%20-%20Practical%20Threat%20Modeling.pdf
+
+5) STRIDE Model as a Potentially Strong Security Analysis and Threat Modeling Tool (IJSDR 2024)
+   HTML: https://ijsdr.org/viewpaperforall.php?paper=IJSDR2406052
+   PDF: https://ijsdr.org/papers/IJSDR2406052.pdf
+
+6) STRIDE-based Cybersecurity Threat Modeling, Risk Assessment, and Countermeasure Recommendation (SHIELD / MDPI)
+   HTML: https://www.mdpi.com/2624-8921/6/3/54
+
+7) strideSEA: A STRIDE-centric Security Evaluation Approach (arXiv)
+   PDF: https://arxiv.org/pdf/2503.19030
+
+8) Conducting a STRIDE-based Threat Analysis – referenced in multiple security frameworks
+   (secondary reference entry only; main link in item 2)
+
+
+[CIA_TRIAD]
+
+1) NIST SP 800-12 Rev. 1 – An Introduction to Information Security
+   PDF: https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-12r1.pdf
+   NIST landing page: https://csrc.nist.gov/pubs/sp/800/12/r1/final
+
+2) The CIA Strikes Back: Redefining Confidentiality, Integrity and Availability in Security – Samonas & Coss
+   PDF mirror: https://www.proso.com/dl/Samonas.pdf
+   Info page: https://www.jissec.org/Contents/V10/N3/V10N3-Samonas.html
+
+3) TechTarget – What is the CIA triad (confidentiality, integrity and availability)?
+   HTML: https://www.techtarget.com/whatis/definition/Confidentiality-integrity-and-availability-CIA
+
+4) Splunk – What’s the CIA Triad? Confidentiality, Integrity & Availability
+   HTML: https://www.splunk.com/en_us/blog/learn/cia-triad-confidentiality-integrity-availability.html
+
+5) Confidentiality, Integrity, and Availability in Network Systems – IJISRT 2024 (example-heavy CIA paper)
+   PDF: https://ijisrt.com/assets/upload/files/IJISRT23DEC1449.pdf
+
+6) Various university / teaching notes that include CIA triad sections (examples)
+   Example 1 (lecture notes): https://journal.telfor.rs/Published/Vol12No1/Vol12No1_A11.pdf
+   Example 2 (student writeup): https://sites.wp.odu.edu/calizuk/wp-content/uploads/sites/37106/2024/11/CYSE-200T_CIA-Triad-Writeup-Wordpress.pdf
+
+
+[MITRE_ATT&CK]
+
+1) MITRE ATT&CK®: Design and Philosophy – Strom et al.
+   PDF: https://www.mitre.org/sites/default/files/2021-11/prs-19-01075-28-mitre-attack-design-and-philosophy.pdf
+   MITRE landing page: https://www.mitre.org/news-insights/publication/mitre-attck-design-and-philosophy
+
+2) MITRE ATT&CK® for Industrial Control Systems: Design and Philosophy
+   PDF: https://www.mitre.org/sites/default/files/2021-11/prs-20-1342-mitre-attack-for-ics-design-and-philosophy.pdf
+
+3) Getting Started with ATT&CK: Threat Intelligence – Katie Nickels
+   PDF: https://www.mitre.org/sites/default/files/2021-11/getting-started-with-attack-october-2019.pdf
+
+4) MITRE ATT&CK resources page (matrices, JSON, training)
+   HTML: https://attack.mitre.org/resources/
+
+5) ATT&CK Enterprise Matrix (interactive)
+   HTML: https://attack.mitre.org/matrices/enterprise/
+
+6) CISA – Best Practices for MITRE ATT&CK® Mapping
+   PDF: https://www.cisa.gov/sites/default/files/2023-01/Best%20Practices%20for%20MITRE%20ATTCK%20Mapping.pdf
+
+7) MITRE ATT&CK: State of the Art and Way Forward – Al-Sada et al. (ACM CSUR survey)
+   Abstract / access: https://dl.acm.org/doi/10.1145/3687300
+
+8) MITRE ATT&CK Framework and Exabeam (practitioner whitepaper)
+   PDF: https://www.aisa.org.au/common/Uploaded%20files/MITRE%20Attack.pdf
+
+9) Getting Started with MITRE ATT&CK Framework and Threat-Informed Defense – SafeBreach
+   PDF: https://www.safebreach.com/wp-content/uploads/2023/07/getting_started_MITRE_white_paper.pdf
