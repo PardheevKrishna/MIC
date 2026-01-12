@@ -1,0 +1,394 @@
+# CIA — Deep, Generic Knowledge Base (Complete Text)
+
+0. Purpose and Mental Model
+
+CIA is the foundational security model describing *what you are trying to protect*:
+
+* Confidentiality: prevent unauthorized disclosure of information
+* Integrity: prevent unauthorized modification or destruction of information
+* Availability: ensure systems and data are accessible when needed
+
+CIA is not a checklist of controls. It’s a *goal model* that lets you:
+
+* define security requirements clearly,
+* prioritize protections based on what matters,
+* reason about tradeoffs (e.g., stronger integrity checks may reduce availability under load).
+
+A useful way to think of it:
+
+* STRIDE classifies *attack types*.
+* CIA defines *security objectives*.
+  They complement each other: threats (STRIDE) harm objectives (CIA).
+
+1. Confidentiality (C)
+
+Core meaning:
+
+* Only authorized entities (people/services/processes) can access data.
+
+What can “data” include?
+
+* User PII, credentials, payment info, business IP, logs, analytics, model prompts/outputs, encryption keys, configs, metadata.
+
+How confidentiality fails (common failure modes):
+
+* Broken access control: missing checks, IDOR (object-level auth missing), overly permissive roles
+* Overexposure: returning too much data by default, verbose errors, debug endpoints
+* Secrets sprawl: secrets in code, CI logs, IaC state, container images, chat logs
+* Misconfiguration: public storage, open databases, permissive network rules
+* Weak isolation: multi-tenant leaks, shared resources without scoping
+* Eavesdropping: missing TLS, weak cert validation, MITM
+* Data remanence: data left in temp files, caches, backups, snapshots without controls
+
+Primary control families (prevent):
+A) Access control
+
+* Authentication + Authorization (RBAC/ABAC)
+* Object-level checks (resource ownership/tenant scoping)
+* Least privilege and separation of duties
+* Just-in-time (JIT) access for sensitive actions
+
+B) Cryptography
+
+* Encryption in transit (TLS)
+* Encryption at rest (disk/db/object store)
+* Key management: rotation, scoping, restricted decrypt permissions
+* Tokenization where appropriate (reduce sensitive data footprint)
+
+C) Data minimization
+
+* Collect less, store less, return less
+* Explicit allowlists for API responses
+* Redaction and masking (logs, analytics, exports)
+
+D) Segmentation and isolation
+
+* Tenant isolation patterns (row-level security, separate namespaces)
+* Network segmentation where it meaningfully reduces exposure
+* Environment separation (dev/stage/prod)
+
+Detection/monitoring:
+
+* Data access anomaly detection (spikes, exports, unusual principals)
+* DLP alerts for sensitive patterns
+* Secret scanning (repos/CI/logs/images)
+* Egress monitoring and unusual outbound destinations/volumes
+
+Verification/tests:
+
+* Permission matrix tests (role × action × resource)
+* IDOR tests: enumerate IDs, cross-tenant access attempts
+* Log scrubbing tests: ensure PII/secrets aren’t emitted
+* Storage exposure tests: ensure private-by-default, least-privileged access
+
+2. Integrity (I)
+
+Core meaning:
+
+* Data and systems are correct, complete, and unaltered except by authorized actions.
+  Integrity is about *trustworthiness of state*: code, configs, records, messages.
+
+How integrity fails (common failure modes):
+
+* Unauthorized writes: weak authz on update endpoints, overbroad permissions
+* Client-side trust: relying on client-provided prices/roles/decisions
+* Injection attacks: SQL/NoSQL/command injections changing state
+* Message tampering: modifying data in transit when integrity isn’t protected
+* Supply-chain compromise: dependency poisoning, compromised build pipeline, unsigned artifacts
+* Config drift and policy edits: stealth changes to infra, access rules, logging rules
+* Concurrency anomalies: race conditions causing inconsistent updates (logical integrity)
+
+Primary control families (prevent):
+A) Authorization for state change
+
+* Strong server-side checks on every write
+* Ownership/tenant scoping on updates
+* Explicit “write permissions” separate from “read permissions”
+
+B) Validation and correctness constraints
+
+* Schema validation, strong typing, canonicalization
+* Server-side enforcement of invariants (e.g., totals, balances)
+* Database constraints where applicable (unique constraints, FK, checks)
+
+C) Cryptographic integrity
+
+* TLS + certificate validation
+* Signatures/HMAC for high-value messages or event streams
+* Content hashing for stored artifacts
+
+D) Supply chain + change governance
+
+* Signed artifacts and provenance
+* Dependency pinning/allowlists, SBOM, vulnerability scanning
+* Protected branches, code review, separation of plan/apply in IaC
+* Drift detection and policy-as-code
+
+E) Operational integrity
+
+* Backups with integrity validation
+* Controlled migrations and rollback strategies
+* Idempotency and safe retry patterns for writes
+
+Detection/monitoring:
+
+* Audit logs on writes and policy/config changes
+* Integrity-check failures, checksum mismatches
+* Drift detection alerts
+* Unusual write patterns (bulk updates, odd principals)
+
+Verification/tests:
+
+* Parameter tampering tests for update endpoints
+* Injection testing (where applicable)
+* CI/CD checks preventing unsigned/unapproved deployments
+* Drift simulation tests: intentional change → ensure detection fires
+* Property-based tests on critical invariants (e.g., sum of balances)
+
+3. Availability (A)
+
+Core meaning:
+
+* Systems and data are accessible and usable within required performance and reliability targets.
+
+Availability is not just “uptime”.
+It includes:
+
+* latency, throughput, error rate,
+* resilience to load spikes and dependency failures,
+* ability to recover quickly.
+
+How availability fails (common failure modes):
+
+* Traffic floods: volumetric or application-layer DoS
+* Resource exhaustion: CPU/mem/threads/FDs, connection pools
+* Expensive requests: worst-case inputs, unbounded queries, regex DoS
+* Dependency outages: DB/cache/queue/external API failures
+* Thundering herds / retry storms: aggressive retries, no jitter/backoff
+* Quota/rate limit exhaustion: hitting platform limits
+* Operational mistakes: bad deploys, misconfig, accidental data deletion
+
+Primary control families (resilience/prevent):
+A) Capacity and rate controls
+
+* Rate limits, quotas per identity/tenant/IP
+* Request size and complexity limits
+* Autoscaling and load balancing
+
+B) Resilience patterns
+
+* Timeouts and bounded retries (with jitter)
+* Circuit breakers, bulkheads, backpressure
+* Load shedding and graceful degradation
+* Caching, pagination, request coalescing
+
+C) Redundancy and recovery
+
+* Multi-zone redundancy where required
+* Health checks and failover
+* Backups and tested restore procedures
+* Rollback strategies, progressive delivery (canary/blue-green)
+
+D) Operational excellence
+
+* SLOs/SLIs with alerting
+* Runbooks, incident response drills
+* Chaos testing for critical dependencies
+
+Detection/monitoring:
+
+* SLO burn-rate alerts
+* Saturation metrics (CPU, memory, queue depth, connection pools)
+* Dependency health and latency monitoring
+* Error budget tracking and incident metrics
+
+Verification/tests:
+
+* Load/spike tests; worst-case input tests
+* Chaos tests: dependency failure, network latency, partial outages
+* DR tests: backup restore and failover exercises
+* Game days for deploy rollback and incident response
+
+4. CIA as Requirements (How to Write Useful Statements)
+
+A CIA “goal” becomes useful when you translate it into measurable requirements.
+
+Confidentiality requirements examples:
+
+* “Only users in tenant X can read tenant X records.”
+* “Secrets must never appear in logs.”
+* “All data in transit must use TLS 1.2+ with valid cert verification.”
+
+Integrity requirements examples:
+
+* “All writes require server-side authorization checks.”
+* “Requests must be schema-validated and invariant-checked.”
+* “Deployments must be from signed artifacts; unsigned builds are rejected.”
+
+Availability requirements examples:
+
+* “Service must meet p99 latency ≤ N ms at RPS = M.”
+* “System must tolerate dependency failure for ≤ T minutes with degraded mode.”
+* “Recovery time objective (RTO) ≤ X; recovery point objective (RPO) ≤ Y.”
+
+5. CIA Tradeoffs (Reality is a Three-Body Problem)
+
+Many controls improve one pillar and stress another.
+
+Common tradeoffs:
+
+* Stronger encryption/integrity checks can add latency (A) but improve C/I.
+* Aggressive rate limiting improves A but can harm legitimate users (availability vs usability).
+* Heavy logging helps integrity/repudiation investigations but can leak data (C) if not redacted.
+* Strict access controls improve C but can reduce operational agility (A) if break-glass isn’t designed.
+
+Good security engineering means:
+
+* declare priorities per system component,
+* set measurable targets,
+* choose controls that satisfy targets with minimal collateral damage.
+
+6. CIA “Failure Mode” Checklist (Generic Quick Pass)
+
+Confidentiality:
+
+* Can someone read data they shouldn’t (including logs, backups, caches)?
+* Are secrets isolated and rotated?
+* Is data minimized and responses allowlisted?
+* Is transit encryption and cert validation enforced?
+
+Integrity:
+
+* Can someone modify state without authorization?
+* Are invariants enforced server-side?
+* Are builds/configs protected from tampering?
+* Are changes auditable and reversible?
+
+Availability:
+
+* Can one actor degrade service for others?
+* Are timeouts/retries/circuit breakers correct?
+* Are dependencies isolated and failure-tolerant?
+* Are SLOs monitored and recovery practiced?
+
+CIA — 100 few-shot examples (scenario → CIA impact → mitigations)
+
+CIA definitions (ground truth):
+
+Confidentiality: preserve authorized restrictions on information access/disclosure.
+
+Integrity: guard against improper modification/destruction; maintain correctness/authenticity.
+
+Availability: ensure timely, reliable access to systems/data.
+
+CONFIDENTIALITY (C) — 34 examples
+(Think: “someone who shouldn’t see it, sees it.” Commonly driven by broken authorization, overexposure, secret leakage, misconfiguration.)
+
+C1. IDOR/BOLA: change /orders/123 to /orders/124 and see another customer’s order → C loss → Object-level auth on every request; tenant scoping; authorization tests (BOLA pattern).
+C2. API returns full user object (includes sensitive fields) and frontend “hides” it → C loss → Response allowlists; separate DTOs; property-level authorization.
+C3. Public cloud bucket accidentally readable by everyone → C loss → Default-private policies; continuous config scanning; least-privileged IAM; alerts on public access changes.
+C4. Secrets (API keys) committed to Git and reused in prod → C loss → Secret scanning; short-lived creds; rotate/revoke; move secrets to secret manager.
+C5. Access tokens stored in localStorage and stolen via XSS → C loss → HttpOnly cookies where possible; CSP; output encoding; short-lived tokens.
+C6. Verbose error pages leak stack traces, internal hostnames, table names → C loss → Generic user errors; detailed logs internally; structured error handling.
+C7. Logs capture passwords/OTP codes due to “debug logging” → C loss → Log redaction policy; blocklist sensitive fields; CI checks for logging statements.
+C8. Misconfigured CORS allows any origin to read API responses with credentials → C loss → Strict CORS allowlist; avoid wildcard with credentials; enforce origin checks.
+C9. Database backups stored unencrypted in shared storage → C loss → Encrypt backups; limit access; key rotation; periodic access reviews.
+C10. Search endpoint leaks whether an email exists (“account enumeration”) → C loss → Uniform responses; throttling; bot detection; privacy-preserving flows.
+C11. Customer support tool exposes full SSN to agents who don’t need it → C loss → Least privilege; field masking; “view sensitive field” requires justification + audit.
+C12. Web app includes PII in URL query params; leaked via referrers/analytics → C loss → Never put secrets/PII in URLs; use POST body; scrub referrers.
+C13. Mobile app pins no certs; MITM on hostile Wi-Fi captures data → C loss → TLS everywhere; correct certificate validation; optional pinning for high-risk apps.
+C14. Multi-tenant cache key missing tenant ID → cross-tenant data returned → C loss → Tenant-scoped cache keys; per-tenant namespaces; test isolation.
+C15. Object storage signed URL set to very long expiry and shared → C loss → Short-lived URLs; scope to object; revoke-on-compromise; watermark sensitive downloads.
+C16. Analytics pipeline ingests raw PII into broad-access warehouse → C loss → Data minimization; tokenization; column-level access controls; DLP scanning.
+C17. Internal “debug” endpoint exposes environment variables (includes secrets) → C loss → Remove debug endpoints in prod; feature-flag guardrails; runtime policy checks.
+C18. SSRF lets attacker fetch instance metadata credentials → C loss → SSRF allowlists + egress controls; block metadata; least-privileged instance identities.
+C19. Email forwarding rule on compromised mailbox exfiltrates invoices/contracts → C loss → MFA; conditional access; alert on suspicious forwarding rules; DLP.
+C20. Shared “admin” account used by multiple staff; credentials leaked → C loss → Per-user accounts; PAM; eliminate shared creds; enforce MFA.
+C21. Data exported to CSV without access controls; file shared widely → C loss → Export approvals; watermarking; expiry links; audit trails.
+C22. Misconfigured CDN caches authenticated content and serves to others → C loss → Correct cache-control headers; vary on auth; separate domains for private content.
+C23. “Forgot password” flow reveals partial phone/email that enables targeted attacks → C loss → Minimize disclosure; rate-limit; secure recovery verification.
+C24. Internal message bus has no auth; any service can subscribe to sensitive topics → C loss → Authenticated pub/sub; topic-level ACLs; encrypt payloads where needed.
+C25. S3/object listing enabled; filenames reveal customer identities → C loss → Disable listing; randomized object keys; access controls; metadata minimization.
+C26. Third-party error monitoring captures request bodies with secrets → C loss → Scrub before sending; disable body capture on sensitive routes; vendor access controls.
+C27. “View invoice” endpoint allows guessing invoice IDs → C loss → Unpredictable IDs; authorization checks; rate limits; monitoring enumeration.
+C28. Internal wiki with incident reports exposed publicly by mistake → C loss → Private-by-default; access reviews; continuous exposure scanning.
+C29. Mis-scoped IAM lets a dev read prod customer table → C loss → Environment separation; least privilege; break-glass; periodic IAM audits.
+C30. API returns more fields than needed (address, DOB) to mobile app → C loss → Data minimization; separate endpoints per use-case; property-level auth.
+C31. Excessive Data Exposure pattern: clients filter sensitive fields locally → C loss → Server-side filtering; strict response schema; contract tests.
+C32. File upload stores documents in predictable URLs; anyone can guess → C loss → Auth-gated downloads; signed URLs; randomize identifiers.
+C33. Employee laptop theft exposes unencrypted local database/cache → C loss → Full-disk encryption; device management; remote wipe; minimize local storage.
+C34. Chatbot/LLM logs prompts that include secrets/PII → C loss → Redact/DLP; minimize prompt logging; access controls; retention limits.
+
+INTEGRITY (I) — 33 examples
+(Think: “someone changes data or behavior incorrectly/unauthorized; the system can’t trust its state.” Integrity often depends on authorization + validation + supply-chain controls.)
+
+I1. Price tampering: client sends price=1 and server accepts → I loss → Recompute on server; validate against authoritative catalog; sign quotes.
+I2. Mass assignment allows setting role=admin in JSON payload → I loss → Allowlist writable fields; separate input models; property-level auth.
+I3. SQL injection modifies records (not just reads) → I loss → Parameterized queries; least-privileged DB accounts; input validation; WAF.
+I4. Webhook payload altered in transit → wrong order status written → I loss → HMAC-signed webhooks; timestamp/nonce; strict schema validation.
+I5. Replay of a previously valid request causes duplicated state change → I loss → Idempotency keys; replay protection; monotonic versioning.
+I6. Race condition lets two withdrawals succeed simultaneously → I loss → Transactions; optimistic locking; invariant checks; serialized workflows.
+I7. Missing authorization on “update profile” allows changing another user’s data → I loss → Object-level authorization; tenant/ownership checks.
+I8. “Soft delete” endpoint lets attacker delete others’ resources by ID guessing → I loss → AuthZ + unpredictable IDs; audit + alerts on deletions.
+I9. Stored XSS modifies page to silently change user settings → I loss → Output encoding; CSP; sanitize; re-auth for sensitive changes.
+I10. MITM on internal service call modifies command parameters → I loss → mTLS; request signing for high-risk commands; strict auth on receiver.
+I11. Configuration drift: someone edits prod config manually outside change control → I loss → GitOps/IaC; protected branches; drift detection; approvals.
+I12. CI pipeline compromised; attacker injects backdoor into build → I loss → Signed artifacts; provenance; least privilege CI creds; separate build vs deploy identities.
+I13. Dependency update pulls malicious package version → I loss → Pin versions; verify checksums/signatures; allowlist registries; SBOM/provenance scanning.
+I14. CDN serves modified JS bundle due to compromised origin storage → I loss → Immutable releases; signed assets; integrity hashes (SRI); restricted write access.
+I15. DNS record tampering redirects API traffic to attacker infra → I loss → RBAC + MFA for DNS; change approvals; monitoring; DNSSEC where feasible.
+I16. Unauthorized key policy change enables wider decrypt usage → I loss → Split duties; audit and alert on policy changes; approvals for key admin actions.
+I17. Attacker tampers with audit logs to remove evidence → I loss → Centralized append-only logs; integrity protections; restricted deletion.
+I18. Message queue allows producers to overwrite/poison events → I loss → Authenticated producers; schema registry; validation; topic ACLs.
+I19. Client-side “isPaid=true” trusted; attacker flips flag → I loss → Server authoritative state; verify payments via provider; ignore client flags.
+I20. Data pipeline writes wrong transformations; silently corrupts metrics → I loss → Data validation checks; checksum totals; anomaly detection; lineage tracking.
+I21. Incorrect serialization/encoding causes truncation and wrong values stored → I loss → Contract tests; schema constraints; input normalization.
+I22. Insider changes bank account number for vendor payouts → I loss → Maker-checker approvals; alerts; immutable audit trail; step-up auth.
+I23. Git force-push rewrites history; integrity of releases unclear → I loss → Protected branches; signed commits/tags; immutable release artifacts.
+I24. Time sync failure causes out-of-order events and wrong state transitions → I loss → NTP; event versioning; tolerate skew; detect anomalies.
+I25. Form bypass lets attacker submit invalid state (negative quantities) → I loss → Server-side validation; DB constraints; invariant checks.
+I26. Document upload replaced after approval (swap attack) → I loss → Content hashing; immutable storage; versioning; re-approval on change.
+I27. Cached authorization decision reused after role change → I loss → Short authz cache TTL; invalidate on role updates; re-check for sensitive actions.
+I28. Object store versioning disabled; attacker overwrites critical config → I loss → Enable versioning; write-once policies; strict IAM; integrity monitoring.
+I29. Fraudster edits address after shipping label creation → I loss → State machine constraints; lock fields after milestone; audit changes.
+I30. Model/rules engine tampered to approve bad loans → I loss → Access controls; signed model artifacts; monitoring for drift; change approvals.
+I31. Client sends “adminAction” through hidden field; server accepts → I loss → Explicit server-side authorization; never trust hidden fields.
+I32. Terraform state file modified to hide resource changes → I loss → Encrypt state; restrict access; state locking; audit state reads/writes.
+I33. “Update email” lacks verification; attacker sets victim’s email to theirs → I loss → Verify new email via confirmation; step-up auth; alert user.
+
+AVAILABILITY (A) — 33 examples
+(Think: “legitimate users can’t use the system when they need to.” Commonly driven by DoS, resource exhaustion, dependency failures, and ransomware. Backups and recovery testing are central.)
+
+A1. Volumetric DDoS saturates bandwidth → A loss → DDoS protection (scrubbing/CDN/Anycast), upstream filtering, autoscaling, runbooks.
+A2. Login brute-force floods auth service → A loss → Rate limits, bot mitigation, progressive challenges, separate auth capacity from app capacity.
+A3. “Expensive search” query triggers full-table scan repeatedly → A loss → Query cost limits, timeouts, indexes, caching, rate limits.
+A4. Large file uploads fill disk and crash servers → A loss → Size limits, streaming uploads, quotas, separate upload service, backpressure.
+A5. Retry storm: clients retry instantly during outage → A loss → Exponential backoff + jitter, circuit breakers, client guidelines, server-side throttling.
+A6. Dependency outage (DB down) takes whole app down → A loss → Graceful degradation, cached reads, queued writes, read replicas, failover.
+A7. Single tenant generates huge workload and starves others → A loss → Per-tenant quotas, bulkheads, priority scheduling.
+A8. Memory leak causes gradual crash under normal use → A loss → Resource monitoring, canaries, autoscaling limits, leak detection, restarts with safe draining.
+A9. Certificate expires causing all TLS handshakes to fail → A loss → Automated cert rotation, expiry alerts, staged rollouts.
+A10. DNS outage prevents service discovery → A loss → Redundant DNS, caching, Anycast, failover records, monitoring.
+A11. Ransomware encrypts file shares/VMs → A loss → Offline encrypted backups + regular restore testing; segmentation; endpoint hardening.
+A12. Ransomware deletes online backups too → A loss → Offline/immutable backups; separate credentials; frequent restore drills.
+A13. Queue backlog grows unbounded; processing never catches up → A loss → Backpressure, autoscaling consumers, dead-letter queues, bounded retention.
+A14. Connection pool exhaustion from slow queries → A loss → Timeouts, pool sizing, query optimization, circuit breakers.
+A15. Cache stampede: many misses cause origin overload → A loss → Request coalescing, stale-while-revalidate, jittered TTLs.
+A16. Unbounded regex causes CPU spike (ReDoS) → A loss → Safe regex patterns, timeouts, input size limits.
+A17. Third-party API outage blocks checkout → A loss → Circuit breaker + fallback, async processing, alternate providers, graceful UI messaging.
+A18. Rate-limits too strict block real users during peak → A loss → Adaptive limits, per-tenant fairness, separate limits for auth vs normal traffic.
+A19. Misconfigured firewall blocks internal service calls → A loss → Change review, automated tests in staging, progressive rollout, fast rollback.
+A20. Bad deploy causes crash loop → A loss → Canary/blue-green, health checks, automatic rollback, feature flags.
+A21. Storage filled due to log explosion → A loss → Log quotas, sampling, backpressure-safe logging, alert on volume anomalies.
+A22. Hot partition in DB causes throttling and timeouts → A loss → Sharding strategy, better key distribution, capacity planning.
+A23. Region/zone outage → A loss → Multi-zone architecture, failover, disaster recovery plans, tested RTO/RPO.
+A24. Key management service throttling blocks decrypt on every request → A loss → Envelope encryption (cache DEKs), retries with backoff, quotas, fail-open vs fail-closed decisions.
+A25. Long GC pauses under load cause latency spikes → A loss → Tune runtimes, autoscale, limit request size/complexity, profiling.
+A26. Websocket connections unbounded exhaust file descriptors → A loss → Connection limits, idle timeouts, load balancer tuning.
+A27. Bot hits “generate report” endpoint thousands of times → A loss → Authentication + quotas; async jobs; caching; abuse detection.
+A28. Database migration locks tables causing outage → A loss → Online migrations, phased rollout, off-peak windows, rollback plan.
+A29. Excessive synchronous logging blocks request threads → A loss → Async logging, buffering, drop noncritical logs under pressure, monitor pipeline.
+A30. Misconfigured autoscaling oscillates (thrash) → A loss → Stabilization windows, scaling policies, load testing, guardrails.
+A31. Certificate pinning mis-rollout bricks mobile clients → A loss → Pin rotation strategy, dual pins, staged rollout, kill switch.
+A32. WAF rule false-positive blocks entire country/segment → A loss → Staged enforcement (monitor → block), allowlists, rapid rollback.
+A33. Authentication provider outage blocks all logins → A loss → Token/session lifetimes tuned for continuity, fallback login modes for critical staff, break-glass accounts, incident playbooks.

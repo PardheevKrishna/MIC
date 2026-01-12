@@ -1,0 +1,548 @@
+STRIDE — Deep, Generic Knowledge Base (Complete Text)
+
+0. Purpose and Mental Model
+
+STRIDE is a *threat categorization lens* for threat modeling. It answers:
+“When someone attacks this system, what kinds of bad things can they do?”
+
+STRIDE is not a risk model by itself. It helps you *enumerate threats* consistently. You then:
+
+* judge severity (impact/likelihood),
+* choose controls (prevent/detect/respond),
+* turn controls into requirements + tests + monitoring.
+
+Key idea: STRIDE works best when you model the system as:
+
+* External entities (users, other systems)
+* Processes (services, apps, functions, components)
+* Data stores (databases, object stores, caches, queues, logs)
+* Data flows (API calls, messages, file transfers)
+* Trust boundaries (where assumptions change: identity, network, privilege, tenancy, environment)
+
+Threat modeling with STRIDE is basically:
+For each element + each flow + each trust boundary, ask the STRIDE questions and record threats as attacker stories.
+
+
+1. The Six STRIDE Categories (Deep Understanding)
+
+S — Spoofing (Impersonation)
+
+* Core meaning: An attacker successfully pretends to be a legitimate identity.
+* What it breaks: Authentication (who are you?) and sometimes service identity (what service is this?).
+
+Typical attacker stories:
+
+* “I can log in as a victim” (credential stuffing, phishing, MFA fatigue, leaked passwords).
+* “I can act as a service” (stolen API keys, stolen service credentials, forged tokens).
+* “I can hijack sessions” (stolen cookies, session fixation, token replay).
+* “I can impersonate an internal component” (no mutual auth between services, DNS/endpoint spoofing).
+
+Common root causes:
+
+* Weak or missing authentication
+* Long-lived secrets (API keys, static credentials)
+* Token validation mistakes (signature checks missing, aud/iss not checked, exp ignored)
+* No binding between identity and context (device, workload, network)
+* Lack of strong service-to-service identity (requests trusted because “it’s internal”)
+
+Common mitigations (prevent):
+
+* Strong auth for humans: MFA/passkeys, conditional access
+* Prefer short-lived credentials: OAuth/OIDC, workload identity, federation
+* Token hardening: validate signature + issuer + audience + expiry; rotate keys; avoid accepting “none” alg; verify nonce/jti if needed
+* Session hardening: HttpOnly/SameSite cookies, CSRF protection, session rotation
+* Service identity: mTLS or signed service tokens; verify caller identity explicitly
+
+Detection/monitoring:
+
+* Anomalous login patterns (impossible travel, new device, unusual times)
+* Token replay patterns, unusual refresh token usage
+* Spikes in failed logins or unusual auth errors
+* Unexpected caller identities for sensitive endpoints
+
+Verification/tests:
+
+* Replay tokens/cookies and confirm rejection
+* Forge/modify JWT claims and confirm validation catches it
+* Try session fixation and confirm session rotation
+* Attempt calling internal endpoints without service identity and confirm denial
+
+T — Tampering (Unauthorized Modification)
+
+* Core meaning: An attacker changes data or behavior without permission.
+* What it breaks: Integrity (is this data/code/config unchanged and correct?).
+
+Typical attacker stories:
+
+* “I can change values in a request and the server trusts it” (price=1, role=admin, tenantId=other).
+* “I can modify stored data I shouldn’t” (write access too broad, injection).
+* “I can modify code/config/build artifacts” (supply chain, CI/CD compromise).
+* “I can alter messages between components” (no TLS, weak signing/integrity checks).
+
+Common root causes:
+
+* Trusting client input (client-side authorization)
+* Missing server-side validation and canonicalization
+* Overly permissive write permissions
+* No integrity protection (signatures/HMAC) for critical messages
+* Insecure software supply chain (unverified dependencies/artifacts)
+
+Common mitigations (prevent):
+
+* Server-side validation: schema validation, strict typing, canonicalize inputs
+* Authorization on every state change (don’t trust UI/client)
+* Least privilege on data writes (table-level/row-level if needed)
+* TLS everywhere; for high-value messages use signatures/HMAC
+* Signed artifacts, pinned dependencies, reproducible builds, provenance/SBOM checks
+* Configuration governance: protected change paths, approvals, drift detection
+
+Detection/monitoring:
+
+* Integrity check failures, hash mismatches
+* Unexpected configuration drift or policy changes
+* Suspicious write patterns (bulk updates, unusual actors)
+* CI/CD pipeline changes outside approved paths
+
+Verification/tests:
+
+* Parameter tampering tests on every critical endpoint
+* Injection testing (SQL/NoSQL/command) where applicable
+* Attempt to deploy unsigned/unapproved artifacts and ensure blocked
+* Validate drift detection and alerting works
+
+R — Repudiation (Denying Actions)
+
+* Core meaning: A user/system can plausibly deny doing something because you cannot prove it.
+* What it breaks: Accountability and forensics (who did what, when, from where).
+
+Repudiation is less about “the attacker” and more about “you being blind” after an incident.
+
+Typical attacker stories:
+
+* “I performed a sensitive action and it isn’t logged.”
+* “Logs exist but don’t identify me (no user/service identity attached).”
+* “I deleted or altered logs to cover my tracks.”
+* “Actions are logged but can’t be correlated across services.”
+
+Common root causes:
+
+* Missing audit events for sensitive actions
+* Logs without actor identity, request IDs, or context
+* Logs stored where attackers can modify/delete them
+* Time sync issues; inconsistent timestamps
+* No centralized logging or correlation strategy
+
+Common mitigations (prevent/deter):
+
+* Centralized audit logging with strong access control
+* Append-only or immutable log storage; log integrity (signing/WORM where needed)
+* Mandatory fields: actor identity, request ID/correlation ID, resource ID, action, outcome
+* Reliable time sync across systems
+* Separation of duties: operators can’t silently erase evidence
+
+Detection/monitoring:
+
+* Gaps in audit logs, sudden drops in volume
+* Changes to logging config/retention
+* Clock skew alerts
+* Missing correlation IDs across critical paths
+
+Verification/tests:
+
+* Perform sensitive actions and verify end-to-end audit trail completeness
+* Attempt to disable logging and confirm alerts + restricted permissions
+* Validate incident reconstruction is possible from logs alone
+
+I — Information Disclosure (Data Leakage)
+
+* Core meaning: Data is exposed to unauthorized parties.
+* What it breaks: Confidentiality (and privacy).
+
+Typical attacker stories:
+
+* “I can read another user/tenant’s data” (broken object-level authorization, IDOR).
+* “The API returns too much information by default” (overbroad fields, debug endpoints).
+* “Secrets leak via logs, errors, configs, or build artifacts.”
+* “Data is readable from storage due to misconfiguration or weak policies.”
+* “Sensitive model inputs/outputs leak” (if using AI pipelines).
+
+Common root causes:
+
+* Broken authorization (especially object-level)
+* Overexposed APIs and verbose errors
+* Improper secret handling (embedded secrets, leaked tokens)
+* Misconfigured storage policies
+* Weak isolation in multi-tenant systems
+* Logging sensitive content without redaction/minimization
+
+Common mitigations (prevent):
+
+* Enforce authz on every read (object-level checks, not only endpoint-level)
+* Data minimization: return only needed fields; adopt explicit “allowlist” response models
+* Encryption in transit and at rest; correct key management
+* Secret management: vault/KMS/secret stores; never in code or logs; rotate
+* Safe error handling: avoid leaking internals, stack traces, identifiers
+* Isolation controls for multi-tenant (ABAC, row-level security, tenant scoping)
+* Redaction/DLP for sensitive content in logs and pipelines
+
+Detection/monitoring:
+
+* Unusual read patterns (mass export, high-volume reads)
+* Egress monitoring and anomaly detection
+* Secret scanning alerts (repos, CI logs, container images)
+* Repeated 403/404 patterns indicating enumeration attempts
+
+Verification/tests:
+
+* IDOR tests: enumerate resource IDs; verify strict access checks
+* Permission matrix tests (role × action × resource)
+* Log review automation: ensure secrets/PII are not logged
+* Storage access tests: confirm private by default, least privilege
+
+D — Denial of Service (Availability/Resource Exhaustion)
+
+* Core meaning: The system becomes unusable or too expensive to operate.
+* What it breaks: Availability and often cost stability.
+
+DoS isn’t only huge traffic. It can be one “clever” request that triggers worst-case behavior.
+
+Typical attacker stories:
+
+* “I can flood endpoints until they fall over.”
+* “I can craft inputs that cause worst-case CPU/memory usage.”
+* “I can exhaust dependencies (DB, cache, queue, external API, crypto/KMS, model endpoints).”
+* “I can hit rate/quotas so legitimate users get blocked.”
+
+Common root causes:
+
+* No rate limits/quotas
+* Expensive operations exposed directly (unbounded queries, unbounded payloads)
+* Missing timeouts, retries without jitter (retry storms)
+* Shared resources without isolation (one tenant starves others)
+* Tight coupling to dependencies (no circuit breakers, no degradation path)
+
+Common mitigations (prevent/resilience):
+
+* Rate limiting and quotas per identity/tenant/IP; separate limits for expensive endpoints
+* Input size limits and complexity limits (payload caps, regex safety, query guards)
+* Timeouts, retries with jitter, circuit breakers, bulkheads
+* Caching, request coalescing, pagination and bounded queries
+* Load shedding and graceful degradation (serve “good enough” under stress)
+* Autoscaling plus capacity planning guided by SLOs
+
+Detection/monitoring:
+
+* SLO burn-rate alerts, latency and saturation metrics
+* Queue depth, thread pool usage, DB connection pool exhaustion
+* Sudden rises in cost per request (CPU time, external calls, token usage)
+* Dependency health alarms
+
+Verification/tests:
+
+* Load tests + spike tests + worst-case input tests
+* Chaos testing: dependency failure simulation
+* Validate rate limits and graceful degradation behavior
+
+E — Elevation of Privilege (Unauthorized Gain of Higher Rights)
+
+* Core meaning: An attacker moves from low privilege to high privilege (or crosses boundaries).
+* What it breaks: Authorization and privilege boundaries.
+
+Typical attacker stories:
+
+* “I found an endpoint that lets me perform admin actions.”
+* “A service account/role has more permissions than it needs, so compromise becomes catastrophic.”
+* “I can pivot from one component to another (lateral movement) because boundaries are weak.”
+* “I exploited a bug (RCE/SSRF/etc.) and escalated to control the environment.”
+
+Common root causes:
+
+* Overly broad roles and permissions (least privilege violations)
+* Missing authorization checks (especially on admin/change operations)
+* Dangerous capabilities exposed to many principals (policy edits, token minting, impersonation)
+* Weak segmentation between environments/tenants/components
+* Metadata/service credential exposure (common in cloud environments)
+* Trusting internal network as a security boundary
+
+Common mitigations (prevent):
+
+* Least privilege everywhere; minimize “powerful” permissions; separate duties
+* Deny-by-default patterns; explicit allowlists
+* Strong authz checks for every sensitive action; enforce at service layer
+* Segmentation: environment separation, tenant isolation, network controls
+* Protect credential surfaces (metadata, token endpoints), SSRF defenses, egress controls
+* Secure CI/CD identities and change controls (because control plane compromise = instant EoP)
+
+Detection/monitoring:
+
+* Privilege changes, new role bindings, unusual admin actions
+* Unusual token minting or impersonation patterns
+* Lateral movement signals: new service-to-service calls, unexpected access paths
+
+Verification/tests:
+
+* Attempt common escalation paths (role misbindings, impersonation, admin endpoints)
+* Permission boundary tests: ensure services can’t do what they shouldn’t
+* Validate segmentation by attempting cross-tenant/environment access
+
+2. STRIDE Applied to System Models (DFD + Trust Boundaries)
+
+
+
+STRIDE is most effective when you apply it systematically to a DFD.
+
+DFD elements:
+
+* External Entity: users/partners/external systems
+* Process: services/apps/functions
+* Data Store: DBs/buckets/caches/queues/logs
+* Data Flow: network calls/messages/file transfers
+* Trust Boundary: a line where assumptions change
+
+Practical mapping (quick reference):
+
+* External Entity: Spoofing, Repudiation
+* Process: Tampering, Repudiation, Info Disclosure, DoS, Elevation
+* Data Store: Tampering, Info Disclosure, DoS
+* Data Flow: Tampering, Info Disclosure, DoS
+
+Trust boundaries multiply threats because:
+
+* identities change (different auth mechanisms),
+* controls differ (e.g., “inside” vs “outside”),
+* enforcement can be inconsistent,
+* logging/correlation often breaks.
+
+Rule of thumb:
+
+* If a flow crosses a trust boundary, do a focused STRIDE pass on that flow.
+
+
+3. How to Write High-Quality STRIDE Findings (Attacker Story Style)
+
+A STRIDE entry is useful only if it’s specific enough to design controls and tests.
+
+Good STRIDE finding structure:
+
+* “Actor does X by exploiting Y, causing Z.”
+* Include preconditions (what must already be true)
+* State impacted asset and boundary crossed
+* Point to a concrete control that would stop it
+
+Example templates (generic):
+
+* Spoofing: “Attacker reuses stolen token to call privileged endpoint as victim.”
+* Tampering: “Attacker modifies request field to bypass server-side authz.”
+* Repudiation: “Sensitive actions lack immutable audit trail → cannot attribute.”
+* Info disclosure: “Broken object-level auth allows reading other user’s records.”
+* DoS: “Unbounded query causes worst-case DB scan → service saturation.”
+* EoP: “Overbroad role enables changing access policy → admin escalation.”
+
+
+4. Threat Prioritization (Keep It Simple, Keep It Honest)
+
+After enumeration, prioritize using:
+
+* Impact: data loss, financial loss, safety, regulatory, downtime, lateral spread
+* Likelihood: exposure, ease, required access, exploit maturity, existing controls
+
+Simple scoring (common in practice):
+
+* Likelihood (1–5) × Impact (1–5) = priority
+* Or rank as High/Medium/Low with clear rationale
+
+Pitfall:
+
+* Treating STRIDE as a checklist where every item becomes a ticket.
+  Better:
+* Convert the highest-risk items into actionable requirements and tests first.
+
+
+5. Control Coverage Thinking (Prevent / Detect / Respond)
+
+For each threat, aim for:
+
+* Prevent: blocks the attack
+* Detect: tells you it’s happening (or happened)
+* Respond: limits damage and speeds recovery
+
+Example:
+
+* Spoofing prevention: strong auth/token validation
+* Spoofing detection: anomaly detection on auth events
+* Spoofing response: token revocation, session invalidation, forced reauth
+
+
+6. Common STRIDE Pitfalls (Things That Cause Bad Threat Models)
+
+* Modeling only “the happy path” and ignoring admin/control paths
+* Trusting “internal network” without strong identity and authz
+* Listing vague threats without attacker stories or affected assets
+* Missing object-level authorization threats (most common real-world data leaks)
+* Ignoring control plane and supply chain (CI/CD, IaC, dependency provenance)
+* No link from threats → tests/monitors (then the model rots)
+
+Quality check:
+If a STRIDE finding cannot produce a mitigation and a verification test, it’s too vague.
+
+
+7. Minimal STRIDE Checklist for Any System
+
+1. Identify assets (what matters).
+2. Draw a DFD (entities, processes, stores, flows).
+3. Mark trust boundaries.
+4. For each boundary-crossing flow, ask STRIDE questions.
+5. Record threats as attacker stories with impact.
+6. Choose mitigations + detection + tests.
+7. Prioritize and implement; re-run on changes.
+
+I’ll pull real-world incident patterns (from reputable writeups like OWASP, NIST, Microsoft, major postmortems, and cloud security docs) and translate them into ~100 concise STRIDE “few-shot” entries: scenario → STRIDE type → mitigations.
+
+
+Below are 100 STRIDE few-shot examples in a consistent pattern:
+
+Threat scenario → STRIDE type → Mitigation strategy
+
+(STRIDE categories and definitions as commonly used in threat modeling: Microsoft/OWASP. ([Microsoft Learn][1]))
+
+ S — Spoofing (impersonation / fake identity)
+
+(Real-world patterns: credential stuffing & broken auth controls; session hijacking via stolen session IDs/tokens. ([OWASP Foundation][2]))
+
+S1. Attacker logs in using reused passwords from a breach (“credential stuffing”) → Spoofing → Add bot/credential-stuffing defenses: stronger rate limits on auth endpoints, MFA, breached-password checks, anomaly detection. ([OWASP Foundation][2])
+S2. Phished employee credentials used to access internal portal → Spoofing → Phishing-resistant MFA (FIDO2/WebAuthn), conditional access (device/risk), user training, suspicious login alerts. ([NIST Publications][3])
+S3. Stolen session cookie lets attacker “become” the user → Spoofing → Secure session management: HttpOnly/Secure cookies, short TTL, rotate session ID after login, re-auth for sensitive actions. ([OWASP Cheat Sheet Series][4])
+S4. Attacker steals OAuth access token from a compromised client → Spoofing → Short-lived tokens, refresh-token rotation, token binding/DPoP where applicable, audience/issuer validation, revoke on risk. ([NIST Publications][3])
+S5. Service-to-service API key leaked from repo used to call privileged APIs → Spoofing → Move to strong workload identity (mTLS, SPIFFE-like identities), key rotation, secret scanning, least-privileged scopes. ([OWASP Cheat Sheet Series][5])
+S6. Attacker forges “internal service” identity via missing mTLS on internal endpoints → Spoofing → Enforce mTLS between services, authenticate callers at every hop, rotate certs, deny-by-default. ([OWASP Cheat Sheet Series][5])
+S7. Attacker spoofs DNS response to redirect users to fake login page → Spoofing → DNSSEC where feasible, HSTS + TLS, certificate pinning in mobile apps (carefully), login domain monitoring. ([OWASP Cheat Sheet Series][5])
+S8. Email “From” spoofing to trick finance team into payout → Spoofing → DMARC/SPF/DKIM, out-of-band approval, verified vendor workflows, security awareness.
+S9. Attacker uses compromised “valid account” to access cloud console → Spoofing → MFA for all accounts (esp. privileged), conditional access, disable dormant accounts, monitor impossible travel/risky sign-ins. ([MITRE ATT&CK][6])
+S10. Weak device enrollment allows attacker to register rogue device as “trusted” → Spoofing → Strong device attestation/enrollment, certificate-based device identity, periodic re-validation. ([NIST Publications][3])
+S11. API accepts unsigned/weakly-validated JWT so attacker impersonates another user → Spoofing → Strict JWT validation (alg pinned, signature required, iss/aud/exp checked). ([OWASP Cheat Sheet Series][7])
+S12. “none” algorithm JWT accepted, attacker edits claims → Spoofing → Disallow `alg=none`, pin algorithms, use mature libraries, add tests for token confusion. ([OWASP Foundation][8])
+S13. Password reset flow lets attacker take over accounts via predictable tokens → Spoofing → High-entropy single-use tokens, short expiry, throttling, user notification, step-up auth. ([OWASP Foundation][2])
+S14. Support desk tricked into resetting MFA for attacker (“helpdesk social engineering”) → Spoofing → Strong verification scripts, secure recovery processes, limit MFA resets, monitor resets + privileged logins. ([CISA][9])
+S15. Mobile app trusts client-side “isAdmin=true” flag → Spoofing → Server-side authZ only; never trust client assertions; sign/verify critical claims. ([OWASP Foundation][10])
+S16. Attacker replays old signed request (no nonce/timestamp) to impersonate prior action → Spoofing → Nonces/timestamps, idempotency keys, replay caches, short-lived signatures. ([NIST Publications][3])
+S17. Attacker uses stolen SSH key to access production host → Spoofing → Short-lived cert-based SSH (CA), rotate keys, restrict by source/device, alert on new key use. ([MITRE ATT&CK][11])
+
+
+
+ T — Tampering (unauthorized modification of data/code)
+
+(Real-world patterns: injection, SSRF leading to changing internal state, CI/CD integrity failures. ([Microsoft Learn][1]))
+
+T1. SQL injection modifies account balances/records → Tampering → Parameterized queries/ORM safe APIs, least-privileged DB accounts, input validation, WAF rules. ([OWASP Foundation][12])
+T2. Attacker changes price in checkout request (client-side tampering) → Tampering → Recompute price server-side, sign price quotes, validate SKU/discount rules on server.
+T3. API mass assignment allows writing protected fields (e.g., role, creditLimit) → Tampering → Allowlist writable fields, schema validation, separate DTOs for read/write. ([OWASP Foundation][10])
+T4. Attacker manipulates pagination/pageSize to force massive response & strain DB → Tampering → Enforce max limits, server-side caps, query cost controls, rate limits. ([OWASP Foundation][13])
+T5. Stored XSS tampers with user sessions/actions by injecting scripts → Tampering → Output encoding, CSP, sanitize rich text, HttpOnly cookies, re-auth on sensitive actions. ([OWASP Cheat Sheet Series][14])
+T6. Attacker alters configuration in a misprotected admin endpoint → Tampering → Strong authZ, deny-by-default admin routes, separate admin plane, audit + alerts. ([OWASP Foundation][10])
+T7. MITM alters traffic on non-TLS internal link → Tampering → TLS everywhere (service mesh/mTLS), cert pinning where appropriate, integrity checks. ([OWASP Cheat Sheet Series][5])
+T8. Attacker changes S3/object storage file contents (web assets or configs) → Tampering → Bucket policies least privilege, object versioning, integrity hashes, signed URLs, deploy immutably. ([OWASP Foundation][10])
+T9. CI pipeline pulls dependency/update without integrity verification → Tampering → Verify signatures/checksums, SBOM + provenance, pin versions, protected build steps. ([OWASP Foundation][15])
+T10. Build artifact replaced in registry (“poisoned artifact”) → Tampering → Signed artifacts, provenance attestation, immutable tags, registry access control. ([NIST Publications][16])
+T11. Attacker tampers with logs to erase traces → Tampering → Append-only/immutable logging, centralized log pipeline, integrity controls, restricted log access. ([NIST Computer Security Resource Center][17])
+T12. Request smuggling causes backend to interpret a different request than proxy intended → Tampering → Normalize/prohibit ambiguous requests, consistent parsing, WAF rules, patch known vectors. ([PortSwigger][18])
+T13. Attacker modifies webhook payload in transit (no signature verification) → Tampering → HMAC-signed webhooks, timestamp/nonce, strict content-type/schema validation.
+T14. Client tampers with JWT claims (weak verification) to change permissions → Tampering → Enforce signature verification + claim validation; don’t trust client claims for authZ. ([OWASP Cheat Sheet Series][7])
+T15. Attacker edits IaC templates in repo to open firewall ports → Tampering → Protected branches, code owners, signed commits, policy-as-code checks in CI. ([NIST Publications][16])
+T16. SSRF used to hit internal admin endpoints that mutate state → Tampering → SSRF defenses (strict allowlists, block metadata/internal ranges), network egress controls. ([OWASP Cheat Sheet Series][19])
+T17. Attacker modifies DNS records in poorly-controlled DNS zone → Tampering → RBAC for DNS changes, MFA, change approval workflow, alerts on record changes. ([MITRE ATT&CK][11])
+
+
+
+ R — Repudiation (deny actions / lack of accountability)
+
+(Real-world patterns: missing audit logs, weak log integrity, inconsistent timestamps. ([NIST Computer Security Resource Center][17]))
+
+R1. User performs refund then claims “I didn’t do it” → Repudiation → Immutable audit trail: who/what/when/where, request IDs, strong authentication context, retention. ([NIST Computer Security Resource Center][17])
+R2. Admin changes access policy with no audit record → Repudiation → Log all policy changes, require step-up auth, approvals for critical changes, alert on admin actions. ([OWASP Foundation][20])
+R3. API doesn’t log failed logins, attacker brute-forces quietly → Repudiation → Log auth failures + rate limit, correlate by IP/user/device, alert on spikes. ([OWASP Foundation][2])
+R4. Logs don’t include user ID / tenant ID so actions can’t be attributed → Repudiation → Structured logging with consistent fields (principal, tenant, requestId, action). ([OWASP Cheat Sheet Series][21])
+R5. Clock skew makes timelines unreliable during incident response → Repudiation → NTP everywhere, log in UTC, include monotonic sequence IDs where possible. ([NIST Computer Security Resource Center][17])
+R6. Client claims “system double-charged me”; you can’t prove idempotency behavior → Repudiation → Idempotency keys, transaction logs, signed receipts, reconciliation jobs.
+R7. Payment provider webhook received but not verifiable later → Repudiation → Store raw webhook + signature verification result, rotate secrets, keep replay-safe metadata.
+R8. Customer support makes account change without recording agent identity → Repudiation → Per-agent accounts, least privilege, mandatory ticket linkage, audit events. ([MITRE ATT&CK][11])
+R9. Microservice drops logs under load; attacker exploits gap → Repudiation → Backpressure-safe logging, buffering, fail-closed for critical audit events, monitor log pipeline health. ([NIST Computer Security Resource Center][17])
+R10. Attackers inject newline characters to forge log lines (“log injection”) → Repudiation → Sanitize/encode log fields, structured logs (JSON), separate message vs metadata. ([OWASP Cheat Sheet Series][21])
+R11. API gateway logs exist but app logs missing, so “who changed data?” is unclear → Repudiation → End-to-end correlation IDs, log at both edge and business layer. ([OWASP Foundation][22])
+R12. Deletion endpoint doesn’t record what was deleted → Repudiation → Log object identifiers (careful with PII), deletion reason, actor, and pre/post metadata. ([NIST Computer Security Resource Center][17])
+R13. Admin exports data but no record of which dataset/filters were used → Repudiation → Log export parameters + approvals, watermark exports, monitor large exports. ([OWASP Foundation][23])
+R14. Privileged command executed via shared “root” account → Repudiation → Privileged access management, eliminate shared accounts, per-user elevation with audit. ([MITRE ATT&CK][11])
+R15. API accepts unsigned callbacks; attacker triggers actions and user denies initiating → Repudiation → Signed requests, origin authentication, replay protection (nonce/timestamp).
+R16. Logs stored locally on compromised host; attacker deletes them → Repudiation → Centralize logs, restrict deletion, immutable storage + retention policies. ([NIST Computer Security Resource Center][17])
+
+
+
+ I — Information Disclosure (data leaks)
+
+(Real-world patterns: BOLA/IDOR, SSRF to metadata, weak session/token handling, insecure logging. ([OWASP Foundation][24]))
+
+I1. BOLA/IDOR: change `/users/123` to `/users/124` and read another profile → Information Disclosure → Object-level authorization on every access, deny-by-default, test systematically. ([OWASP Foundation][24])
+I2. Excessive data exposure: API returns admin-only fields and frontend “hides” them → Information Disclosure → Response shaping on server, field-level allowlists, separate admin endpoints. ([OWASP Foundation][25])
+I3. Misconfigured CORS allows any origin to read sensitive API responses → Information Disclosure → Minimize CORS, strict allowlist, don’t allow credentials broadly. ([OWASP Foundation][10])
+I4. Session ID leaked via URL query string and stored in logs/referrers → Information Disclosure → Never put secrets in URLs, use cookies/headers, scrub logs. ([OWASP Cheat Sheet Series][4])
+I5. JWT stored in localStorage; XSS steals it → Information Disclosure → Prefer HttpOnly cookies, CSP, reduce XSS surface, short token lifetimes. ([OWASP Cheat Sheet Series][14])
+I6. SSRF lets attacker read cloud instance metadata (temporary credentials) → Information Disclosure → SSRF allowlists + egress controls; block metadata endpoints; harden metadata access. ([OWASP Cheat Sheet Series][19])
+I7. SSRF hits internal admin panels returning secrets/configs → Information Disclosure → Network segmentation, deny egress to RFC1918/metadata, URL parsing consistency. ([OWASP Cheat Sheet Series][19])
+I8. SQL injection dumps customer database → Information Disclosure → Parameterized queries, least-privileged DB users, WAF, secrets rotation post-fix. ([OWASP Cheat Sheet Series][26])
+I9. Logs accidentally include passwords/tokens/PII → Information Disclosure → Redaction, secret/PII scrubbing, structured logging policies. ([OWASP Cheat Sheet Series][21])
+I10. Debug endpoints left enabled expose environment variables → Information Disclosure → Disable debug in prod, config management, runtime hardening. ([OWASP Foundation][10])
+I11. Public bucket/container listing reveals sensitive files → Information Disclosure → Default-private storage, continuous config checks, least privilege. ([OWASP Foundation][10])
+I12. Error messages leak stack traces and internal IDs helpful for attack chaining → Information Disclosure → Generic errors to users, detailed errors to secure logs, consistent exception handling. ([OWASP Cheat Sheet Series][21])
+I13. Request smuggling enables reading cached/private responses (proxy confusion) → Information Disclosure → Patch proxies, normalize headers, consistent parsing, WAF rules. ([PortSwigger][18])
+I14. “Search” endpoint allows enumeration (emails/phone numbers) by response differences → Information Disclosure → Uniform responses, rate limits, bot detection, privacy-preserving lookup. ([OWASP Foundation][2])
+I15. Backup snapshots publicly accessible or shared too broadly → Information Disclosure → Encrypt backups, strict IAM, periodic access reviews, alert on sharing changes. ([MITRE ATT&CK][11])
+I16. Mis-scoped service account can read secrets from secret manager → Information Disclosure → Least privilege, secret access segmentation, audit secret reads, rotate regularly. ([MITRE ATT&CK][11])
+I17. CI logs expose build secrets (printed by scripts) → Information Disclosure → Mask secrets, restrict log access, eliminate plaintext secret output, short-lived credentials. ([NIST Publications][16])
+
+
+
+ D — Denial of Service (availability loss / resource exhaustion)
+
+(Real-world patterns: API unrestricted resource consumption, DDoS, expensive queries, protocol abuse. ([OWASP Foundation][13]))
+
+D1. Volumetric DDoS (UDP flood) saturates bandwidth → Denial of Service → Anycast/CDN scrubbing, upstream DDoS protection, traffic filtering, capacity planning. ([Cloudflare][27])
+D2. DNS amplification overwhelms authoritative DNS → Denial of Service → Anycast DNS, limit open resolvers, response rate limiting, DDoS provider. ([Cloudflare][28])
+D3. API caller sets pageSize to huge values causing DB overload → Denial of Service → Enforce maximums, cost-based query limits, paginate safely. ([OWASP Foundation][13])
+D4. Attacker hits “export report” endpoint repeatedly (expensive compute) → Denial of Service → Queue jobs, per-user quotas, caching, circuit breakers, rate limit. ([OWASP Foundation][13])
+D5. Bot buys all inventory instantly via APIs (“business flow abuse”) → Denial of Service → Bot mitigation, per-account limits, proof-of-work/CAPTCHA, risk scoring. ([OWASP Foundation][25])
+D6. Unrestricted email/SMS sending via API burns budget and blocks real users → Denial of Service → Quotas, verified recipients, abuse detection, strong auth, billing alarms. ([OWASP Foundation][13])
+D7. Login endpoint brute force floods auth services → Denial of Service → Separate stricter anti-brute-force controls for auth endpoints, lockouts/CAPTCHA, rate limits. ([OWASP Foundation][2])
+D8. Attacker triggers pathological regex (“ReDoS”) → Denial of Service → Avoid catastrophic regex, set timeouts, input size limits, safe libraries. ([OWASP Foundation][13])
+D9. File upload accepts huge files and fills disk → Denial of Service → Upload size limits, streaming AV scan, storage quotas, backpressure. ([OWASP Foundation][13])
+D10. Image/PDF processing bombs CPU (decompression bombs) → Denial of Service → Content-type validation, sandboxing, resource limits, async processing. ([OWASP Foundation][13])
+D11. Cache busting forces constant origin hits → Denial of Service → Cache keys normalization, bot detection, CDN protections, request rate limits. ([Cloudflare][27])
+D12. Request smuggling causes proxy/backend desync leading to connection exhaustion → Denial of Service → Patch and normalize HTTP parsing, drop ambiguous requests. ([PortSwigger][18])
+D13. API lacks concurrency limits; one tenant starves others (no isolation) → Denial of Service → Per-tenant quotas, bulkhead isolation, priority queues. ([OWASP Foundation][13])
+D14. Attacker repeatedly triggers costly DB joins/search queries → Denial of Service → Query cost controls, timeouts, indexes, rate limits, caching. ([OWASP Foundation][13])
+D15. TLS handshake flood overwhelms edge → Denial of Service → Front with managed edge, connection limits, SYN cookies, autoscaling + edge protections. ([Cloudflare][27])
+D16. “Unrestricted resource consumption” in APIs causes performance collapse and cost spike → Denial of Service → Rate limits, schema & size limits, quotas, circuit breakers, backpressure. ([OWASP Foundation][13])
+
+
+
+ E — Elevation of Privilege (gain higher permissions than allowed)
+
+(Real-world patterns: broken access control, cloud account abuse, SSRF→credentials→privilege escalation, role manipulation. ([OWASP Foundation][10]))
+
+E1. Normal user accesses admin endpoint due to missing function-level auth → Elevation of Privilege → RBAC checks on every sensitive route, deny-by-default, centralized authZ middleware. ([OWASP Foundation][10])
+E2. BOLA lets user update other users’ roles by modifying object IDs → Elevation of Privilege → Object-level authZ + ownership checks; test IDOR systematically. ([OWASP Foundation][24])
+E3. Mass assignment lets attacker set `role=admin` in JSON payload → Elevation of Privilege → Allowlist fields, separate models for input/output, server-side enforcement. ([OWASP Foundation][10])
+E4. SSRF steals cloud metadata creds, then attacker uses them to access broader resources → Elevation of Privilege → Harden metadata access + egress filtering; least-privileged instance roles; detect metadata abuse. ([Google Cloud][29])
+E5. Over-privileged service account key compromised → attacker becomes effectively “platform admin” → Elevation of Privilege → Least privilege, keyless workload identity, rotate keys, restrict who can mint tokens. ([MITRE ATT&CK][11])
+E6. Attacker adds extra cloud roles to their own compromised account → Elevation of Privilege → Privileged role change approvals, alerts on role grants, just-in-time access, audit IAM changes. ([MITRE ATT&CK][30])
+E7. Insecure deserialization leads to code execution, then local privilege escalation → Elevation of Privilege → Avoid unsafe deserialization, sandboxing, patching, least privilege runtime. ([OWASP Foundation][15])
+E8. Container escape path grants node privileges due to permissive runtime settings → Elevation of Privilege → Harden container runtime, drop capabilities, seccomp/apparmor, no privileged containers. ([MITRE ATT&CK][31])
+E9. CI runner has cloud admin creds; attacker compromises runner to deploy anything → Elevation of Privilege → Isolate runners, short-lived creds, signed deployments, approval gates. ([NIST Publications][16])
+E10. “Valid cloud account” used for privilege escalation by accessing admin APIs meant for specific groups → Elevation of Privilege → MFA + conditional access; strict RBAC; continuous access evaluation. ([MITRE ATT&CK][32])
+E11. Misconfigured Kubernetes RBAC lets attacker create clusterrolebinding → Elevation of Privilege → Least privilege RBAC, restrict binding creation, audit cluster-admin grants. ([MITRE ATT&CK][11])
+E12. Web app trusts `X-Forwarded-For` for admin allowlist; attacker spoofs header → Elevation of Privilege → Only trust headers from known proxies, use proxy protocol, authenticate admin actions. ([OWASP Foundation][10])
+E13. Request smuggling bypasses edge auth and reaches backend as “trusted” → Elevation of Privilege → Patch parsing discrepancies, normalize requests, enforce auth at backend too. ([PortSwigger][18])
+E14. API key scoped to “read” is accepted for “write” due to scope-check bug → Elevation of Privilege → Enforce scope checks centrally, unit tests for authZ invariants. ([OWASP Foundation][10])
+E15. User uses insecure password recovery to takeover privileged account → Elevation of Privilege → Strong recovery flows, step-up verification, monitor resets and privilege changes. ([OWASP Foundation][2])
+E16. Misconfigured access control allows changing primary keys / tenant IDs → Elevation of Privilege → Server-side access control matrix, deny-by-default, enforce tenant isolation. ([OWASP Foundation][33])
+E17. “Software integrity failure” lets attacker ship malicious update that runs with high privileges → Elevation of Privilege → Signed updates, provenance, verify before deploy, secure SDLC controls. ([OWASP Foundation][15])
+
+ 
