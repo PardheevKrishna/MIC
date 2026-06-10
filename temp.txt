@@ -1,13 +1,19 @@
-def redirectURL = prev.getRedirectLocation()
-if (redirectURL != null && redirectURL.contains("code=")) {
-    def code = redirectURL.replaceAll(".*[?&]code=([^&]+).*", "\$1")
-    vars.put("C_ACode", code)
-    log.info("Captured C_ACode: " + code)
-} else {
-    def responseHeaders = prev.getResponseHeaders()
-    def matcher = responseHeaders =~ /Location:.*[?&]code=([^&\s]+)/
-    if (matcher.find()) {
-        vars.put("C_ACode", matcher.group(1))
-        log.info("Captured C_ACode from headers: " + matcher.group(1))
+// Check sub-results for the callback URL containing code
+def subResults = prev.getSubResults()
+if (subResults != null) {
+    def en = subResults.elements()
+    while (en.hasMoreElements()) {
+        def subResult = en.nextElement()
+        def url = subResult.getUrlAsString()
+        log.info("Sub-result URL: " + url)
+        if (url != null && url.contains("code=")) {
+            def code = url.replaceAll(".*[?&]code=([^&]+).*", "\$1")
+            vars.put("C_ACode", code)
+            log.info("SUCCESS - Captured C_ACode: " + code)
+        }
     }
 }
+
+// Also log the main response headers
+log.info("Response headers: " + prev.getResponseHeaders())
+log.info("Redirect location: " + prev.getRedirectLocation())
