@@ -1,6 +1,13 @@
-During the Smart India Hackathon, my team built "Disha," a real-time safety app using live IP camera feeds. We hit a major wall: running heavy vision models like YOLOv10x and InternVL2 for SOS gesture detection was completely bottlenecking the system and lagging our front-end dashboards. I stepped in to bridge our ML and UI teams to rethink the architecture. Instead of streaming heavy, raw video data to the cloud or the front-end, we pivoted to use GPU-accelerated edge computing. We ran the heavy ML inference locally on the edge devices, which then only pushed lightweight JSON alerts (like "SOS detected" or coordinates) to the Police and Public UIs via WebSockets. It kept the app lightning-fast and taught me how to align different tech stacks under pressure.
-Vision & Priorities (First 6 Months):
-I want to keep things action-oriented:
-• Months 1-2: Start small with a fast, 2-week "micro-challenge" (like building a basic Gen AI agent or a simple automation). We need quick wins to get people excited and engaged early on.
-• Months 3-4: Run a larger, cross-office Wells Fargo hackathon. I want to get teams from different locations actually building applied tech solutions together.
-• Months 5-6: Set up specific "pods" (like a Gen AI group or a Cloud group) so people with shared interests have a dedicated space to keep experimenting and showing off their work every month.
+def redirectURL = prev.getRedirectLocation()
+if (redirectURL != null && redirectURL.contains("code=")) {
+    def code = redirectURL.replaceAll(".*[?&]code=([^&]+).*", "\$1")
+    vars.put("C_ACode", code)
+    log.info("Captured C_ACode: " + code)
+} else {
+    def responseHeaders = prev.getResponseHeaders()
+    def matcher = responseHeaders =~ /Location:.*[?&]code=([^&\s]+)/
+    if (matcher.find()) {
+        vars.put("C_ACode", matcher.group(1))
+        log.info("Captured C_ACode from headers: " + matcher.group(1))
+    }
+}
