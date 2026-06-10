@@ -1,19 +1,17 @@
-// Check sub-results for the callback URL containing code
+// Check sub-results for callback URL containing code
 def subResults = prev.getSubResults()
-if (subResults != null) {
-    def en = subResults.elements()
-    while (en.hasMoreElements()) {
-        def subResult = en.nextElement()
+if (subResults != null && subResults.size() > 0) {
+    for (int i = 0; i < subResults.size(); i++) {
+        def subResult = subResults.get(i)
         def url = subResult.getUrlAsString()
-        log.info("Sub-result URL: " + url)
+        log.info("Sub-result URL " + i + ": " + url)
         if (url != null && url.contains("code=")) {
             def code = url.replaceAll(".*[?&]code=([^&]+).*", "\$1")
             vars.put("C_ACode", code)
             log.info("SUCCESS - Captured C_ACode: " + code)
         }
     }
+} else {
+    log.info("No sub-results found")
+    log.info("Response headers: " + prev.getResponseHeaders())
 }
-
-// Also log the main response headers
-log.info("Response headers: " + prev.getResponseHeaders())
-log.info("Redirect location: " + prev.getRedirectLocation())
