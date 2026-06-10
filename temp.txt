@@ -1,17 +1,24 @@
-// Check sub-results for callback URL containing code
-def subResults = prev.getSubResults()
-if (subResults != null && subResults.size() > 0) {
-    for (int i = 0; i < subResults.size(); i++) {
-        def subResult = subResults.get(i)
-        def url = subResult.getUrlAsString()
-        log.info("Sub-result URL " + i + ": " + url)
+try {
+    def subResults = prev.getSubResults()
+    log.info("Sub-results class: " + subResults?.getClass()?.getName())
+    
+    // ConcurrentLinkedQueue - use iterator
+    def iterator = subResults?.iterator()
+    while (iterator != null && iterator.hasNext()) {
+        def sub = iterator.next()
+        def url = sub.getUrlAsString()
+        log.info("Sub URL: " + url)
         if (url != null && url.contains("code=")) {
             def code = url.replaceAll(".*[?&]code=([^&]+).*", "\$1")
             vars.put("C_ACode", code)
-            log.info("SUCCESS - Captured C_ACode: " + code)
+            log.info("SUCCESS: " + code)
         }
     }
-} else {
-    log.info("No sub-results found")
-    log.info("Response headers: " + prev.getResponseHeaders())
+    
+    // Also log direct methods
+    log.info("Redirect: " + prev.getRedirectLocation())
+    log.info("Main URL: " + prev.getUrlAsString())
+    
+} catch (Exception e) {
+    log.error("Script error: " + e.getMessage())
 }
