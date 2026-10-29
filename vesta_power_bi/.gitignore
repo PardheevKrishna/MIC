@@ -1,6 +1,0 @@
-**/.pbi/localSettings.json
-**/.pbi/cache.abf
-__pycache__/
-# real (non-synthetic) exports go in data_private/ and must never be committed
-data_private/*
-!data_private/README.md
