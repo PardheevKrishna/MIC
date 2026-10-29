@@ -8,6 +8,8 @@ Wells Fargo colour theme (red `#D71E28`, gold `#FFCD41`).
 > **This repository is public — never commit the real export.** Put real files in `data_private/`
 > (ignored by git) as described below.
 
+**Quick start:** copy the two CSVs into `data_private/`, then double-click `Open Dashboard.bat`.
+
 ## Pages
 
 - **Model Explorer** – searchable single-select *Model ID* dropdown. Selecting a model shows its
@@ -17,36 +19,34 @@ Wells Fargo colour theme (red `#D71E28`, gold `#FFCD41`).
 - **Portfolio Overview** – all models: KPI cards, lifecycle state by document type, versions per
   week, models by risk tier / model type / usage category, workflow-field coverage %.
 
-## Open it
+## Open it (one double-click)
 
-1. Requires Power BI Desktop (tested with 2.159, Oct 2026).
-2. Point the dashboard at the CSV folder on this computer (the path is stored as an absolute path):
-   ```bash
-   python scripts/set_data_folder.py
-   ```
-3. Open `VestaDashboard.pbip` and click **Refresh**.
+Requires Power BI Desktop on Windows (tested with 2.159, Oct 2026). No Python needed.
 
-You can also change the folder inside Power BI: *Transform data → Edit parameters → DataFolder*.
+1. Copy the real exports into **`data_private/`**, named exactly `vesta_Document.csv` and
+   `vesta_DocumentVersion.csv` (same column headers as the files in `data/`).
+2. Double-click **`Open Dashboard.bat`**.
 
-## Use the real data
+The launcher points the dashboard at `data_private/` (or at the synthetic `data/` if
+`data_private/` has no CSVs), opens `VestaDashboard.pbip` in Power BI Desktop, waits for it to load and
+refreshes the data automatically. Close any open copy of the dashboard before running it. If the
+automatic refresh ever fails, click **Refresh** on the Home ribbon.
 
-1. Create `data_private/` in this folder (git ignores it) and copy in the real exports, named exactly
-   `vesta_Document.csv` and `vesta_DocumentVersion.csv`, with the same column headers.
-2. Close Power BI Desktop, then run:
-   ```bash
-   python scripts/set_data_folder.py data_private
-   ```
-3. Open `VestaDashboard.pbip` and click **Refresh**.
+Git ignores everything in `data_private/` except its README, so the real data is never committed.
+Still, run `git status` before any commit and confirm that no real CSVs are listed. The launcher
+rewrites the `DataFolder` path in `expressions.tmdl`; that change is safe to commit, but it shows the
+local folder path.
 
-Before committing anything, run `git status` and confirm that no real CSVs are listed. The
-`DataFolder` path in `expressions.tmdl` changes when you run the script; it is safe to commit, but it
-shows the local folder path.
+You can also change the folder by hand: *Transform data → Edit parameters → DataFolder*, or
+`python scripts/set_data_folder.py <folder>`.
 
 ## Files
 
 | Path | What it is |
 |---|---|
-| `VestaDashboard.pbip` | Open this in Power BI Desktop |
+| `Open Dashboard.bat` | Double-click: picks the CSV folder, opens the dashboard, refreshes it |
+| `data_private/` | Drop the real CSVs here (git-ignored) |
+| `VestaDashboard.pbip` | The Power BI project (opened by the launcher) |
 | `VestaDashboard.SemanticModel/` | Model in TMDL: tables, relationships, measures, `DataFolder` parameter |
 | `VestaDashboard.Report/` | Report pages and visuals (PBIR) plus the Wells Fargo theme |
 | `data/` | Synthetic CSVs (131 documents, 145 versions) |
@@ -54,6 +54,7 @@ shows the local folder path.
 | `scripts/generate_data.py` | Regenerates the synthetic CSVs (deterministic) |
 | `scripts/validate_data.py` | Checks a pair of CSVs against the spec (151 checks) |
 | `scripts/build_pbip.py` | Regenerates the whole Power BI project from code (overwrites manual edits) |
+| `scripts/open_dashboard.ps1` | What the launcher runs |
 | `scripts/set_data_folder.py` | Points the `DataFolder` parameter at a CSV folder |
 
 ## Model notes
