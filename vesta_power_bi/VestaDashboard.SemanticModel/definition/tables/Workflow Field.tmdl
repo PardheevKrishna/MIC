@@ -1,0 +1,28 @@
+table 'Workflow Field'
+	lineageTag: e0000581-73ca-51d3-9bf7-03410c317382
+
+	column Field
+		dataType: string
+		lineageTag: cc82365d-8b82-551d-8f5d-22383010be3e
+		summarizeBy: none
+		isNameInferred
+		sourceColumn: [Field]
+		sortByColumn: 'Field Order'
+
+		annotation SummarizationSetBy = User
+
+	column 'Field Order'
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 5dbafcfc-ccbc-524b-acb7-c3796c0c8872
+		summarizeBy: none
+		isNameInferred
+		sourceColumn: [Field Order]
+
+		annotation SummarizationSetBy = User
+
+	partition 'Workflow Field' = calculated
+		mode: import
+		source = DATATABLE("Field", STRING, "Field Order", INTEGER, {{"Committed to Vesta", 1}, {"MAR Reference", 2}, {"VAR ID", 3}, {"MAR ID", 4}, {"Based On Version", 5}, {"Published", 6}, {"Approved", 7}})
+

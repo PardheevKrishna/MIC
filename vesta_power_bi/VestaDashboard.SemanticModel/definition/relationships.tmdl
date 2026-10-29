@@ -1,0 +1,12 @@
+relationship 9dc17b9a-ee53-531d-8af3-d97bd519a827
+	fromColumn: vesta_DocumentVersion.document_id
+	toColumn: vesta_Document.document_id
+
+relationship c0549c11-bf65-5995-8b7f-fec4446e1ebc
+	fromColumn: vesta_Document.model_id
+	toColumn: Models.model_id
+
+relationship b68d57ca-a2b4-5d2d-bd8d-732fb8328619
+	fromColumn: vesta_DocumentVersion.'Created Date'
+	toColumn: Calendar.Date
+

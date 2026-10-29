@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Report",
+    "displayName": "VestaDashboard"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "4d0160f6-3312-5b6b-b014-343d24337b6b"
+  }
+}

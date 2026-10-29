@@ -1,0 +1,7 @@
+expression DataFolder = "C:\Users\pardh\OneDrive\Desktop\projects\vesat poower bi\data\" meta [IsParameterQuery = true, Type = "Text", IsParameterQueryRequired = true]
+	lineageTag: 4b611534-971e-5042-a001-5b4b21cadc71
+
+	annotation PBI_ResultType = Text
+
+	annotation PBI_NavigationStepName = Navigation
+

@@ -1,0 +1,294 @@
+table vesta_DocumentVersion
+	lineageTag: d7f0b29e-3cb2-56a5-8e63-401e2d8137a5
+
+	column document_version_id
+		dataType: int64
+		formatString: 0
+		lineageTag: 8f12290f-4a99-5e22-96e9-b27de0d36c93
+		summarizeBy: none
+		sourceColumn: document_version_id
+
+		annotation SummarizationSetBy = User
+
+	column document_id
+		dataType: int64
+		formatString: 0
+		lineageTag: 717f7900-055b-5f04-a3af-521fd1b0a136
+		summarizeBy: none
+		sourceColumn: document_id
+
+		annotation SummarizationSetBy = User
+
+	column template_id
+		dataType: int64
+		formatString: 0
+		lineageTag: 7321df77-7cd4-5f8f-a70c-574f29b8aee1
+		summarizeBy: none
+		sourceColumn: template_id
+
+		annotation SummarizationSetBy = User
+
+	column template_version
+		dataType: int64
+		formatString: 0
+		lineageTag: a3306a2e-36b6-5de0-ade0-4a7e2b2d8d3a
+		summarizeBy: none
+		sourceColumn: template_version
+
+		annotation SummarizationSetBy = User
+
+	column version_no
+		dataType: string
+		lineageTag: bf86c8a8-b0c9-5a2c-9bf4-28de8bf90a03
+		summarizeBy: none
+		sourceColumn: version_no
+
+		annotation SummarizationSetBy = User
+
+	column state
+		dataType: string
+		lineageTag: fe767f7e-fe43-5ada-8f84-6ae90a79cd5f
+		summarizeBy: none
+		sourceColumn: state
+		sortByColumn: 'State Order'
+
+		annotation SummarizationSetBy = User
+
+	column based_on_version_id
+		dataType: int64
+		formatString: 0
+		lineageTag: 485573dc-e01c-5cef-804e-3e9c7d580adc
+		summarizeBy: none
+		sourceColumn: based_on_version_id
+
+		annotation SummarizationSetBy = User
+
+	column created_by
+		dataType: string
+		lineageTag: e74d9a66-7230-5f78-a9ad-dd433efbe293
+		summarizeBy: none
+		sourceColumn: created_by
+
+		annotation SummarizationSetBy = User
+
+	column created_on
+		dataType: dateTime
+		formatString: yyyy-mm-dd hh:nn
+		lineageTag: a8644990-b5b1-5426-92c2-a2941226bd52
+		summarizeBy: none
+		sourceColumn: created_on
+
+		annotation SummarizationSetBy = User
+
+	column approved_by
+		dataType: string
+		lineageTag: 55331726-8e41-5a91-9dd4-1586b3e1088c
+		summarizeBy: none
+		sourceColumn: approved_by
+
+		annotation SummarizationSetBy = User
+
+	column approved_on
+		dataType: dateTime
+		formatString: yyyy-mm-dd hh:nn
+		lineageTag: d7eac8e3-2f37-56b1-9a52-cbc608d06d70
+		summarizeBy: none
+		sourceColumn: approved_on
+
+		annotation SummarizationSetBy = User
+
+	column last_modified_by
+		dataType: string
+		lineageTag: aa5094aa-41dc-574e-b48e-cac9988dbb3b
+		summarizeBy: none
+		sourceColumn: last_modified_by
+
+		annotation SummarizationSetBy = User
+
+	column last_modified_on
+		dataType: dateTime
+		formatString: yyyy-mm-dd hh:nn
+		lineageTag: f4a37476-acd7-5d06-92ad-b6e860ae7679
+		summarizeBy: none
+		sourceColumn: last_modified_on
+
+		annotation SummarizationSetBy = User
+
+	column section_id
+		dataType: string
+		lineageTag: d811ab9d-b024-5f79-9b05-d1b91aae3626
+		summarizeBy: none
+		sourceColumn: section_id
+
+		annotation SummarizationSetBy = User
+
+	column template_driver_mapping
+		dataType: string
+		lineageTag: 0ae507cb-f05e-52b6-91a5-b88d74f53eab
+		summarizeBy: none
+		sourceColumn: template_driver_mapping
+
+		annotation SummarizationSetBy = User
+
+	column mar_id
+		dataType: string
+		lineageTag: aebc3d37-6ce6-5413-82a3-343a472d080d
+		summarizeBy: none
+		sourceColumn: mar_id
+
+		annotation SummarizationSetBy = User
+
+	column var_id
+		dataType: string
+		lineageTag: 4a431292-9c36-5a20-b568-eab470d12c2d
+		summarizeBy: none
+		sourceColumn: var_id
+
+		annotation SummarizationSetBy = User
+
+	column committed_to_vesta_by
+		dataType: string
+		lineageTag: dbcf4413-ff57-556f-bbda-13c98796546e
+		summarizeBy: none
+		sourceColumn: committed_to_vesta_by
+
+		annotation SummarizationSetBy = User
+
+	column committed_to_vesta_on
+		dataType: dateTime
+		formatString: yyyy-mm-dd hh:nn
+		lineageTag: 485e0711-0c08-5cfc-9eae-47e9b223cfa7
+		summarizeBy: none
+		sourceColumn: committed_to_vesta_on
+
+		annotation SummarizationSetBy = User
+
+	column var_approverId
+		dataType: string
+		lineageTag: 130d7108-7dd9-58e5-8c34-644c8a6f5b44
+		summarizeBy: none
+		sourceColumn: var_approverId
+
+		annotation SummarizationSetBy = User
+
+	column var_ReferenceId
+		dataType: string
+		lineageTag: 0b1020e2-f79b-563b-a3ac-e4e7151f3732
+		summarizeBy: none
+		sourceColumn: var_ReferenceId
+
+		annotation SummarizationSetBy = User
+
+	column published_date
+		dataType: dateTime
+		formatString: yyyy-mm-dd hh:nn
+		lineageTag: a368e997-2ebf-5261-974d-eca18044ac9a
+		summarizeBy: none
+		sourceColumn: published_date
+
+		annotation SummarizationSetBy = User
+
+	column published_by
+		dataType: string
+		lineageTag: 662890c2-b7fc-5553-ac23-02b1bb6605a0
+		summarizeBy: none
+		sourceColumn: published_by
+
+		annotation SummarizationSetBy = User
+
+	column mar_referenceNumber
+		dataType: string
+		lineageTag: c7ace88d-f1c4-588f-b893-dd8f6006a960
+		summarizeBy: none
+		sourceColumn: mar_referenceNumber
+
+		annotation SummarizationSetBy = User
+
+	column created_by_name
+		dataType: string
+		lineageTag: 0d79168c-805f-5a18-899d-2441cd06f4c6
+		summarizeBy: none
+		sourceColumn: created_by_name
+
+		annotation SummarizationSetBy = User
+
+	column last_modified_by_name
+		dataType: string
+		lineageTag: e2d8d6db-51d0-59ef-8f89-c6db751a8d38
+		summarizeBy: none
+		sourceColumn: last_modified_by_name
+
+		annotation SummarizationSetBy = User
+
+	column ack_template_version
+		dataType: int64
+		formatString: 0
+		lineageTag: 88fd4fd4-5677-5542-9582-1f8b094e4ac4
+		summarizeBy: sum
+		sourceColumn: ack_template_version
+
+		annotation SummarizationSetBy = User
+
+	column 'Created Date' = DATE(YEAR(vesta_DocumentVersion[created_on]), MONTH(vesta_DocumentVersion[created_on]), DAY(vesta_DocumentVersion[created_on]))
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: e29bcff5-6801-5256-b040-683922a2a349
+		summarizeBy: none
+
+		annotation SummarizationSetBy = User
+
+	column 'Version Seq' = VAR d = vesta_DocumentVersion[document_id] VAR c = vesta_DocumentVersion[created_on] RETURN COUNTROWS(FILTER(vesta_DocumentVersion, vesta_DocumentVersion[document_id] = d && vesta_DocumentVersion[created_on] <= c))
+		dataType: int64
+		formatString: 0
+		lineageTag: 776c2354-1975-53da-a4e3-5ecea7ff6706
+		summarizeBy: none
+
+		annotation SummarizationSetBy = User
+
+	column 'Is Latest' = vesta_DocumentVersion[created_on] = CALCULATE(MAX(vesta_DocumentVersion[created_on]), ALLEXCEPT(vesta_DocumentVersion, vesta_DocumentVersion[document_id]))
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 71f777dc-7355-5347-9a7c-9fb4b1925a84
+		summarizeBy: none
+
+		annotation SummarizationSetBy = User
+
+	column 'Document Type' = RELATED(vesta_Document[document_type_code])
+		dataType: string
+		lineageTag: aebfb64d-75dc-549d-9ae2-900d627d29dd
+		summarizeBy: none
+
+		annotation SummarizationSetBy = User
+
+	column 'Model ID' = FORMAT(RELATED(vesta_Document[model_id]), "0")
+		dataType: string
+		lineageTag: d3822300-b6d7-5dee-ba4e-9e95eca4d809
+		summarizeBy: none
+
+		annotation SummarizationSetBy = User
+
+	column 'State Order'
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: fd35bbf2-65fc-5a8f-8e51-ed0786a653e0
+		summarizeBy: none
+		sourceColumn: State Order
+
+		annotation SummarizationSetBy = User
+
+	partition vesta_DocumentVersion = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents(DataFolder & "vesta_DocumentVersion.csv"), [Delimiter = ",", Columns = 27, Encoding = 65001, QuoteStyle = QuoteStyle.Csv]),
+				    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars = true]),
+				    BlanksToNull = Table.ReplaceValue(Promoted, "", null, Replacer.ReplaceValue, Table.ColumnNames(Promoted)),
+				    Typed = Table.TransformColumnTypes(BlanksToNull, {{"document_version_id", Int64.Type}, {"document_id", Int64.Type}, {"template_id", Int64.Type}, {"template_version", Int64.Type}, {"version_no", type text}, {"state", type text}, {"based_on_version_id", Int64.Type}, {"created_by", type text}, {"created_on", type datetime}, {"approved_by", type text}, {"approved_on", type datetime}, {"last_modified_by", type text}, {"last_modified_on", type datetime}, {"section_id", type text}, {"template_driver_mapping", type text}, {"mar_id", type text}, {"var_id", type text}, {"committed_to_vesta_by", type text}, {"committed_to_vesta_on", type datetime}, {"var_approverId", type text}, {"var_ReferenceId", type text}, {"published_date", type datetime}, {"published_by", type text}, {"mar_referenceNumber", type text}, {"created_by_name", type text}, {"last_modified_by_name", type text}, {"ack_template_version", Int64.Type}}, "en-US"),
+				    StateOrder = Table.AddColumn(Typed, "State Order", each if [state] = "Draft" then 1 else if [state] = "Lock" then 2
+				        else if [state] = "Commit to Vesta" then 3 else if [state] = "Publish" then 4 else if [state] = "Retired" then 5 else 9, Int64.Type)
+				in
+				    StateOrder
+
+	annotation PBI_ResultType = Table
+

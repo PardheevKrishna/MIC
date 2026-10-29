@@ -1,0 +1,5 @@
+**/.pbi/localSettings.json
+**/.pbi/cache.abf
+__pycache__/
+# real (non-synthetic) exports live here and must never be committed
+data_private/

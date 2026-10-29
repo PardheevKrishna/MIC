@@ -1,0 +1,798 @@
+cultureInfo en-US
+
+	linguisticMetadata =
+			{
+			  "Version": "2.0.0",
+			  "Language": "en-US",
+			  "Entities": {
+			    "key_measures.selected_model": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Selected Model"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Selected Model": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.field_populated": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Field Populated"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Versions with field": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.latest_version": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Latest Version"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Latest Version": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.published_versions": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Published Versions"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Published": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.committed_versions": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Committed Versions"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Committed to Vesta": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.lifecycle_days": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Lifecycle Days"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Lifecycle (days)": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.selected_model_detail": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Selected Model Detail"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Selected Model Detail": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.documents": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Documents"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Documents": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.versions": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Versions"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Versions": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.latest_state": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Latest State"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Latest State": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.multiversion_documents": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Multi-Version Documents"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Docs with History": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.model_count": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Model Count"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Models": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.field_coverage_": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Field Coverage %"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Coverage": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.draft_share": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Draft Share"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Draft Share": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "key_measures.commit_rate": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Key Measures",
+			          "ConceptualProperty": "Commit Rate"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Committed to Vesta": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "workflow_field.field": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Workflow Field",
+			          "ConceptualProperty": "Field"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Workflow field": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.document_version_id": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "document_version_id"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Version ID": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.document_id": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "document_id"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Doc ID": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.document_type": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "Document Type"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Type": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        },
+			        {
+			          "Document Type": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.version_no": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "version_no"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Version": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.state": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "state"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "State": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.created_on": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "created_on"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Created": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.created_by": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "created_by"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Created By": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.based_on_version_id": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "based_on_version_id"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Based On": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.committed_to_vesta_on": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "committed_to_vesta_on"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Committed to Vesta": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.published_date": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "published_date"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Published": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.mar_id": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "mar_id"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "MAR ID": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_documentversion.var_id": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_DocumentVersion",
+			          "ConceptualProperty": "var_id"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "VAR ID": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_document.document_id": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_Document",
+			          "ConceptualProperty": "document_id"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Doc ID": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_document.document_type_code": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_Document",
+			          "ConceptualProperty": "document_type_code"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Type": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_document.created_on": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_Document",
+			          "ConceptualProperty": "created_on"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Created": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_document.created_by": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_Document",
+			          "ConceptualProperty": "created_by"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Created By": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "vesta_document.description": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "vesta_Document",
+			          "ConceptualProperty": "description"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Template Description": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "calendar.week_start": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Calendar",
+			          "ConceptualProperty": "Week Start"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Week": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "models.model_type": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Models",
+			          "ConceptualProperty": "Model Type"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Model Type": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "models.usage_category": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Models",
+			          "ConceptualProperty": "Usage Category"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Usage Category": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "models.risk_tier": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Models",
+			          "ConceptualProperty": "Risk Tier"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Risk Tier": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    }
+			  }
+			}
+		contentType: json
+
